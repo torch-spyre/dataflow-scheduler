@@ -23,6 +23,9 @@
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/Block.h>
+#include "mlir/Support/LLVM.h"
+
+using mlir::dyn_cast;
 
 #include <set>
 

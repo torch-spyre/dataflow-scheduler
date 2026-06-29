@@ -22,10 +22,12 @@
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/IR/Dominance.h"
+#include "mlir/Support/LLVM.h"
 
 #define DEBUG_TYPE "phase2-transformation"
 
 using namespace scheduler;
+using mlir::dyn_cast;
 
 mlir::LogicalResult scheduler::transformStagesToExecuteOn(
     mlir::ktdf::PipelineOp pipeline,

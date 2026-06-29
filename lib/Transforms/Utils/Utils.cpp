@@ -33,6 +33,9 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/Support/LLVM.h"
+
+using mlir::dyn_cast;
 
 using namespace scheduler;
 

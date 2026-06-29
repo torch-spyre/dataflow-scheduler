@@ -25,6 +25,9 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/Support/Debug.h"
+#include "mlir/Support/LLVM.h"
+
+using mlir::dyn_cast;
 
 #define DEBUG_TYPE "ktdf-to-operand-lowering"
 
