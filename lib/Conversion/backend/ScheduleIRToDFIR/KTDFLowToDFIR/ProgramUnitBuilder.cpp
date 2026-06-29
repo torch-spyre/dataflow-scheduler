@@ -19,8 +19,8 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/ProgramUnitBuilder.h"
 
 #include "Ktdp/KtdpOps.hpp"
-#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Conversion/Utils/Utils.h"
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "llvm/ADT/DenseMap.h"

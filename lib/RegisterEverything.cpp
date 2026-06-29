@@ -43,8 +43,8 @@
 #include <mlir/Transforms/Passes.h>
 
 #include "Ktdp/KtdpDialect.hpp"
-#include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h"
+#include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"

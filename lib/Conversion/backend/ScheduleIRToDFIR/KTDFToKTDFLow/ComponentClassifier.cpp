@@ -63,21 +63,22 @@ mlir::LogicalResult ComponentClassifier::classify(
   }
 
   // Final: non-parallel components = candidates - overlaps
-  // If a component appears in any parallel region, 
+  // If a component appears in any parallel region,
   // exclude it from non_parallel_components.
   for (auto comp : temp_non_parallel_components) {
     if (!all_parallel_components.contains(comp)) {
       result.non_parallel_components.insert(comp);
 
       auto str_attr = mlir::dyn_cast<mlir::StringAttr>(comp);
-      LLVM_DEBUG(llvm::dbgs()
-                 << "  Component " << (str_attr ? str_attr.getValue() : "unknown")
-                 << " is non-parallel\n");
+      LLVM_DEBUG(llvm::dbgs() << "  Component "
+                              << (str_attr ? str_attr.getValue() : "unknown")
+                              << " is non-parallel\n");
     } else {
       auto str_attr = mlir::dyn_cast<mlir::StringAttr>(comp);
-      LLVM_DEBUG(llvm::dbgs()
-                 << "  Component " << (str_attr ? str_attr.getValue() : "unknown")
-                 << " excluded from non-parallel (appears in parallel region)\n");
+      LLVM_DEBUG(
+          llvm::dbgs()
+          << "  Component " << (str_attr ? str_attr.getValue() : "unknown")
+          << " excluded from non-parallel (appears in parallel region)\n");
     }
   }
 

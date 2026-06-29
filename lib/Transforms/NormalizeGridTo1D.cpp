@@ -91,70 +91,70 @@ struct NormalizeGridTo1DPass
     auto* ctx = &getContext();
     auto index_ty = mlir::IndexType::get(ctx);
 
-    mlir::WalkResult result = module.walk([&](mlir::func::FuncOp func)
-                                              -> mlir::WalkResult {
-      auto grid_attr = func->getAttrOfType<mlir::ArrayAttr>("grid");
-      if (!grid_attr) return mlir::WalkResult::advance();
+    mlir::WalkResult result =
+        module.walk([&](mlir::func::FuncOp func) -> mlir::WalkResult {
+          auto grid_attr = func->getAttrOfType<mlir::ArrayAttr>("grid");
+          if (!grid_attr) return mlir::WalkResult::advance();
 
-      if (grid_attr.empty()) {
-        func.emitError("Grid must have at least one dimension");
-        return mlir::WalkResult::interrupt();
-      }
+          if (grid_attr.empty()) {
+            func.emitError("Grid must have at least one dimension");
+            return mlir::WalkResult::interrupt();
+          }
 
-      llvm::SmallVector<int64_t> dims;
-      dims.reserve(grid_attr.size());
-      for (mlir::Attribute a : grid_attr) {
-        auto ia = mlir::dyn_cast<mlir::IntegerAttr>(a);
-        if (!ia) {
-          func.emitError("Grid size must be integer attribute");
-          return mlir::WalkResult::interrupt();
-        }
-        int64_t d = ia.getInt();
-        if (d <= 0) {
-          func.emitError("Grid size must be positive (got ") << d << ")";
-          return mlir::WalkResult::interrupt();
-        }
-        dims.push_back(d);
-      }
+          llvm::SmallVector<int64_t> dims;
+          dims.reserve(grid_attr.size());
+          for (mlir::Attribute a : grid_attr) {
+            auto ia = mlir::dyn_cast<mlir::IntegerAttr>(a);
+            if (!ia) {
+              func.emitError("Grid size must be integer attribute");
+              return mlir::WalkResult::interrupt();
+            }
+            int64_t d = ia.getInt();
+            if (d <= 0) {
+              func.emitError("Grid size must be positive (got ") << d << ")";
+              return mlir::WalkResult::interrupt();
+            }
+            dims.push_back(d);
+          }
 
-      const unsigned k = dims.size();
-      if (k == 1) return mlir::WalkResult::advance();  // already 1-D
+          const unsigned k = dims.size();
+          if (k == 1) return mlir::WalkResult::advance();  // already 1-D
 
-      int64_t flat_size = 1;
-      for (int64_t d : dims) flat_size *= d;
+          int64_t flat_size = 1;
+          for (int64_t d : dims) flat_size *= d;
 
-      // Rewrite grid attribute to [flat_size] (index-typed entry).
-      func->setAttr("grid",
-                    mlir::ArrayAttr::get(
-                        ctx, {mlir::IntegerAttr::get(index_ty, flat_size)}));
+          // Rewrite grid attribute to [flat_size] (index-typed entry).
+          func->setAttr(
+              "grid", mlir::ArrayAttr::get(
+                          ctx, {mlir::IntegerAttr::get(index_ty, flat_size)}));
 
-      // Rewrite each get_compute_tile_id in this function.
-      llvm::SmallVector<mlir::ktdp::GetComputeTileIdOp> tile_ops;
-      func.walk([&](mlir::ktdp::GetComputeTileIdOp op) {
-        tile_ops.push_back(op);
-      });
+          // Rewrite each get_compute_tile_id in this function.
+          llvm::SmallVector<mlir::ktdp::GetComputeTileIdOp> tile_ops;
+          func.walk([&](mlir::ktdp::GetComputeTileIdOp op) {
+            tile_ops.push_back(op);
+          });
 
-      for (mlir::ktdp::GetComputeTileIdOp op : tile_ops) {
-        if (op.getNumResults() != k) {
-          op.emitError("get_compute_tile_id result count (")
-              << op.getNumResults() << ") does not match grid rank (" << k
-              << ")";
-          return mlir::WalkResult::interrupt();
-        }
-        mlir::OpBuilder builder(op);
-        auto flat_op = mlir::ktdp::GetComputeTileIdOp::create(
-            builder, op.getLoc(), index_ty);
-        mlir::Value flat = flat_op.getResult()[0];
-        llvm::SmallVector<mlir::Value> coords =
-            delinearizeRowMajor(builder, op.getLoc(), flat, dims);
-        for (unsigned i = 0; i < k; ++i) {
-          op->getResult(i).replaceAllUsesWith(coords[i]);
-        }
-        op.erase();
-      }
+          for (mlir::ktdp::GetComputeTileIdOp op : tile_ops) {
+            if (op.getNumResults() != k) {
+              op.emitError("get_compute_tile_id result count (")
+                  << op.getNumResults() << ") does not match grid rank (" << k
+                  << ")";
+              return mlir::WalkResult::interrupt();
+            }
+            mlir::OpBuilder builder(op);
+            auto flat_op = mlir::ktdp::GetComputeTileIdOp::create(
+                builder, op.getLoc(), index_ty);
+            mlir::Value flat = flat_op.getResult()[0];
+            llvm::SmallVector<mlir::Value> coords =
+                delinearizeRowMajor(builder, op.getLoc(), flat, dims);
+            for (unsigned i = 0; i < k; ++i) {
+              op->getResult(i).replaceAllUsesWith(coords[i]);
+            }
+            op.erase();
+          }
 
-      return mlir::WalkResult::advance();
-    });
+          return mlir::WalkResult::advance();
+        });
 
     if (result.wasInterrupted()) signalPassFailure();
   }

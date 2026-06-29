@@ -79,9 +79,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Ktdp/KtdpOps.hpp"
+#include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
-#include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"

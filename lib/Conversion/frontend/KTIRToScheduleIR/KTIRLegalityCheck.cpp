@@ -94,9 +94,8 @@ struct KTIRLegalityCheckPass
           op->getContext()->getLoadedDialect<mlir::linalg::LinalgDialect>()) {
         if (mlir::isa<mlir::linalg::GenericOp>(op)) {
           // Inspect the generic body: every op must be a legal body op.
-          mlir::WalkResult bodyResult =
-              op->getRegion(0).walk([&](mlir::Operation* inner)
-                                        -> mlir::WalkResult {
+          mlir::WalkResult bodyResult = op->getRegion(0).walk(
+              [&](mlir::Operation* inner) -> mlir::WalkResult {
                 if (!isLegalGenericBodyOp(inner)) {
                   inner->emitError(
                       "V1 only supports add/mul/sub compute ops; found "

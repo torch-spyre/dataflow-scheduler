@@ -25,8 +25,8 @@
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/Passes.h>
 
-#include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h"
+#include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
@@ -51,7 +51,9 @@ void scheduler::buildKTDPToDFIRPipeline(
   pm.addPass(mlir::ktdf::createStageCoarseningPass());
   pm.addPass(mlir::ktdf::createBroadcastPromotionPass());
   pm.addPass(createDoubleBufferingPass(scheduler_ctx));
-  // Parallelizing before tile selection is beneficial because the tile size selection pass would now take parallel instances into account while determining tile sizes.
+  // Parallelizing before tile selection is beneficial because the tile size
+  // selection pass would now take parallel instances into account while
+  // determining tile sizes.
   pm.addPass(createParallelizeLoopsAcrossInstancesPass(scheduler_ctx));
   pm.addPass(mlir::ktdf::createTileSizeSelectionPass());
   pm.addPass(mlir::createCanonicalizerPass());

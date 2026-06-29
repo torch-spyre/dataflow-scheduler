@@ -37,5 +37,3 @@ const SchedulerExtContext& SchedulerExtContext::dummyContext() {
   static const DummySchedulerExtContext dummy_ctx;
   return dummy_ctx;
 }
-
-

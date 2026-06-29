@@ -47,11 +47,13 @@ int64_t evalBinop(mlir::Operation* op, int64_t lhs, int64_t rhs) {
   if (mlir::isa<mlir::arith::SubIOp>(op)) return lhs - rhs;
   if (mlir::isa<mlir::arith::MulIOp>(op)) return lhs * rhs;
   if (mlir::isa<mlir::arith::DivUIOp>(op))
-    return rhs == 0 ? 0 : static_cast<int64_t>(static_cast<uint64_t>(lhs) /
-                                               static_cast<uint64_t>(rhs));
+    return rhs == 0 ? 0
+                    : static_cast<int64_t>(static_cast<uint64_t>(lhs) /
+                                           static_cast<uint64_t>(rhs));
   if (mlir::isa<mlir::arith::RemUIOp>(op))
-    return rhs == 0 ? 0 : static_cast<int64_t>(static_cast<uint64_t>(lhs) %
-                                               static_cast<uint64_t>(rhs));
+    return rhs == 0 ? 0
+                    : static_cast<int64_t>(static_cast<uint64_t>(lhs) %
+                                           static_cast<uint64_t>(rhs));
   llvm_unreachable("unsupported arith binop in query-map collapse");
 }
 
@@ -60,8 +62,8 @@ int64_t evalBinop(mlir::Operation* op, int64_t lhs, int64_t rhs) {
 // values are materialized HERE via the rewriter (stateless — no builder or
 // Value cache survives across greedy rewrites; identical constants across
 // program_units are left for a later CSE pass to dedup).
-mlir::Value buildFoldedQuery(mlir::PatternRewriter& rewriter, mlir::Location loc,
-                             mlir::ValueRange keys,
+mlir::Value buildFoldedQuery(mlir::PatternRewriter& rewriter,
+                             mlir::Location loc, mlir::ValueRange keys,
                              mlir::ArrayRef<int64_t> folded_values,
                              mlir::Value key) {
   llvm::SmallVector<mlir::Value> key_vec(keys.begin(), keys.end());
@@ -72,9 +74,8 @@ mlir::Value buildFoldedQuery(mlir::PatternRewriter& rewriter, mlir::Location loc
   }
   auto map = mlir::uniform::DefImmutableMappingOp::create(
       rewriter, loc, rewriter.getIndexType(), key_vec, val_vec);
-  auto q = mlir::uniform::QueryMapOp::create(rewriter, loc,
-                                             rewriter.getIndexType(),
-                                             map.getResult(), key);
+  auto q = mlir::uniform::QueryMapOp::create(
+      rewriter, loc, rewriter.getIndexType(), map.getResult(), key);
   return q.getResult();
 }
 
@@ -93,9 +94,13 @@ struct FoldConstIntoQuery : public mlir::OpRewritePattern<BinOp> {
     bool query_is_lhs = false;
     std::optional<int64_t> cst;
     if (auto ql = lhs.getDefiningOp<mlir::uniform::QueryMapOp>()) {
-      q = ql; query_is_lhs = true; cst = mlir::getConstantIntValue(rhs);
+      q = ql;
+      query_is_lhs = true;
+      cst = mlir::getConstantIntValue(rhs);
     } else if (auto qr = rhs.getDefiningOp<mlir::uniform::QueryMapOp>()) {
-      q = qr; query_is_lhs = false; cst = mlir::getConstantIntValue(lhs);
+      q = qr;
+      query_is_lhs = false;
+      cst = mlir::getConstantIntValue(lhs);
     }
     if (!q || !cst) return mlir::failure();
 
@@ -132,8 +137,12 @@ struct MergeQueriesSameKey : public mlir::OpRewritePattern<BinOp> {
     if (!qa || !qb) return mlir::failure();
     if (qa.getKey() != qb.getKey()) return mlir::failure();  // same key only
 
-    auto mapA = qa.getMap().template getDefiningOp<mlir::uniform::DefImmutableMappingOp>();
-    auto mapB = qb.getMap().template getDefiningOp<mlir::uniform::DefImmutableMappingOp>();
+    auto mapA =
+        qa.getMap()
+            .template getDefiningOp<mlir::uniform::DefImmutableMappingOp>();
+    auto mapB =
+        qb.getMap()
+            .template getDefiningOp<mlir::uniform::DefImmutableMappingOp>();
     if (!mapA || !mapB) return mlir::failure();
 
     // Both fully constant.
