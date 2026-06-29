@@ -39,3 +39,5 @@ add_custom_target(check-dataflow-scheduler-format
       ${CMAKE_BINARY_DIR}/check_format_scheduler_file.txt > /dev/null
     COMMENT "Checking scheduler format compliance"
 )
+
+add_dependencies(check-all check-dataflow-scheduler-format)

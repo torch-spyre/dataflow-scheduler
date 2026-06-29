@@ -65,6 +65,11 @@ add_custom_target(dataflow-scheduler-doc)
 # Build all generated include targets.
 add_custom_target(dataflow-scheduler-headers)
 
+if(NOT TARGET check-all)
+  # Run all regression tests.
+  add_custom_target(check-all)
+endif()
+
 #
 # Derived variables
 #
@@ -117,8 +122,8 @@ set(KTIR_INCLUDE_DIRS
   CACHE STRING "" FORCE
 )
 include(AddDataflowScheduler)
-
 include(clang-format)
+
 add_subdirectory(include)
 add_subdirectory(lib)
 if(DataflowScheduler_ENABLE_PYTHON_BINDINGS)

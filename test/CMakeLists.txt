@@ -1,8 +1,3 @@
-if(NOT TARGET check-all)
-  # Run all regression tests.
-  add_custom_target(check-all)
-endif()
-
 llvm_canonicalize_cmake_booleans(
   DataflowScheduler_ENABLE_PYTHON_BINDINGS
   DataflowScheduler_BUILD_TOOLS
