@@ -6,9 +6,6 @@ add_dataflow_scheduler_tool(dataflow-scheduler-opt
   SUPPORT_PLUGINS
 )
 target_link_libraries(dataflow-scheduler-opt PRIVATE
-  # NOTE: This is _not_ part of libMLIR.so!
-  MLIRMlirOptMain
-
   DataflowScheduler::RegisterEverything
 )
 
