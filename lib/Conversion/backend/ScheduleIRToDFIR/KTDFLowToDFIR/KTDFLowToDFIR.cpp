@@ -119,9 +119,6 @@ struct KTDFLowToDFIRPass
         if (mlir::failed(buildProgramUnits(func, split.work_ops, components))) {
           return signalPassFailure();
         }
-        if (mlir::failed(scheduler::collapseArithOverQueryMaps(func))) {
-          return signalPassFailure();
-        }
       }
 
       // Clean up side-effect-free ops left dead after extraction (e.g. ops that
@@ -133,6 +130,11 @@ struct KTDFLowToDFIRPass
 
       if (mlir::failed(
               buildLogicalMemoryViews(func, memory_tree, scheduler_ctx_))) {
+        return signalPassFailure();
+      }
+      // run arith folding into query maps after logical mem view is built to
+      // cleanup any extraneous ops.
+      if (mlir::failed(scheduler::collapseArithOverQueryMaps(func))) {
         return signalPassFailure();
       }
 
