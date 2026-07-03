@@ -83,7 +83,7 @@ mlir::LogicalResult UnitMaterializer::materialize(
   // Materialize parallel component units: 1 per corelet per core
   for (auto& [parallel_op, components_in_parallel] :
        components.parallel_components_map) {
-    auto parallel = dyn_cast<mlir::ktdf::ParallelOp>(parallel_op);
+    auto parallel = mlir::dyn_cast<mlir::ktdf::ParallelOp>(parallel_op);
     if (!parallel) continue;
 
     int num_instances = parallel.getNumInstances();

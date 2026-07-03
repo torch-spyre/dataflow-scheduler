@@ -165,7 +165,7 @@ mlir::LogicalResult scheduler::extractGridSize(mlir::func::FuncOp func,
            << grid_attr.size() << "D grid)";
   }
 
-  auto size_attr = dyn_cast<mlir::IntegerAttr>(grid_attr[0]);
+  auto size_attr = mlir::dyn_cast<mlir::IntegerAttr>(grid_attr[0]);
   if (!size_attr) {
     return func.emitError("Grid size must be integer attribute");
   }
