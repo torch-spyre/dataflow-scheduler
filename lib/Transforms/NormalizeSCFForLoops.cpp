@@ -16,10 +16,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/SCFTilingUtils.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/AffineMap.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
@@ -31,6 +33,47 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
+
+/// Fold any affine.apply ops (e.g. those introduced by loop normalization) that
+/// appear as data-transfer index operands into the transfer's affine maps.
+///
+/// fullyComposeAffineMapAndOperands repeatedly substitutes each affine.apply
+/// operand into the map until no affine.apply results remain. Operands that are
+/// not affine.apply results are left completely unchanged, so this is always
+/// safe to call regardless of whether normalization actually introduced any new
+/// affine.apply ops.
+void foldAffineApplyIntoDataTransfers(mlir::Operation* root,
+                                      mlir::IRRewriter& rewriter) {
+  llvm::SmallVector<mlir::ktdf::DataTransferOp> transfers;
+  root->walk([&](mlir::ktdf::DataTransferOp transfer) {
+    transfers.push_back(transfer);
+  });
+
+  for (mlir::ktdf::DataTransferOp transfer : transfers) {
+    if (mlir::AffineMapAttr src_attr = transfer.getSourceMapAttr()) {
+      mlir::AffineMap map = src_attr.getValue();
+      llvm::SmallVector<mlir::Value> operands(
+          transfer.getSourceIndices().begin(),
+          transfer.getSourceIndices().end());
+      mlir::affine::fullyComposeAffineMapAndOperands(&map, &operands);
+      rewriter.modifyOpInPlace(transfer, [&]() {
+        transfer.setSourceMapAttr(mlir::AffineMapAttr::get(map));
+        transfer.getSourceIndicesMutable().assign(operands);
+      });
+    }
+
+    if (mlir::AffineMapAttr dst_attr = transfer.getDestMapAttr()) {
+      mlir::AffineMap map = dst_attr.getValue();
+      llvm::SmallVector<mlir::Value> operands(transfer.getDestIndices().begin(),
+                                              transfer.getDestIndices().end());
+      mlir::affine::fullyComposeAffineMapAndOperands(&map, &operands);
+      rewriter.modifyOpInPlace(transfer, [&]() {
+        transfer.setDestMapAttr(mlir::AffineMapAttr::get(map));
+        transfer.getDestIndicesMutable().assign(operands);
+      });
+    }
+  }
+}
 
 struct NormalizeSCFForLoopsPass
     : public impl::NormalizeSCFForLoopsPassBase<NormalizeSCFForLoopsPass> {
@@ -45,6 +88,8 @@ struct NormalizeSCFForLoopsPass
     op->walk([&](mlir::scf::ForOp for_op) { loops.push_back(for_op); });
 
     normalizeSCFLoops(loops, rewriter);
+
+    foldAffineApplyIntoDataTransfers(op, rewriter);
   }
 };
 
