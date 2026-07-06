@@ -135,7 +135,7 @@ struct SubsumeLinearizeIndexPass
       }
     }
 
-    // Erase dead get_tile_subscript ops.
+    // Erase dead linearize ops.
     llvm::SmallVector<ktdf::TilingLinearizeIndexOp> dead;
     getOperation()->walk([&](ktdf::TilingLinearizeIndexOp op) {
       if (op->use_empty()) dead.push_back(op);
