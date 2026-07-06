@@ -184,31 +184,7 @@ struct TileSCFForLoopsPass
           mlir::arith::ConstantIndexOp::create(rewriter, loc, tile_size));
     }
 
-    // Try custom tiling first unless fallback-scf-tiling is set
-    if (!useFallbackSCFTiling) {
-      auto ktdf_result = mlir::ktdf::customTileNormalizedPerfectlyNested(
-          root_loop, tile_size_values, rewriter);
-      if (llvm::succeeded(ktdf_result)) return ktdf_result;
-    }
-
-    // Fall back to (or directly use) SCF's tilePerfectlyNested loops method.
-    // Use SCF's tilePerfectlyNested utility to tile the loop nest
-    auto inner_loops = mlir::tilePerfectlyNested(root_loop, tile_size_values);
-
-    // Propagate loop_type attribute from original loops to inner point loops
-    if (!inner_loops.empty()) {
-      propagateLoopTypeAttribute(nested_loops, inner_loops);
-    }
-
-    if (normalizeLoops && !inner_loops.empty()) {
-      // Combine original and inner loops into a single array
-      llvm::SmallVector<mlir::scf::ForOp> loops;
-      loops.insert(loops.begin(), nested_loops.begin(), nested_loops.end());
-      loops.insert(loops.end(), inner_loops.begin(), inner_loops.end());
-
-      normalizeSCFLoops(loops, rewriter);
-    }
-
+    applyTiling(root_loop, nested_loops, tile_size_values, rewriter);
     return mlir::success();
   }
 
@@ -246,16 +222,27 @@ struct TileSCFForLoopsPass
     llvm::SmallVector<mlir::scf::ForOp> nested_loops;
     mlir::getPerfectlyNestedLoops(nested_loops, root_loop);
 
+    applyTiling(root_loop, nested_loops, tile_size_values, rewriter);
+  }
+
+  // Apply tiling to a loop nest: try custom tiling first, fall back to SCF
+  // tiling. Propagates loop_type attributes and normalizes loops when
+  // requested. root_loop and nested_loops must be consistent (nested_loops
+  // collected from root_loop). tile_size_values must be one per loop in
+  // nested_loops. NOTE: root_loop may be erased by
+  // customTileNormalizedPerfectlyNested.
+  void applyTiling(mlir::scf::ForOp root_loop,
+                   llvm::ArrayRef<mlir::scf::ForOp> nested_loops,
+                   llvm::ArrayRef<mlir::Value> tile_size_values,
+                   mlir::IRRewriter& rewriter) {
     // Try custom tiling first unless fallback-scf-tiling is set
     if (!useFallbackSCFTiling) {
       auto ktdf_result = mlir::ktdf::customTileNormalizedPerfectlyNested(
           root_loop, tile_size_values, rewriter);
-
       if (llvm::succeeded(ktdf_result)) return;
     }
 
     // Fall back to (or directly use) SCF's tilePerfectlyNested loops method.
-    // Use SCF's tilePerfectlyNested utility to tile the loop nest
     auto inner_loops = mlir::tilePerfectlyNested(root_loop, tile_size_values);
 
     // Propagate loop_type attribute from original loops to inner point loops
@@ -264,11 +251,9 @@ struct TileSCFForLoopsPass
     }
 
     if (normalizeLoops && !inner_loops.empty()) {
-      // Normalize original and inner loops
       llvm::SmallVector<mlir::scf::ForOp> loops;
       loops.insert(loops.begin(), nested_loops.begin(), nested_loops.end());
       loops.insert(loops.end(), inner_loops.begin(), inner_loops.end());
-
       normalizeSCFLoops(loops, rewriter);
     }
   }
