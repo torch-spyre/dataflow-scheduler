@@ -159,16 +159,20 @@ std::optional<int64_t> chooseTileSize(
       std::max<int64_t>(kMaxCandidateTileSize, min_value);
   for (int64_t candidate = start_candidate; candidate >= min_value;
        --candidate) {
-    //    if (candidate <= 1) continue;
+    LLVM_DEBUG({
+      if (candidate <= 1) {
+        llvm::dbgs() << "[" PASS_NAME
+                     << "] no suitable tile size greater than one for "
+                        "tiling.reserve_size at "
+                     << ts_info.reserve_size_op.getLoc() << ".\n";
+      }
+    });
     if (divisibility > 1 && candidate % divisibility != 0) continue;
     TileSizeValidity eval = evaluateCandidateTileSize(ts_info, candidate);
     if (eval == TileSizeValidity::kValidForAllLoops) return candidate;
   }
-
-  logUnresolved(ts_info.reserve_size_op,
-                "no candidate greater than one satisfies min/divisibility/loop "
-                "constraints");
-  unresolved_ops.push_back(ts_info.reserve_size_op);
+  // At the very least a tile size of 1 should have been choosen.
+  llvm_unreachable("unresolved tile size");
   return std::nullopt;
 }
 
