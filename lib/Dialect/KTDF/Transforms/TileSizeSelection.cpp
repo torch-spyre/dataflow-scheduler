@@ -159,7 +159,7 @@ std::optional<int64_t> chooseTileSize(
       std::max<int64_t>(kMaxCandidateTileSize, min_value);
   for (int64_t candidate = start_candidate; candidate >= min_value;
        --candidate) {
-    if (candidate <= 1) continue;
+    //    if (candidate <= 1) continue;
     if (divisibility > 1 && candidate % divisibility != 0) continue;
     TileSizeValidity eval = evaluateCandidateTileSize(ts_info, candidate);
     if (eval == TileSizeValidity::kValidForAllLoops) return candidate;

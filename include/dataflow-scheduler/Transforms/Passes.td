@@ -52,6 +52,25 @@ def NormalizeGridTo1DPass : Pass<"normalize-grid-to-1d", "mlir::ModuleOp"> {
   ];
 }
 
+def NormalizeSCFForLoopsPass : Pass<"normalize-scf-for-loops", "mlir::ModuleOp"> {
+  let summary = "Normalize scf.for loops to lb=0, step=1";
+  let description = [{
+    Rewrites every scf.for loop in the module so that it has lower bound 0 and
+    step 1.  The induction variable is denormalized inside the body so that all
+    existing uses continue to see the original iteration values:
+
+      denormalized_iv = orig_lb + normalized_iv * orig_step
+
+    The denormalization is emitted as an affine.apply immediately inside the
+    loop body, then sunk to just before each use to minimise register pressure.
+  }];
+  let constructor = "::scheduler::createNormalizeSCFForLoopsPass()";
+  let dependentDialects = [
+    "mlir::affine::AffineDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 def TileSCFForLoopsPass : Pass<"tile-scf-for-loops", "mlir::ModuleOp"> {
   let summary = "Tile perfectly nested scf.for loops";
   let description = [{
