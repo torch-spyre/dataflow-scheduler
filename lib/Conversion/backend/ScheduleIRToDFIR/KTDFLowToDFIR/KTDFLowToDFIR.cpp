@@ -87,15 +87,16 @@ struct KTDFLowToDFIRPass
     LDBG(1) << "========= " PASS_NAME " =========";
     mlir::ModuleOp module = getOperation();
 
-    // Construct MemoryTree from DeviceManager once for the whole module
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {
       LDBG(1) << "No device found";
       return;
     }
-    scheduler::arch_view::MemoryTree memory_tree(*device);
-    auto& resource_kinds = getChildAnalysis<arch_view::ResourceKinds>(**device);
+    auto declaration = device->getDeclaration();
+    auto& memory_tree = getChildAnalysis<arch_view::MemoryTree>(declaration);
+    auto& resource_kinds =
+        getChildAnalysis<arch_view::ResourceKinds>(declaration);
 
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
     module.walk([&](mlir::func::FuncOp func) { funcs.push_back(func); });

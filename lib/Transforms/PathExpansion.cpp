@@ -93,7 +93,8 @@ void PathExpansionPass::runOnOperation() {
     signalPassFailure();
     return;
   }
-  scheduler::arch_view::RoutingGraph routing_graph(*device);
+  auto& routing_graph =
+      getChildAnalysis<arch_view::RoutingGraph>(device->getDeclaration());
 
   LLVM_DEBUG({
     llvm::dbgs() << "Routing Graph:\n";

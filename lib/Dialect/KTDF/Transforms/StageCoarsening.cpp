@@ -269,7 +269,8 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
     return signalPassFailure();
   }
 
-  scheduler::arch_view::MemoryTree memory_tree(*device);
+  auto& memory_tree = getChildAnalysis<scheduler::arch_view::MemoryTree>(
+      device->getDeclaration());
 
   // Build pipeline tree once - it will be manipulated throughout the
   // transformation

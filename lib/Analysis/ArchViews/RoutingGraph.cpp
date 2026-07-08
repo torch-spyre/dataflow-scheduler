@@ -250,9 +250,10 @@ void processRegion(mlir::Region& region, DeviceInitContext& ctx) {
 
 }  // namespace
 
-// Constructor that initializes from device operation
-RoutingGraph::RoutingGraph(mlir::ktdf_arch::Device& device) {
-  initializeFromDevice(device);
+RoutingGraph::RoutingGraph(mlir::ktdf_arch::DeviceOp declaration,
+                           mlir::AnalysisManager& analyses)
+    : DeviceView(declaration, analyses) {
+  initializeFromDevice(getDevice());
 }
 
 // Initialize a RoutingGraph from a ktdf_arch::DeviceOp.
