@@ -33,6 +33,7 @@
 #include <llvm/Support/raw_ostream.h>
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/Operation.h>
+#include <mlir/Pass/AnalysisManager.h>
 
 #include <optional>
 
@@ -45,7 +46,7 @@ using ResourceType = mlir::Attribute;
 
 namespace arch_view {
 
-class MemoryTree {
+class MemoryTree : public mlir::ktdf_arch::DeviceView {
  public:
   using NodeId = unsigned;
 
@@ -59,14 +60,9 @@ class MemoryTree {
     std::optional<size_t> reserved_in_bytes;
   };
 
-  MemoryTree() = default;
-
-  /// Construct a memory tree from a ktdf_arch.device operation.
-  /// This builds a tree structure representing the memory hierarchy.
-  /// The tree is constructed by analyzing memory-to-memory paths in the
-  /// architecture graph.
-  /// @param device The device defining the memory hierarchy
-  explicit MemoryTree(mlir::ktdf_arch::Device& device);
+  /// Construct a MemoryTree as an MLIR analysis child of @p declaration .
+  explicit MemoryTree(mlir::ktdf_arch::DeviceOp declaration,
+                      mlir::AnalysisManager& analyses);
 
   /// Get a memory node by its ID
   std::optional<MemoryNode> getNode(NodeId node_id) const;

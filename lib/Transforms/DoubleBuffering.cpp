@@ -517,14 +517,14 @@ struct DoubleBufferingPass
 
     LDBG(1) << "starting";
 
-    // Construct MemoryTree from DeviceManager
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {
       LDBG(1) << " No device found, skipping";
       return;
     }
-    scheduler::arch_view::MemoryTree memory_tree(*device);
+    auto& memory_tree =
+        getChildAnalysis<arch_view::MemoryTree>(device->getDeclaration());
 
     mlir::DominanceInfo dom(module);
 

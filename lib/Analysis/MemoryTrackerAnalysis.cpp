@@ -28,26 +28,21 @@
 
 using namespace scheduler;
 
-MemoryTrackerAnalysis::MemoryTrackerAnalysis(mlir::Operation* op,
+MemoryTrackerAnalysis::MemoryTrackerAnalysis(mlir::Operation* /*op*/,
                                              mlir::AnalysisManager& am)
-    : memory_tree_(), tracker_(memory_tree_) {
-  // Get DeviceManager analysis and retrieve the device
-  auto& device_manager = am.getAnalysis<mlir::ktdf_arch::DeviceManager>();
-  auto* const device = device_manager.getOrImportDevice();
-
-  if (!device) {
-    llvm::report_fatal_error(
-        "MemoryTrackerAnalysis: No ktdf_arch::DeviceOp found in module. "
-        "This could happen if the device spec file is empty or contains "
-        "multiple devices");
-  }
-
-  // Build memory tree from device with alias support
-  memory_tree_ = arch_view::MemoryTree(*device);
-
-  // Initialize tracker from memory tree
-  tracker_ = MemoryTracker(memory_tree_);
-
+    : memory_tree_([&]() -> const arch_view::MemoryTree& {
+        auto& device_manager = am.getAnalysis<mlir::ktdf_arch::DeviceManager>();
+        auto* const device = device_manager.getOrImportDevice();
+        if (!device) {
+          llvm::report_fatal_error(
+              "MemoryTrackerAnalysis: No ktdf_arch::DeviceOp found in module. "
+              "This could happen if the device spec file is empty or contains "
+              "multiple devices");
+        }
+        return am.getChildAnalysis<arch_view::MemoryTree>(
+            device->getDeclaration());
+      }()),
+      tracker_(memory_tree_) {
   LLVM_DEBUG({
     llvm::dbgs() << "MemoryTrackerAnalysis initialized\n";
     if (!memory_tree_.getAllNodeIds().empty()) {

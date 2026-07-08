@@ -34,6 +34,7 @@
 #include <llvm/ADT/StringRef.h>
 #include <llvm/Support/raw_ostream.h>
 #include <mlir/IR/Attributes.h>
+#include <mlir/Pass/AnalysisManager.h>
 
 #include <optional>
 #include <string>
@@ -49,7 +50,7 @@ using ResourceType = mlir::Attribute;
 
 namespace arch_view {
 
-class RoutingGraph {
+class RoutingGraph : public mlir::ktdf_arch::DeviceView {
  public:
   using NodeId = unsigned;
 
@@ -78,19 +79,9 @@ class RoutingGraph {
   using NeighborList = llvm::SmallVector<NodeId>;
   using EdgeList = llvm::SmallVector<EdgeInfo>;
 
-  RoutingGraph() = default;
-
-  /// Construct and initialize the graph from a ktdf_arch.device operation.
-  /// The graph must be empty (no nodes, no adjacency).
-  /// Groups are flattened by processing only the first instance of each kind.
-  /// Properties like features, bandwidth, and overlaps are currently skipped.
-  explicit RoutingGraph(mlir::ktdf_arch::Device& device);
-
-  /// Initialize the graph from a ktdf_arch.device operation.
-  /// The graph must be empty (no nodes, no adjacency).
-  /// Groups are flattened by processing only the first instance of each kind.
-  /// Properties like features, bandwidth, and overlaps are currently skipped.
-  void initializeFromDevice(mlir::ktdf_arch::Device& device);
+  /// Construct a RoutingGraph as an MLIR analysis child of @p declaration .
+  explicit RoutingGraph(mlir::ktdf_arch::DeviceOp declaration,
+                        mlir::AnalysisManager& analyses);
 
   NodeId addNode(ResourceType resource, ResourceNode::ResourceKind kind);
   void addEdge(NodeId source, NodeId target, ResourceType transfer_unit,
@@ -136,6 +127,8 @@ class RoutingGraph {
   static ResourceNode::ResourceKind inferResourceKind(ResourceType resource);
 
  private:
+  void initializeFromDevice(mlir::ktdf_arch::Device& device);
+
   NodeId next_node_id_ = 0;
   llvm::MapVector<NodeId, ResourceNode> nodes_;
   llvm::DenseMap<NodeId, EdgeList> adjacency_;

@@ -96,7 +96,7 @@ class MemoryTrackerAnalysis {
   void print(llvm::raw_ostream& os) const;
 
  private:
-  arch_view::MemoryTree memory_tree_;
+  const arch_view::MemoryTree& memory_tree_;
   MemoryTracker tracker_;
 };
 
