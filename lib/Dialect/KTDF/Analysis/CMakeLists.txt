@@ -1,6 +1,5 @@
 add_dataflow_scheduler_library(DataflowSchedulerKTDFAnalysis
     ApplicableUnits.cpp
-    DataPath.cpp
     GlobalStageDAG.cpp
     LoopTiling.cpp
     PipelineScope.cpp

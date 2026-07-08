@@ -31,7 +31,6 @@
 #include <memory>
 
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
-#include "dataflow-scheduler/Dialect/KTDF/Analysis/DataPath.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Links.h"
