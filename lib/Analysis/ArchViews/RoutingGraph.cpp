@@ -253,14 +253,13 @@ void processRegion(mlir::Region& region, DeviceInitContext& ctx) {
 RoutingGraph::RoutingGraph(mlir::ktdf_arch::DeviceOp declaration,
                            mlir::AnalysisManager& analyses)
     : DeviceView(declaration, analyses) {
-  initializeFromDevice(getDevice());
+  initialize();
 }
 
-// Initialize a RoutingGraph from a ktdf_arch::DeviceOp.
+// Initialize a RoutingGraph from the device held by this view.
 //
-// This function walks the operations in a DeviceOp and constructs an equivalent
-// RoutingGraph representation. The graph must be empty before calling this
-// function.
+// Walks the device IR and constructs the equivalent RoutingGraph
+// representation. The graph must be empty before calling this function.
 //
 // Group operations are flattened by processing only the first instance of each
 // group kind. This creates a representative view of the hierarchical structure
@@ -274,12 +273,7 @@ RoutingGraph::RoutingGraph(mlir::ktdf_arch::DeviceOp declaration,
 // Properties currently skipped:
 //   - features, bandwidth, overlaps (not yet modeled in RoutingGraph)
 //
-// Example usage:
-//   auto device = ...; // Get ktdf_arch::DeviceOp
-//   RoutingGraph graph(device);
-//   graph.print(llvm::outs());
-//
-void RoutingGraph::initializeFromDevice(mlir::ktdf_arch::Device& device) {
+void RoutingGraph::initialize() {
   // Precondition: graph must be empty
   assert(nodes_.empty() && "Graph must be empty before initialization");
   assert(adjacency_.empty() && "Graph must be empty before initialization");
@@ -288,7 +282,7 @@ void RoutingGraph::initializeFromDevice(mlir::ktdf_arch::Device& device) {
   DeviceInitContext ctx(*this);
 
   // Process the device body
-  processRegion(device.getBodyRegion(), ctx);
+  processRegion(getDevice().getBodyRegion(), ctx);
 
   // Apply node sizes collected during traversal
   for (const auto& [node_id, size] : ctx.node_sizes) {

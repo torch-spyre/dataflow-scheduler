@@ -334,7 +334,6 @@ struct ParallelizeLoopsAcrossInstancesPass
 
     mlir::ModuleOp module = getOperation();
 
-    // Construct MemoryTree from DeviceManager once for the whole module
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {

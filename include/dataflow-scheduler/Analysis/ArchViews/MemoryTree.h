@@ -167,8 +167,8 @@ class MemoryTree : public mlir::ktdf_arch::DeviceView {
   void printSubtree(llvm::raw_ostream& os, NodeId node_id,
                     unsigned indent_level) const;
 
-  /// Initialize the memory tree from a ktdf_arch.device operation (private).
-  void initializeFromDevice(mlir::ktdf_arch::Device& device);
+  /// Build the memory tree from the device held by this view.
+  void initialize();
 
   /// Populate aliases from mem_space_mapping attribute
   void populateAliases(mlir::Attribute mem_space_mapping);

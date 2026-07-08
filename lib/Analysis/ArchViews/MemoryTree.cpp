@@ -32,10 +32,10 @@ using namespace scheduler::arch_view;
 MemoryTree::MemoryTree(mlir::ktdf_arch::DeviceOp declaration,
                        mlir::AnalysisManager& analyses)
     : DeviceView(declaration, analyses) {
-  initializeFromDevice(getDevice());
+  initialize();
 }
 
-void MemoryTree::initializeFromDevice(mlir::ktdf_arch::Device& device) {
+void MemoryTree::initialize() {
   // Precondition: tree must be empty
   assert(nodes_.empty() && "Tree must be empty before initialization");
   assert(resource_to_node_.empty() &&
@@ -91,7 +91,7 @@ void MemoryTree::initializeFromDevice(mlir::ktdf_arch::Device& device) {
   };
 
   // Start processing from the device body
-  processRegion(device.getBodyRegion(), std::nullopt);
+  processRegion(getDevice().getBodyRegion(), std::nullopt);
 
   // Now establish parent-child relationships in the tree
   for (auto [child_val, parent_val] : child_to_parent) {
@@ -104,7 +104,7 @@ void MemoryTree::initializeFromDevice(mlir::ktdf_arch::Device& device) {
   }
 
   // Populate aliases from import declaration if available
-  if (auto mem_space_mapping = device.getAttr("mem_space_mapping")) {
+  if (auto mem_space_mapping = getDevice().getAttr("mem_space_mapping")) {
     populateAliases(mem_space_mapping);
   }
 }
