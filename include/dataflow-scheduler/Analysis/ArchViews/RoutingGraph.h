@@ -127,7 +127,7 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
   static ResourceNode::ResourceKind inferResourceKind(ResourceType resource);
 
  private:
-  void initializeFromDevice(mlir::ktdf_arch::Device& device);
+  void initialize();
 
   NodeId next_node_id_ = 0;
   llvm::MapVector<NodeId, ResourceNode> nodes_;
