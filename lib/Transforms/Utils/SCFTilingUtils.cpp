@@ -68,6 +68,11 @@ void scheduler::normalizeSCFLoops(llvm::ArrayRef<mlir::scf::ForOp> loops,
     // Get the original lower bound and step before normalization
     mlir::Value orig_lb = loop.getLowerBound();
     mlir::Value orig_step = loop.getStep();
+
+    // Skip loops that are already normalized (lb=0, step=1)
+    if (mlir::getConstantIntValue(orig_lb) == 0 &&
+        mlir::getConstantIntValue(orig_step) == 1)
+      continue;
     mlir::Location loc = loop.getLoc();
 
     // Use MLIR's emitNormalizedLoopBounds to compute normalized bounds
