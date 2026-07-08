@@ -52,7 +52,10 @@ struct StageDependencyDAG {
 auto buildGlobalStageDAG(Operation* root, StageDependencyDAG& global_dag)
     -> LogicalResult;
 
-/// Build a stage dependency DAG from the token flow of a flat stage list.
+/// Build a stage dependency DAG from the token flow of a set of stages.
+/// Stages must all be direct children of the same PipelineOp: token values are
+/// SSA-scoped to a single pipeline body, so passing stages from different
+/// pipelines produces a DAG with no edges between them.
 /// Nodes are the provided stages; edges connect token producers to consumers.
 auto analyzeStageDependencies(ArrayRef<StageOp> stages, StageDependencyDAG& dag)
     -> LogicalResult;

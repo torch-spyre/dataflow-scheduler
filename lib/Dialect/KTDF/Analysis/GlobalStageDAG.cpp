@@ -161,6 +161,28 @@ auto mlir::ktdf::topologicalSortStages(ArrayRef<StageOp> stages,
 //===----------------------------------------------------------------------===//
 // getRootStages / getLeafStages (file-private helpers)
 //===----------------------------------------------------------------------===//
+//
+// Example — given this nesting:
+//
+//   PipelineOp (outer)
+//     StageOp A  ──token──►  StageOp B  ──token──►  StageOp C
+//                             └─ PipelineOp (inner)
+//                                  StageOp B1 ──token──► StageOp B2
+//                                  StageOp B3  (no deps)
+//
+//   getRootStages(A) = {A}          (A has no nested pipeline)
+//   getRootStages(B) = {B1, B3}     (B1 and B3 have no predecessors inside B)
+//   getRootStages(C) = {C}
+//
+//   getLeafStages(A) = {A}
+//   getLeafStages(B) = {B2, B3}     (B2 and B3 have no successors inside B)
+//   getLeafStages(C) = {C}
+//
+// buildGlobalStageDAG uses these to stitch the outer edges:
+//   A → B1, A → B3   (getLeafStages(A) × getRootStages(B))
+//   B2 → C, B3 → C   (getLeafStages(B) × getRootStages(C))
+//
+//===----------------------------------------------------------------------===//
 
 namespace {
 
