@@ -14,7 +14,7 @@
 // CHECK:         }
 
 // CHECK:   module {
-// CHECK:           func.func private @"local-schedule-0"() attributes {grid = [2, 2]} {
+// CHECK:           func.func @"local-schedule-0"() attributes {grid = [2, 2]} {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 1024 : index
 // CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
@@ -33,10 +33,6 @@
 // CHECK:             %[[ADD_0:.*]] = linalg.add ins(%[[LOAD_0]], %[[LOAD_1]] : tensor<3x64xf16>, tensor<3x64xf16>) outs(%[[EMPTY_0]] : tensor<3x64xf16>) -> tensor<3x64xf16>
 // CHECK:             %[[CONSTRUCT_ACCESS_TILE_2:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_2]]{{\[}}%[[MULI_0]], %[[CONSTANT_2]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_2]]} : memref<96x64xf16> -> !ktdp.access_tile<3x64xindex>
 // CHECK:             ktdp.store %[[ADD_0]], %[[CONSTRUCT_ACCESS_TILE_2]] : tensor<3x64xf16>, <3x64xindex>
-// CHECK:             return
-// CHECK:           }
-// CHECK:           func.func private @"local-schedule-0_keep_alive"() {
-// CHECK:             call @"local-schedule-0"() : () -> ()
 // CHECK:             return
 // CHECK:           }
 // CHECK:         }

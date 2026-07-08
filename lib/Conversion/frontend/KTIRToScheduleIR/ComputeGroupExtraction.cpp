@@ -50,10 +50,10 @@
 ///         func.call @local-schedule-0(%i) : (index) -> ()
 ///       }
 ///     }
-///     func.func private @local-schedule-0(index)
+///     func.func public @local-schedule-0(index)
 ///   }
 ///   module {  // Extracted function module
-///     func.func private @local-schedule-0(%arg0: index) {
+///     func.func public @local-schedule-0(%arg0: index) {
 ///       %tile1 = ktdp.construct_access_tile %A[%arg0, %c0]
 ///       %tile2 = ktdp.construct_access_tile %B[%arg0, %c0]
 ///       %tile3 = ktdp.construct_access_tile %C[%arg0, %c0]
@@ -107,8 +107,6 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
-
 static llvm::cl::opt<bool> DisableThisPass(
     "compute-group-extraction-disable",
     llvm::cl::desc("Disable Compute Group Extraction pass"),
@@ -387,36 +385,12 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   builder.setInsertionPointToStart(extracted_module.getBody());
   auto func_op = mlir::func::FuncOp::create(top_level_module.getLoc(),
                                             func_name, func_type);
-  func_op.setPrivate();
+  func_op.setPublic();
   // Copy grid attribute from original function if it exists
   if (auto grid_attr = original_func->getAttr("grid")) {
     func_op->setAttr("grid", grid_attr);
   }
   extracted_module.push_back(func_op);
-
-  // Create a dummy function that calls the extracted function to prevent
-  // Symbol DCE from removing it (since it's private and called from another
-  // module)
-  builder.setInsertionPointToEnd(extracted_module.getBody());
-  auto dummy_func_name = func_name + "_keep_alive";
-  auto dummy_func = mlir::func::FuncOp::create(top_level_module.getLoc(),
-                                               dummy_func_name, func_type);
-  dummy_func.setPrivate();
-  extracted_module.push_back(dummy_func);
-
-  mlir::Block* dummy_block = dummy_func.addEntryBlock();
-  builder.setInsertionPointToStart(dummy_block);
-
-  // Create dummy arguments for the call
-  llvm::SmallVector<mlir::Value> dummy_args;
-  for (size_t i = 0; i < args.size(); ++i) {
-    dummy_args.push_back(dummy_block->getArgument(i));
-  }
-
-  // Add call to the extracted function
-  mlir::func::CallOp::create(builder, top_level_module.getLoc(), func_op,
-                             dummy_args);
-  mlir::func::ReturnOp::create(builder, top_level_module.getLoc());
 
   // Create entry block with arguments
   mlir::Block* func_block = func_op.addEntryBlock();
@@ -452,12 +426,13 @@ void ComputeGroupExtractionPass::extractComputeGroup(
     }
   }
 
-  // Create call operation before erasing operations
-  builder.setInsertionPoint(group.first_load);
-  auto call_op = mlir::func::CallOp::create(builder, top_level_module.getLoc(),
-                                            forward_decl, args);
-  // Step 3: Erase the original operations in reverse order to avoid dangling
-  // uses
+  // Step 3: Replace the original operations with a call to the extracted
+  // function, then erase them in reverse order to avoid dangling uses.
+  // Insert the call where the first op was.
+  builder.setInsertionPoint(ops_to_move.front());
+  mlir::func::CallOp::create(builder, top_level_module.getLoc(), forward_decl,
+                             args);
+
   for (auto it = ops_to_move.rbegin(); it != ops_to_move.rend(); ++it) {
     mlir::Operation* op = *it;
     assert(op->use_empty() && "Operation should have no uses left");
