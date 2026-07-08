@@ -23,20 +23,18 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/StageToUnitsMap.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/GlobalStageDAG.h"
-#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/IR/Builders.h"
 
 namespace scheduler {
 
-/// Insert signal operations between stages with scratchpad conflicts.
-/// Narrows signal units to immediate leaf/root stages when producer or
-/// consumer wraps a nested pipeline.
-mlir::LogicalResult insertSignalsInPipeline(
-    mlir::ktdf::PipelineOp pipeline,
-    const llvm::SmallVector<mlir::ktdf::StageOp, 8>& sorted_stages,
-    const StageToUnitsMap& stage_to_units,
+/// Insert signal operations for all scratchpad conflicts found in global_dag.
+/// Iterates the global leaf-stage DAG edges directly; inserts a SignalOp after
+/// each leaf producer stage for every conflicting leaf-to-leaf edge.
+mlir::LogicalResult insertSignals(
+    mlir::Location loc, const StageToUnitsMap& stage_to_units,
+    const mlir::ktdf::StageDependencyDAG& global_dag,
     const std::map<std::pair<mlir::Operation*, mlir::Operation*>,
                    llvm::SmallVector<scheduler::ResourceType, 2>>& conflicts,
     mlir::OpBuilder& builder);

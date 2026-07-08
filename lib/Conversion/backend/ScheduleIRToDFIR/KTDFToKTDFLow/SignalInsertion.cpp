@@ -18,57 +18,73 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/SignalInsertion.h"
 
-#include "dataflow-scheduler/Dialect/KTDF/Analysis/GlobalStageDAG.h"
+#include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 
-#define DEBUG_TYPE "phase2-signal-insertion"
+#define DEBUG_TYPE "signal-insertion"
 
 using namespace scheduler;
 
-mlir::LogicalResult scheduler::insertSignalsInPipeline(
-    mlir::ktdf::PipelineOp pipeline,
-    const llvm::SmallVector<mlir::ktdf::StageOp, 8>& sorted_stages,
-    const StageToUnitsMap& stage_to_units,
+// Returns the StageOp that is the correct insertion anchor for a SignalOp
+// between leaf stages producer_op and consumer_op. The anchor is the StageOp
+// in the shared parent PipelineOp that is closest (innermost) to both leaves —
+// i.e., the direct-child stage of the lowest common ancestor PipelineOp on
+// the producer's side.
+static mlir::Operation* sharedLevelAncestor(mlir::Operation* producer_op,
+                                            mlir::Operation* consumer_op) {
+  // Collect all PipelineOp ancestors of consumer (including its own parent).
+  llvm::DenseSet<mlir::Operation*> consumer_pipelines;
+  assert(mlir::isa<mlir::ktdf::StageOp>(consumer_op));
+  for (mlir::Operation* p = consumer_op->getParentOp(); p;
+       p = p->getParentOp()) {
+    if (mlir::isa<mlir::ktdf::PipelineOp>(p)) consumer_pipelines.insert(p);
+  }
+
+  // Walk up producer's ancestry. Track the last StageOp seen so we can return
+  // the direct-child StageOp of the innermost shared PipelineOp.
+  // We want the *innermost* shared pipeline, so we stop at the first hit.
+  mlir::Operation* last_stage = producer_op;
+  assert(mlir::isa<mlir::ktdf::StageOp>(producer_op));
+  for (mlir::Operation* p = producer_op->getParentOp(); p;
+       p = p->getParentOp()) {
+    if (mlir::isa<mlir::ktdf::StageOp>(p)) last_stage = p;
+    if (mlir::isa<mlir::ktdf::PipelineOp>(p) && consumer_pipelines.contains(p))
+      return last_stage;
+  }
+  return producer_op;
+}
+
+mlir::LogicalResult scheduler::insertSignals(
+    mlir::Location loc, const StageToUnitsMap& stage_to_units,
+    const mlir::ktdf::StageDependencyDAG& global_dag,
     const std::map<std::pair<mlir::Operation*, mlir::Operation*>,
                    llvm::SmallVector<scheduler::ResourceType, 2>>& conflicts,
     mlir::OpBuilder& builder) {
   LDBG(1) << "Step 9: Insert signal operations";
 
-  auto loc = pipeline.getLoc();
+  for (const auto& [producer_op, successors] : global_dag.successors) {
+    for (auto* consumer_op : successors) {
+      if (!conflicts.count({producer_op, consumer_op})) continue;
 
-  for (size_t i = 0; i + 1 < sorted_stages.size(); ++i) {
-    auto producer_stage = sorted_stages[i];
-    auto consumer_stage = sorted_stages[i + 1];
+      LDBG(1) << "  Inserting signal between leaf stages";
 
-    bool has_conflict =
-        conflicts.count(std::make_pair(producer_stage.getOperation(),
-                                       consumer_stage.getOperation())) > 0;
-    if (!has_conflict) continue;
+      llvm::SmallVector<mlir::Value, 8> signal_units;
+      auto collect = [&](mlir::Operation* op) {
+        auto it = stage_to_units.mapping.find(op);
+        if (it != stage_to_units.mapping.end())
+          for (auto unit : it->second) signal_units.push_back(unit);
+      };
+      collect(producer_op);
+      collect(consumer_op);
 
-    LDBG(1) << "  Inserting signal between stages";
-    builder.setInsertionPointAfter(producer_stage);
-
-    // Narrow to immediate leaf/root stages across any nested pipeline boundary.
-    auto signal_producers = mlir::ktdf::getLeafStages(producer_stage);
-    auto signal_consumers = mlir::ktdf::getRootStages(consumer_stage);
-
-    llvm::SmallVector<mlir::Value, 8> signal_units;
-    auto collect_units = [&](mlir::ktdf::StageOp stage) {
-      auto it = stage_to_units.mapping.find(stage.getOperation());
-      if (it != stage_to_units.mapping.end()) {
-        for (auto unit : it->second) {
-          signal_units.push_back(unit);
-        }
+      if (!signal_units.empty()) {
+        mlir::Operation* anchor = sharedLevelAncestor(producer_op, consumer_op);
+        builder.setInsertionPointAfter(anchor);
+        mlir::ktdf_lowering::SignalOp::create(builder, loc,
+                                              mlir::ValueRange(signal_units));
       }
-    };
-
-    for (auto s : signal_producers) collect_units(s);
-    for (auto s : signal_consumers) collect_units(s);
-
-    if (!signal_units.empty()) {
-      mlir::ktdf_lowering::SignalOp::create(builder, loc,
-                                            mlir::ValueRange(signal_units));
     }
   }
 
