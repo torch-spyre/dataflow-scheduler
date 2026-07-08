@@ -259,8 +259,8 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
   LDBG(1) << "Loop nest depth: " << candidate.loop_nest_.size();
 
   // Get device and create memory tree
-  auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-  auto* const device = devices.getOrImportDevice();
+  auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
+  auto* const device = device_manager.getOrImportDevice();
   if (!device) {
     candidate.pipeline_->emitError(
         "Unable to import device specification for stage grouping. This could "
