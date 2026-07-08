@@ -20,7 +20,8 @@
 //
 // Provides a flat directed acyclic graph over leaf StageOps spanning all
 // nesting levels of a pipeline hierarchy. Edges are derived from token flow
-// and stitched across pipeline boundaries using getRootStages/getLeafStages.
+// and stitched across pipeline boundaries by resolving root/leaf stages of
+// each nested pipeline.
 //
 //===----------------------------------------------------------------------===//
 
@@ -45,17 +46,9 @@ struct StageDependencyDAG {
   DenseMap<Operation*, SmallVector<Operation*, 4>> successors;
 };
 
-/// Returns the recursive first-in-topo-order root StageOps reachable from
-/// stage. If stage contains no nested PipelineOp, returns {stage}.
-auto getRootStages(StageOp stage) -> SmallVector<StageOp, 4>;
-
-/// Returns the recursive last-in-topo-order leaf StageOps reachable from
-/// stage. If stage contains no nested PipelineOp, returns {stage}.
-auto getLeafStages(StageOp stage) -> SmallVector<StageOp, 4>;
-
 /// Build a flat stage DAG spanning all nesting levels of all pipelines in
 /// func. Nodes are leaf StageOps only. Edges are stitched across pipeline
-/// boundaries using getLeafStages/getRootStages.
+/// boundaries by resolving the root/leaf stages of each nested pipeline.
 auto buildGlobalStageDAG(Operation* root, StageDependencyDAG& global_dag)
     -> LogicalResult;
 

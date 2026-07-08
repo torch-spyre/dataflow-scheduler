@@ -208,13 +208,36 @@ struct KTDFToKTDFLoweringPass
         return signalPassFailure();
       }
 
-      // Pre-compute global flat stage DAG for signal narrowing (Step 9).
+      // Build the global flat stage DAG once, spanning all nesting levels.
+      // Nodes are leaf StageOps only; used for conflict detection (Step 7)
+      // and signal insertion (Step 9).
       mlir::ktdf::StageDependencyDAG global_dag;
       if (mlir::failed(mlir::ktdf::buildGlobalStageDAG(func, global_dag))) {
         return signalPassFailure();
       }
 
-      // Steps 6-11: Process each pipeline independently
+      // Step 7: Compute scratchpad conflicts across all pipelines using the
+      // global leaf-stage DAG.
+      std::map<std::pair<mlir::Operation*, mlir::Operation*>,
+               llvm::SmallVector<scheduler::ResourceType, 2>>
+          conflicts;
+      LDBG(1) << "Step 7: Computing scratchpad conflicts";
+      if (mlir::failed(computeScratchpadConflicts(stage_to_units, global_dag,
+                                                  resource_kinds, conflicts))) {
+        LDBG(1) << "Step 7 failed";
+        return signalPassFailure();
+      }
+      LDBG(1) << "Step 7 complete: " << conflicts.size() << " conflicts found";
+
+      // Step 9: Insert signal operations for all conflicting global DAG edges,
+      // before any pipeline transformation mutates the IR.
+      if (mlir::failed(insertSignals(func.getLoc(), stage_to_units, global_dag,
+                                     conflicts, phase2_builder))) {
+        return signalPassFailure();
+      }
+
+      // Steps 6, 8, 10-11: Process each pipeline independently (innermost
+      // first).
       llvm::SmallVector<mlir::ktdf::PipelineOp, 8> pipelines;
       func.walk([&](mlir::ktdf::PipelineOp pipeline) {
         pipelines.push_back(pipeline);
@@ -244,38 +267,17 @@ struct KTDFToKTDFLoweringPass
             continue;
           }
 
-          // Step 6: Analyze stage dependencies
+          // Step 6: Analyze per-pipeline stage dependencies for topo-sort.
           mlir::ktdf::StageDependencyDAG dag;
           if (mlir::failed(
                   mlir::ktdf::analyzeStageDependencies(pipeline_stages, dag))) {
             return signalPassFailure();
           }
 
-          // Step 7: Compute scratchpad conflicts
-          std::map<std::pair<mlir::Operation*, mlir::Operation*>,
-                   llvm::SmallVector<scheduler::ResourceType, 2>>
-              conflicts;
-          LDBG(1) << "Step 7: Computing scratchpad conflicts";
-          if (mlir::failed(computeScratchpadConflicts(
-                  stage_to_units, dag, resource_kinds, conflicts))) {
-            LDBG(1) << "Step 7 failed";
-            return signalPassFailure();
-          }
-          LDBG(1) << "Step 7 complete: " << conflicts.size()
-                  << " conflicts found";
-
           // Step 8: Topologically sort stages
           llvm::SmallVector<mlir::ktdf::StageOp, 8> sorted_stages;
           if (mlir::failed(mlir::ktdf::topologicalSortStages(
                   pipeline_stages, dag, sorted_stages))) {
-            return signalPassFailure();
-          }
-
-          // Step 9: Insert signal operations between stages (before
-          // transformation)
-          if (mlir::failed(insertSignalsInPipeline(pipeline, sorted_stages,
-                                                   stage_to_units, conflicts,
-                                                   phase2_builder))) {
             return signalPassFailure();
           }
 
