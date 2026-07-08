@@ -83,8 +83,8 @@ void PathExpansionPass::runOnOperation() {
 
   mlir::ModuleOp module_op = getOperation();
 
-  auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-  auto* const device = devices.getOrImportDevice();
+  auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
+  auto* const device = device_manager.getOrImportDevice();
   if (!device) {
     module_op->emitError(
         "Unable to import the device specification for path expansion. This "

@@ -75,14 +75,15 @@ struct KTDFToKTDFLoweringPass
     LDBG(1) << "========= " PASS_NAME " =========";
     mlir::ModuleOp module = getOperation();
 
-    auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-    auto* const device = devices.getOrImportDevice();
+    auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
+    auto* const device = device_manager.getOrImportDevice();
     if (!device) {
       LDBG(1) << "No device found.";
       signalPassFailure();
       return;
     }
-    auto& resource_kinds = getChildAnalysis<arch_view::ResourceKinds>(**device);
+    auto& resource_kinds =
+        getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
 
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
     module.walk([&](mlir::func::FuncOp func) {

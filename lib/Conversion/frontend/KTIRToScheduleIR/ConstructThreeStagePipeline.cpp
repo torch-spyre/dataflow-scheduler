@@ -1418,14 +1418,15 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
 
   mlir::ModuleOp module = getOperation();
 
-  auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-  auto* const device = devices.getOrImportDevice();
+  auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
+  auto* const device = device_manager.getOrImportDevice();
   if (!device) {
     LDBG(1) << "No device found.";
     signalPassFailure();
     return;
   }
-  resource_kinds_ = &getChildAnalysis<arch_view::ResourceKinds>(**device);
+  resource_kinds_ =
+      &getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
 
   auto compute_kind = resource_kinds_->getComputeKind();
   if (!compute_kind) {

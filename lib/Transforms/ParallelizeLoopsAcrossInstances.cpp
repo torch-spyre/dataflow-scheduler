@@ -341,7 +341,8 @@ struct ParallelizeLoopsAcrossInstancesPass
       LDBG(1) << "No device found";
       return;
     }
-    auto& resource_kinds = getChildAnalysis<arch_view::ResourceKinds>(**device);
+    auto& resource_kinds =
+        getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
 
     // Pre-order walk over pipelines. Collect candidates first, then rewrite,
     // so the walk's iterator is not invalidated by op erasure.

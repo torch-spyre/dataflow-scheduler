@@ -501,13 +501,14 @@ struct ScalarBroadcastLegalizationPass
     mlir::ModuleOp module = getOperation();
     llvm::SmallVector<BroadcastLegalizationSite> sites;
 
-    auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
-    auto* const device = devices.getOrImportDevice();
+    auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
+    auto* const device = device_manager.getOrImportDevice();
     if (!device) {
       signalPassFailure();
       return;
     }
-    auto& resource_kinds = getChildAnalysis<arch_view::ResourceKinds>(**device);
+    auto& resource_kinds =
+        getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
 
     mlir::LogicalResult status = mlir::success();
     module.walk([&](mlir::ktdf::PipelineOp pipeline) {
