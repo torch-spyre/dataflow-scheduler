@@ -63,6 +63,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/TileNormalized.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/SCFTilingUtils.h"
+#include "llvm/Support/CommandLine.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -71,12 +72,19 @@
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
+#define PASS_NAME "tile-scf-for-loops"
+#define DEBUG_TYPE PASS_NAME
+
 using namespace scheduler;
 
 namespace scheduler {
 #define GEN_PASS_DEF_TILESCFFORLOOPSPASS
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
 }  // namespace scheduler
+
+static llvm::cl::opt<bool> DisableTileSCFForLoopsPass(
+    "scheduler-tile-scf-for-loops-disable",
+    llvm::cl::desc("Disable Tile SCF For Loops pass"), llvm::cl::init(false));
 
 namespace {
 
@@ -85,6 +93,8 @@ struct TileSCFForLoopsPass
   using TileSCFForLoopsPassBase<TileSCFForLoopsPass>::TileSCFForLoopsPassBase;
 
   void runOnOperation() override {
+    if (DisableTileSCFForLoopsPass) return;
+
     mlir::Operation* op = getOperation();
 
     if (!tileSizes.empty())

@@ -32,6 +32,7 @@
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
@@ -47,6 +48,10 @@
 
 #define PASS_NAME "address-assignment"
 #define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisableAddressAssignmentPass(
+    "scheduler-address-assignment-disable",
+    llvm::cl::desc("Disable Address Assignment pass"), llvm::cl::init(false));
 
 using namespace scheduler;
 
@@ -312,6 +317,8 @@ struct AddressAssignmentPass
       : scheduler_ctx_(ctx) {}
 
   void runOnOperation() override {
+    if (DisableAddressAssignmentPass) return;
+
     mlir::ModuleOp module = getOperation();
 
     LLVM_DEBUG(llvm::dbgs() << "[" << PASS_NAME

@@ -45,6 +45,7 @@
 
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -57,6 +58,11 @@
 
 #define PASS_NAME "affine-min-canonicalization"
 #define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisableAffineMinCanonicalizationPass(
+    "scheduler-affine-min-canonicalization-disable",
+    llvm::cl::desc("Disable Affine Min Canonicalization pass"),
+    llvm::cl::init(false));
 
 using namespace scheduler;
 
@@ -232,6 +238,8 @@ struct AffineMinCanonicalizationPass
     : public impl::AffineMinCanonicalizationPassBase<
           AffineMinCanonicalizationPass> {
   void runOnOperation() override {
+    if (DisableAffineMinCanonicalizationPass) return;
+
     mlir::MLIRContext* ctx = &getContext();
     mlir::RewritePatternSet patterns(ctx);
 

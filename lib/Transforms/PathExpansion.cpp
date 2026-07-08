@@ -34,6 +34,7 @@
 #include "dataflow-scheduler/Transforms/PathExpansion/Planner.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -41,6 +42,10 @@
 
 #define PASS_NAME "path-expansion"
 #define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisablePathExpansionPass(
+    "scheduler-path-expansion-disable",
+    llvm::cl::desc("Disable Path Expansion pass"), llvm::cl::init(false));
 
 using namespace scheduler;
 
@@ -73,6 +78,8 @@ struct PathExpansionPass
 };
 
 void PathExpansionPass::runOnOperation() {
+  if (DisablePathExpansionPass) return;
+
   mlir::ModuleOp module_op = getOperation();
 
   LLVM_DEBUG(llvm::dbgs() << "=== Path Expansion Pass ===\n");

@@ -38,6 +38,7 @@
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -49,6 +50,11 @@
 
 #define PASS_NAME "parallelize-loops-across-instances"
 #define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisableParallelizeLoopsAcrossInstancesPass(
+    "scheduler-parallelize-loops-across-instances-disable",
+    llvm::cl::desc("Disable Parallelize Loops Across Instances pass"),
+    llvm::cl::init(false));
 
 namespace scheduler {
 #define GEN_PASS_DEF_PARALLELIZELOOPSACROSSINSTANCESPASS
@@ -329,6 +335,8 @@ struct ParallelizeLoopsAcrossInstancesPass
     : public impl::ParallelizeLoopsAcrossInstancesPassBase<
           ParallelizeLoopsAcrossInstancesPass> {
   void runOnOperation() override {
+    if (DisableParallelizeLoopsAcrossInstancesPass) return;
+
     mlir::ModuleOp module = getOperation();
 
     // Construct MemoryTree from DeviceManager once for the whole module

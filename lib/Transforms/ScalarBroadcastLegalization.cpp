@@ -39,12 +39,16 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
+#include "llvm/Support/CommandLine.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
+
+#define PASS_NAME "scalar-broadcast-legalization"
+#define DEBUG_TYPE PASS_NAME
 
 using namespace scheduler;
 using ResourceType = mlir::Attribute;
@@ -53,6 +57,11 @@ namespace scheduler {
 #define GEN_PASS_DEF_SCALARBROADCASTLEGALIZATIONPASS
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
 }  // namespace scheduler
+
+static llvm::cl::opt<bool> DisableScalarBroadcastLegalizationPass(
+    "scheduler-scalar-broadcast-legalization-disable",
+    llvm::cl::desc("Disable Scalar Broadcast Legalization pass"),
+    llvm::cl::init(false));
 
 namespace {
 

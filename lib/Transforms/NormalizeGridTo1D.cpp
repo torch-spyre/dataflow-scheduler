@@ -25,6 +25,7 @@
 #include "Ktdp/KtdpOps.hpp"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -33,6 +34,10 @@
 
 #define PASS_NAME "normalize-grid-to-1d"
 #define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisableNormalizeGridTo1DPass(
+    "scheduler-normalize-grid-to-1d-disable",
+    llvm::cl::desc("Disable Normalize Grid To 1D pass"), llvm::cl::init(false));
 
 using namespace scheduler;
 
@@ -87,6 +92,8 @@ llvm::SmallVector<mlir::Value> delinearizeRowMajor(
 struct NormalizeGridTo1DPass
     : public impl::NormalizeGridTo1DPassBase<NormalizeGridTo1DPass> {
   void runOnOperation() override {
+    if (DisableNormalizeGridTo1DPass) return;
+
     mlir::ModuleOp module = getOperation();
     auto* ctx = &getContext();
     auto index_ty = mlir::IndexType::get(ctx);

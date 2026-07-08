@@ -36,6 +36,7 @@
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -47,6 +48,10 @@
 
 #define PASS_NAME "double-buffering"
 #define DEBUG_TYPE PASS_NAME
+
+static llvm::cl::opt<bool> DisableDoubleBufferingPass(
+    "scheduler-double-buffering-disable",
+    llvm::cl::desc("Disable Double Buffering pass"), llvm::cl::init(false));
 
 namespace scheduler {
 #define GEN_PASS_DEF_DOUBLEBUFFERINGPASS
@@ -518,6 +523,8 @@ struct DoubleBufferingPass
       : scheduler_ctx_(ctx) {}
 
   void runOnOperation() override {
+    if (DisableDoubleBufferingPass) return;
+
     mlir::ModuleOp module = getOperation();
 
     LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] starting\n");
