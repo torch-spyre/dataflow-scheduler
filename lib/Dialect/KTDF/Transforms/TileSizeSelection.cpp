@@ -171,7 +171,7 @@ std::optional<int64_t> chooseTileSize(
     TileSizeValidity eval = evaluateCandidateTileSize(ts_info, candidate);
     if (eval == TileSizeValidity::kValidForAllLoops) return candidate;
   }
-  // At the very least a tile size of 1 should have been choosen.
+  // At the very least a tile size of 1 should have been chosen.
   llvm_unreachable("unresolved tile size");
   return std::nullopt;
 }
