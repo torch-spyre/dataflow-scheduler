@@ -83,7 +83,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 static llvm::cl::opt<bool> DisableTileSCFForLoopsPass(
-    "scheduler-tile-scf-for-loops-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Tile SCF For Loops pass"), llvm::cl::init(false));
 
 namespace {

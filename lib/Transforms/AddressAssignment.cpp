@@ -50,7 +50,7 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisableAddressAssignmentPass(
-    "scheduler-address-assignment-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Address Assignment pass"), llvm::cl::init(false));
 
 using namespace scheduler;

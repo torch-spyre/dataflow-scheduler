@@ -60,7 +60,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 static llvm::cl::opt<bool> DisableStripMineSCFForLoopsPass(
-    "scheduler-strip-mine-scf-for-loops-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Strip Mine SCF For Loops pass"),
     llvm::cl::init(false));
 

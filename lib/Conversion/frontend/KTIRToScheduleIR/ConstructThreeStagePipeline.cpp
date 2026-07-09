@@ -74,7 +74,7 @@ namespace {
 const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 static llvm::cl::opt<bool> DisableThisPass(
-    "construct-three-stage-pipeline-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable construction of three stage pipeline"),
     llvm::cl::init(false));
 
