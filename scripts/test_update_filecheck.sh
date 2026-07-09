@@ -21,38 +21,82 @@
 #
 # RUN: scheduler --transform %s
 
-[[ -z "${KTIRScheduler}" ]] && KTIRScheduler=${KTIR_SCHEDULER_PATH}/build/bin/scheduler
+# ---------------------------------------------------------------------------
+# Derive the scheduler binary path and LLVM monorepo source root from a
+# build directory.  Both are required to run the script.
+#   CMakeCache.txt  →  LLVM_DIR  →  LLVMConfig.cmake  →  LLVM_BUILD_MAIN_SRC_DIR
+#   LLVM_PROJ_SRC = parent of LLVM_BUILD_MAIN_SRC_DIR  (the llvm-project root)
+# ---------------------------------------------------------------------------
+function derivePathsFromBuildDir() {
+  local build_dir="$1"
+  local cmake_cache="${build_dir}/CMakeCache.txt"
 
-if [[ -z "${LLVM_PROJ_SRC}" ]]; then
-    echo "Please set LLVM_PROJ_SRC env var"
-    exit
-fi
+  if [[ ! -f "${cmake_cache}" ]]; then
+    echo "Error: CMakeCache.txt not found in '${build_dir}'"
+    exit 1
+  fi
+
+  KTIRScheduler="${build_dir}/bin/dataflow-scheduler"
+
+  # Extract the LLVM cmake directory recorded during the build.
+  # CMakeCache.txt line format:  LLVM_DIR:PATH=<path>
+  local llvm_cmake_dir
+  llvm_cmake_dir=$(grep -m1 '^LLVM_DIR:PATH=' "${cmake_cache}" | cut -d= -f2-)
+  if [[ -z "${llvm_cmake_dir}" ]]; then
+    echo "Error: LLVM_DIR not found in '${cmake_cache}'"
+    exit 1
+  fi
+
+  local llvm_config="${llvm_cmake_dir}/LLVMConfig.cmake"
+  if [[ ! -f "${llvm_config}" ]]; then
+    echo "Error: LLVMConfig.cmake not found at '${llvm_config}'"
+    exit 1
+  fi
+
+  # LLVMConfig.cmake contains a line like:
+  #   set(LLVM_BUILD_MAIN_SRC_DIR "/path/to/llvm-project/llvm")
+  local llvm_src_dir
+  llvm_src_dir=$(grep -m1 'LLVM_BUILD_MAIN_SRC_DIR' "${llvm_config}" \
+                   | sed 's/.*"\(.*\)".*/\1/')
+  if [[ -z "${llvm_src_dir}" ]]; then
+    echo "Error: LLVM_BUILD_MAIN_SRC_DIR not found in '${llvm_config}'"
+    exit 1
+  fi
+
+  # LLVM_BUILD_MAIN_SRC_DIR points to the llvm/ sub-directory of the
+  # monorepo, so the monorepo root (which contains mlir/) is its parent.
+  LLVM_PROJ_SRC="$(dirname "${llvm_src_dir}")"
+}
 
 # Usage
 function printUsage() {
   echo "Usage: $(basename $0): "
   echo "          Run command:"
-  echo "          ./scripts/test_update_filecheck.sh --testfiles=<file_name.mlir>"
+  echo "          ./scripts/test_update_filecheck.sh --build-dir=<path> --testfiles=<file_name.mlir>"
   echo
-  echo "          --scheduler scheduler binary to use. Default is ${KTIRScheduler}."
+  echo "          --build-dir   path to the scheduler build directory (required). The"
+  echo "                        dataflow-scheduler binary and LLVM source tree are derived"
+  echo "                        automatically from it via CMakeCache.txt."
   echo "          --testfiles/-f name of the test file(s). This option can accept a directory too."
   echo
   echo "          Example:"
-  echo "          ./scripts/test_update_filecheck.sh -f=test/Dialects/basic.mlir"
-  echo "          ./scripts/test_update_filecheck.sh --testfiles=test/Dialects/basic.mlir --scheduler=scheduler"
+  echo "          ./scripts/test_update_filecheck.sh --build-dir=build -f=test/Dialects/basic.mlir"
+  echo "          ./scripts/test_update_filecheck.sh --build-dir=build --testfiles=test/Dialects/basic.mlir"
   echo
   echo "          Note that your mlir test file need to have at least one of the following RUN lines:"
-  echo "          // RUN: scheduler <specific-pass-option> %s"
+  echo "          // RUN: dataflow-scheduler <specific-pass-option> %s"
 }
 
 function parseCommandLine() {
+  local build_dir=""
+
   for i in "$@"; do
     case $i in
       -f=*|--testfiles=*|--testfile=*)
         TESTFILES=${i#*=}
         ;;
-      --scheduler=*)
-        KTIRScheduler=${i#*=}
+      --build-dir=*)
+        build_dir="${i#*=}"
         ;;
       -h|--help)
         printUsage;
@@ -66,9 +110,18 @@ function parseCommandLine() {
    esac
   done
   [[ -z "$@" ]] && printUsage && exit 1
+
+  if [[ -z "${build_dir}" ]]; then
+    echo "Error: --build-dir is required"
+    printUsage
+    exit 1
+  fi
+
+  derivePathsFromBuildDir "${build_dir}"
 }
 
 function run() {
+
   files="$(find $1 -name '*.mlir')"
   for file in $files ; do
     echo "test file:" $file
