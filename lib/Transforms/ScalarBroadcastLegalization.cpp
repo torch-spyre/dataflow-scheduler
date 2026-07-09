@@ -58,6 +58,10 @@ namespace scheduler {
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
 }  // namespace scheduler
 
+namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
+}  // namespace
+
 static llvm::cl::opt<bool> DisableScalarBroadcastLegalizationPass(
     "disable-" PASS_NAME,
     llvm::cl::desc("Disable Scalar Broadcast Legalization pass"),
@@ -496,6 +500,8 @@ struct ScalarBroadcastLegalizationPass
       : scheduler_ctx_(ctx) {}
 
   void runOnOperation() override {
+    if (DisableScalarBroadcastLegalizationPass) return;
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
     mlir::ModuleOp module = getOperation();
     llvm::SmallVector<BroadcastLegalizationSite> sites;
 

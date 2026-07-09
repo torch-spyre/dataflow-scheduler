@@ -73,7 +73,7 @@ namespace scheduler {
 namespace {
 const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
-static llvm::cl::opt<bool> DisableThisPass(
+static llvm::cl::opt<bool> DisableConstructThreeStagePipelinePass(
     "disable-" PASS_NAME,
     llvm::cl::desc("Disable construction of three stage pipeline"),
     llvm::cl::init(false));
@@ -1429,7 +1429,7 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
 }
 
 void ConstructThreeStagePipelinePass::runOnOperation() {
-  if (DisableThisPass) return;
+  if (DisableConstructThreeStagePipelinePass) return;
 
   mlir::ModuleOp module = getOperation();
 

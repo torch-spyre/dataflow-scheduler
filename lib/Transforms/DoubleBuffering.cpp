@@ -50,8 +50,8 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisableDoubleBufferingPass(
-    "disable-" PASS_NAME,
-    llvm::cl::desc("Disable Double Buffering pass"), llvm::cl::init(false));
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Double Buffering pass"),
+    llvm::cl::init(false));
 
 namespace scheduler {
 #define GEN_PASS_DEF_DOUBLEBUFFERINGPASS
@@ -61,6 +61,7 @@ namespace scheduler {
 using namespace scheduler;
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 constexpr int64_t kDefaultNumPhases = 2;
 
@@ -524,6 +525,7 @@ struct DoubleBufferingPass
 
   void runOnOperation() override {
     if (DisableDoubleBufferingPass) return;
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
 
     mlir::ModuleOp module = getOperation();
 

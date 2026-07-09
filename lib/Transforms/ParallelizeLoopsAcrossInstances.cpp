@@ -64,6 +64,7 @@ namespace scheduler {
 using namespace scheduler;
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 //===----------------------------------------------------------------------===//
 // Balance Status Enum
@@ -336,6 +337,7 @@ struct ParallelizeLoopsAcrossInstancesPass
           ParallelizeLoopsAcrossInstancesPass> {
   void runOnOperation() override {
     if (DisableParallelizeLoopsAcrossInstancesPass) return;
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
 
     mlir::ModuleOp module = getOperation();
 

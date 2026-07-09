@@ -60,6 +60,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 // Run the full canonicalization pattern set (all loaded dialects + registered
 // ops) with region simplification (DCE) on `func`. Mirrors the upstream
@@ -84,6 +85,7 @@ struct KTDFLowToDFIRPass
       : scheduler_ctx_(scheduler_ctx) {}
 
   void runOnOperation() override {
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
     mlir::ModuleOp module = getOperation();
 
     // Construct MemoryTree from DeviceManager once for the whole module

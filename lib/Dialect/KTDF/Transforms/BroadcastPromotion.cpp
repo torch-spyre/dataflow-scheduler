@@ -47,6 +47,7 @@ namespace mlir::ktdf {
 }  // namespace mlir::ktdf
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 /// Find the underlying memref.alloc that defines `dest`. If `dest` is a
 /// direct alloc result, return it. If `dest` is a result of a
@@ -157,6 +158,7 @@ struct BroadcastPromotionPass
       BroadcastPromotionPass>::BroadcastPromotionPassBase;
 
   void runOnOperation() override {
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
     ModuleOp module = getOperation();
     bool changed = true;
     while (changed) {

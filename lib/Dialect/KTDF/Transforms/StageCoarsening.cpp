@@ -147,6 +147,7 @@ struct StageCoarseningPass
 //===----------------------------------------------------------------------===//
 
 void StageCoarseningPass::runOnOperation() {
+  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
   auto module_op = getOperation();
 
   LLVM_DEBUG({

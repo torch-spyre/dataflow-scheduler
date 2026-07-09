@@ -40,6 +40,7 @@
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/SCFTilingUtils.h"
 #include "llvm/Support/CommandLine.h"
+#include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -59,6 +60,10 @@ namespace scheduler {
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
 }  // namespace scheduler
 
+namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
+}  // namespace
+
 static llvm::cl::opt<bool> DisableStripMineSCFForLoopsPass(
     "disable-" PASS_NAME,
     llvm::cl::desc("Disable Strip Mine SCF For Loops pass"),
@@ -73,6 +78,7 @@ struct StripMineSCFForLoopsPass
 
   void runOnOperation() override {
     if (DisableStripMineSCFForLoopsPass) return;
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
 
     mlir::Operation* op = getOperation();
 

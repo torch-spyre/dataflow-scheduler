@@ -50,8 +50,8 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisableAddressAssignmentPass(
-    "disable-" PASS_NAME,
-    llvm::cl::desc("Disable Address Assignment pass"), llvm::cl::init(false));
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Address Assignment pass"),
+    llvm::cl::init(false));
 
 using namespace scheduler;
 
@@ -61,6 +61,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 /// Compute the upper bound for a dynamic dimension.
 /// Returns -1 if the bound cannot be computed.
@@ -318,6 +319,7 @@ struct AddressAssignmentPass
 
   void runOnOperation() override {
     if (DisableAddressAssignmentPass) return;
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
 
     mlir::ModuleOp module = getOperation();
 

@@ -107,7 +107,9 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-static llvm::cl::opt<bool> DisableThisPass(
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
+
+static llvm::cl::opt<bool> DisableComputeGroupExtractionPass(
     "disable-" PASS_NAME,
     llvm::cl::desc("Disable Compute Group Extraction pass"),
     llvm::cl::init(false));
@@ -628,7 +630,8 @@ void ComputeGroupExtractionPass::runOn(mlir::ModuleOp module_op) {
 }
 
 void ComputeGroupExtractionPass::runOnOperation() {
-  if (DisableThisPass) return;
+  if (DisableComputeGroupExtractionPass) return;
+  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
   LLVM_DEBUG(llvm::dbgs() << "Compute Group Extraction Pass\n");
   mlir::ModuleOp module_op = getOperation();
   runOn(module_op);

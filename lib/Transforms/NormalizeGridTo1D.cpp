@@ -36,8 +36,8 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisableNormalizeGridTo1DPass(
-    "disable-" PASS_NAME,
-    llvm::cl::desc("Disable Normalize Grid To 1D pass"), llvm::cl::init(false));
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Normalize Grid To 1D pass"),
+    llvm::cl::init(false));
 
 using namespace scheduler;
 
@@ -47,6 +47,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 // ASSUMPTION (runtime contract): the flat compute-tile id produced by
 // ktdp.get_compute_tile_id is numbered ROW-MAJOR over the original grid
@@ -93,6 +94,7 @@ struct NormalizeGridTo1DPass
     : public impl::NormalizeGridTo1DPassBase<NormalizeGridTo1DPass> {
   void runOnOperation() override {
     if (DisableNormalizeGridTo1DPass) return;
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
 
     mlir::ModuleOp module = getOperation();
     auto* ctx = &getContext();

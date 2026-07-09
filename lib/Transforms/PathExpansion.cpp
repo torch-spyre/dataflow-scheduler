@@ -44,8 +44,8 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisablePathExpansionPass(
-    "disable-" PASS_NAME,
-    llvm::cl::desc("Disable Path Expansion pass"), llvm::cl::init(false));
+    "disable-" PASS_NAME, llvm::cl::desc("Disable Path Expansion pass"),
+    llvm::cl::init(false));
 
 using namespace scheduler;
 
@@ -55,6 +55,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 //===----------------------------------------------------------------------===//
 // Path Expansion Pass
@@ -79,6 +80,7 @@ struct PathExpansionPass
 
 void PathExpansionPass::runOnOperation() {
   if (DisablePathExpansionPass) return;
+  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
 
   mlir::ModuleOp module_op = getOperation();
 

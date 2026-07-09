@@ -62,6 +62,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 struct KTDFToKTDFLoweringPass
     : public impl::KTDFToKTDFLoweringPassBase<KTDFToKTDFLoweringPass> {
@@ -72,6 +73,7 @@ struct KTDFToKTDFLoweringPass
       : scheduler_ctx_(scheduler_ctx) {}
 
   void runOnOperation() override {
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
     mlir::ModuleOp module = getOperation();
 
     auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();

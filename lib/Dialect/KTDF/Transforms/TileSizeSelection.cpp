@@ -49,6 +49,7 @@ namespace mlir::ktdf {
 }  // namespace mlir::ktdf
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 // TODO: should use much large size when proper L1 usage analysis is available.
 constexpr int64_t kMaxCandidateTileSize = 2;
@@ -179,6 +180,7 @@ std::optional<int64_t> chooseTileSize(
 struct TileSizeSelectionPass
     : public ktdf::impl::TileSizeSelectionPassBase<TileSizeSelectionPass> {
   void runOnOperation() override {
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
     ModuleOp module = getOperation();
 
     SmallVector<ktdf::TilingReserveSizeOp> reserve_size_ops;

@@ -72,6 +72,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
+const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 /// Check if an affine map matches the pattern ()[s0, s1] -> (-s0 + s1)
 /// or equivalent forms like ()[s0, s1] -> (s1 - s0)
@@ -239,6 +240,7 @@ struct AffineMinCanonicalizationPass
           AffineMinCanonicalizationPass> {
   void runOnOperation() override {
     if (DisableAffineMinCanonicalizationPass) return;
+    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
 
     mlir::MLIRContext* ctx = &getContext();
     mlir::RewritePatternSet patterns(ctx);
