@@ -168,7 +168,7 @@ auto getHop(const arch_view::ResourceKinds& resource_kinds, mlir::Value value,
   // Find the single ktdf.data_transfer targeting the value.
   mlir::ktdf::DataTransferOp transfer;
   for (auto* user : value.getUsers()) {
-    auto candidate = llvm::dyn_cast<mlir::ktdf::DataTransferOp>(user);
+    auto candidate = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(user);
     if (!candidate) {
       continue;
     }

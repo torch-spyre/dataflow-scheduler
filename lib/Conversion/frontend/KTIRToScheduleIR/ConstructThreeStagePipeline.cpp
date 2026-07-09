@@ -341,7 +341,7 @@ llvm::SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
          "linalg op expected to have exactly one tensor result");
 
   mlir::ShapedType shaped_type =
-      llvm::dyn_cast<mlir::ShapedType>(linalg_op->getResult(0).getType());
+      mlir::dyn_cast<mlir::ShapedType>(linalg_op->getResult(0).getType());
   assert(shaped_type && shaped_type.hasRank());
 
   mlir::Type elem_type = shaped_type.getElementType();

@@ -56,7 +56,7 @@ mlir::VectorType scheduler::getFlattenedVectorType(
     mlir::Type type, arch_view::ResourceKinds& resource_kinds) {
   // FIXME: Get this info from somewhere else.
 
-  if (auto tensor_type = llvm::dyn_cast<mlir::RankedTensorType>(type)) {
+  if (auto tensor_type = mlir::dyn_cast<mlir::RankedTensorType>(type)) {
     int64_t total_elements = 1;
     for (auto dim : tensor_type.getShape()) {
       total_elements *= dim;
@@ -77,7 +77,7 @@ mlir::VectorType scheduler::getFlattenedVectorType(
 
     return mlir::VectorType::get({total_elements}, elem_type);
   }
-  if (auto vector_type = llvm::dyn_cast<mlir::VectorType>(type)) {
+  if (auto vector_type = mlir::dyn_cast<mlir::VectorType>(type)) {
     return vector_type;
   }
   return nullptr;

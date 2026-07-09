@@ -164,7 +164,7 @@ mlir::LogicalResult processOneBufferPhasePair(
     return mlir::failure();
   }
 
-  auto select_op = llvm::dyn_cast<mlir::ktdf::SelectMemrefOp>(
+  auto select_op = mlir::dyn_cast<mlir::ktdf::SelectMemrefOp>(
       *buffer_phase_op.getResult().getUsers().begin());
   if (!select_op) {
     buffer_phase_op.emitError(
@@ -250,7 +250,7 @@ mlir::LogicalResult processOneBufferPhasePair(
     if (bp->hasAttr(PROCESSING_MARKER_ATTR)) {
       cloned_buffer_phase = bp;
       bp->removeAttr(PROCESSING_MARKER_ATTR);
-      cloned_select = llvm::dyn_cast<mlir::ktdf::SelectMemrefOp>(
+      cloned_select = mlir::dyn_cast<mlir::ktdf::SelectMemrefOp>(
           *bp.getResult().getUsers().begin());
       return mlir::WalkResult::interrupt();
     }

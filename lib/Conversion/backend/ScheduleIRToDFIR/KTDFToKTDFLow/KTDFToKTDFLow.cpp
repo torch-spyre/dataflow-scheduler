@@ -154,7 +154,7 @@ struct KTDFToKTDFLoweringPass
           if (parallel_parent) {
             // Parallel stage: look in queried_units.parallel for all corelets
             auto parallel_op =
-                llvm::dyn_cast<mlir::ktdf::ParallelOp>(parallel_parent);
+                mlir::dyn_cast<mlir::ktdf::ParallelOp>(parallel_parent);
             int num_corelets = parallel_op.getNumInstances();
             for (int corelet = 0; corelet < num_corelets; ++corelet) {
               auto parallel_key = std::make_pair(
@@ -181,7 +181,7 @@ struct KTDFToKTDFLoweringPass
                    components.parallel_components_map) {
                 if (parallel_comps.contains(component)) {
                   auto parallel_parent_op =
-                      llvm::dyn_cast<mlir::ktdf::ParallelOp>(parallel_op);
+                      mlir::dyn_cast<mlir::ktdf::ParallelOp>(parallel_op);
                   int num_corelets = parallel_parent_op.getNumInstances();
                   for (int corelet = 0; corelet < num_corelets; ++corelet) {
                     auto parallel_key = std::make_pair(

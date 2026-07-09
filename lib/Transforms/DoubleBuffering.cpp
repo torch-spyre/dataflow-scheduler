@@ -88,7 +88,7 @@ std::optional<mlir::ktdp::KtdpMemorySpaceAttr> extractMemorySpace(
     return std::nullopt;
   }
   if (auto ktdp_attr =
-          llvm::dyn_cast<mlir::ktdp::KtdpMemorySpaceAttr>(mspace_attr)) {
+          mlir::dyn_cast<mlir::ktdp::KtdpMemorySpaceAttr>(mspace_attr)) {
     return ktdp_attr;
   }
   return std::nullopt;
@@ -119,7 +119,7 @@ std::optional<CandidateShape> checkBufferShape(
   mlir::Value yielded = private_op.getResults()[slot];
 
   // a. Type check: memref.
-  auto memref_ty = llvm::dyn_cast<mlir::MemRefType>(yielded.getType());
+  auto memref_ty = mlir::dyn_cast<mlir::MemRefType>(yielded.getType());
   if (!memref_ty) {
     LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "]   slot " << slot
                             << " skipped: not a memref\n");

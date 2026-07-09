@@ -54,7 +54,7 @@ struct LowerLinalgGenericPattern
     }
 
     mlir::Block& body = generic_op.getRegion().front();
-    auto yield_op = llvm::dyn_cast<mlir::linalg::YieldOp>(body.getTerminator());
+    auto yield_op = mlir::dyn_cast<mlir::linalg::YieldOp>(body.getTerminator());
     if (!yield_op || yield_op.getNumOperands() != 1) {
       return mlir::failure();
     }
@@ -81,7 +81,7 @@ struct LowerLinalgGenericPattern
     rewriter.setInsertionPoint(generic_op);
     for (mlir::Operation* op : ops_to_lower) {
       // arith.mulf %lhs, %rhs -> vectorchain.binary {binary_op = mul}
-      if (auto mulf_op = llvm::dyn_cast<mlir::arith::MulFOp>(op)) {
+      if (auto mulf_op = mlir::dyn_cast<mlir::arith::MulFOp>(op)) {
         auto vector_type =
             getFlattenedVectorType(mulf_op.getLhs().getType(), resource_kinds_);
         if (!vector_type) return mlir::failure();
@@ -97,7 +97,7 @@ struct LowerLinalgGenericPattern
       }
 
       // arith.addf %lhs, %rhs -> vectorchain.binary {binary_op = add}
-      if (auto addf_op = llvm::dyn_cast<mlir::arith::AddFOp>(op)) {
+      if (auto addf_op = mlir::dyn_cast<mlir::arith::AddFOp>(op)) {
         auto vector_type =
             getFlattenedVectorType(addf_op.getLhs().getType(), resource_kinds_);
         if (!vector_type) return mlir::failure();
@@ -113,7 +113,7 @@ struct LowerLinalgGenericPattern
       }
 
       // arith.subf %lhs, %rhs -> vectorchain.binary {binary_op = sub}
-      if (auto subf_op = llvm::dyn_cast<mlir::arith::SubFOp>(op)) {
+      if (auto subf_op = mlir::dyn_cast<mlir::arith::SubFOp>(op)) {
         auto vector_type =
             getFlattenedVectorType(subf_op.getLhs().getType(), resource_kinds_);
         if (!vector_type) return mlir::failure();

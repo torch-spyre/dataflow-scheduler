@@ -275,7 +275,7 @@ struct LowerGetTileSizePattern
     auto tile_size = tile_sizes[0];
 
     // Find the enclosing scf.for loop that uses this IV
-    auto iv_block_arg = llvm::dyn_cast<mlir::BlockArgument>(iv);
+    auto iv_block_arg = mlir::dyn_cast<mlir::BlockArgument>(iv);
     if (!iv_block_arg) {
       derive_size_op.emitError("IV must be a block argument");
       return mlir::failure();

@@ -229,7 +229,7 @@ mlir::LogicalResult replaceSourceAChains(
     mlir::OpFoldResult reinterpret_offset = rc.getConstifiedMixedOffset();
     builder.setInsertionPointAfter(rc);
     if (auto offset_attr =
-            llvm::dyn_cast<mlir::Attribute>(reinterpret_offset)) {
+            mlir::dyn_cast<mlir::Attribute>(reinterpret_offset)) {
       // Static offset: add a constant, skipping the no-op zero case.
       int64_t reinterpret_offset_val =
           llvm::cast<mlir::IntegerAttr>(offset_attr).getInt();
