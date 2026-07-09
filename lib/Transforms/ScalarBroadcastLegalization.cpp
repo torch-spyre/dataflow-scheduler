@@ -162,36 +162,6 @@ auto getHop(const arch_view::ResourceKinds& resource_kinds,
   return llvm::success();
 }
 
-[[nodiscard]]
-auto unwrap(mlir::Value value) -> mlir::Value {
-  do {
-    auto definition = llvm::dyn_cast<mlir::OpResult>(value);
-
-    // Step through ktdf.read_from_fifo.
-    if (auto read = llvm::dyn_cast_if_present<mlir::ktdf::ReadFromFifoOp>(
-            definition.getOwner());
-        read) {
-      value = read.getFifoSlot();
-      continue;
-    }
-
-    // Step through ktdf.private.
-    if (auto priv = llvm::dyn_cast_if_present<mlir::ktdf::PrivateOp>(
-            definition.getOwner());
-        priv) {
-      value = llvm::cast<mlir::ktdf::PrivateYieldOp>(
-                  priv.getBody()->getTerminator())
-                  ->getOperand(definition.getResultNumber());
-      continue;
-    }
-
-    // TODO(kfaf): Do we need to chase down more block arguments? Do we want to
-    //             reject code that does not end in an allocation?
-  } while (false);
-
-  return value;
-}
-
 auto getHop(const arch_view::ResourceKinds& resource_kinds, mlir::Value value,
             bool is_load, llvm::SmallVectorImpl<Hop>& hops)
     -> llvm::FailureOr<mlir::Value> {

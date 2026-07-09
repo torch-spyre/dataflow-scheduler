@@ -23,7 +23,6 @@
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/IR/IntegerSet.h"
@@ -101,11 +100,8 @@ mlir::Value insertSplatShuffle(mlir::PatternRewriter& rewriter,
 struct LowerDataTransferPattern
     : public mlir::OpRewritePattern<mlir::ktdf::DataTransferOp> {
   LowerDataTransferPattern(mlir::MLIRContext* context,
-                           const SchedulerExtContext& scheduler_ctx,
                            const ResourceToUnits& components)
-      : OpRewritePattern(context),
-        scheduler_ctx_(scheduler_ctx),
-        components_(components) {}
+      : OpRewritePattern(context), components_(components) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::DataTransferOp data_transfer_op,
@@ -249,7 +245,6 @@ struct LowerDataTransferPattern
   }
 
  private:
-  const SchedulerExtContext& scheduler_ctx_;
   const ResourceToUnits& components_;
 
   /// Lower as CompositeLoadAndStore
@@ -476,8 +471,6 @@ struct LowerDataTransferPattern
 }  // namespace
 
 void scheduler::populateDataTransferLoweringPatterns(
-    mlir::RewritePatternSet& patterns, const SchedulerExtContext& scheduler_ctx,
-    const ResourceToUnits& components) {
-  patterns.add<LowerDataTransferPattern>(patterns.getContext(), scheduler_ctx,
-                                         components);
+    mlir::RewritePatternSet& patterns, const ResourceToUnits& components) {
+  patterns.add<LowerDataTransferPattern>(patterns.getContext(), components);
 }
