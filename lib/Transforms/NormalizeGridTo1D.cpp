@@ -36,7 +36,7 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisableNormalizeGridTo1DPass(
-    "scheduler-normalize-grid-to-1d-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Normalize Grid To 1D pass"), llvm::cl::init(false));
 
 using namespace scheduler;

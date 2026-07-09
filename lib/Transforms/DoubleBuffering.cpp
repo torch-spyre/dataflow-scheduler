@@ -50,7 +50,7 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisableDoubleBufferingPass(
-    "scheduler-double-buffering-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Double Buffering pass"), llvm::cl::init(false));
 
 namespace scheduler {

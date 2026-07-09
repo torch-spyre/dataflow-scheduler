@@ -44,7 +44,7 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisablePathExpansionPass(
-    "scheduler-path-expansion-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Path Expansion pass"), llvm::cl::init(false));
 
 using namespace scheduler;

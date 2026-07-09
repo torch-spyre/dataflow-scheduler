@@ -52,7 +52,7 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisableParallelizeLoopsAcrossInstancesPass(
-    "scheduler-parallelize-loops-across-instances-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Parallelize Loops Across Instances pass"),
     llvm::cl::init(false));
 

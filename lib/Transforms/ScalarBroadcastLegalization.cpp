@@ -59,7 +59,7 @@ namespace scheduler {
 }  // namespace scheduler
 
 static llvm::cl::opt<bool> DisableScalarBroadcastLegalizationPass(
-    "scheduler-scalar-broadcast-legalization-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Scalar Broadcast Legalization pass"),
     llvm::cl::init(false));
 

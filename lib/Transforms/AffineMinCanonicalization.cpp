@@ -60,7 +60,7 @@
 #define DEBUG_TYPE PASS_NAME
 
 static llvm::cl::opt<bool> DisableAffineMinCanonicalizationPass(
-    "scheduler-affine-min-canonicalization-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Affine Min Canonicalization pass"),
     llvm::cl::init(false));
 

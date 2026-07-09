@@ -108,7 +108,7 @@ namespace scheduler {
 
 namespace {
 static llvm::cl::opt<bool> DisableThisPass(
-    "compute-group-extraction-disable",
+    "disable-" PASS_NAME,
     llvm::cl::desc("Disable Compute Group Extraction pass"),
     llvm::cl::init(false));
 
