@@ -57,7 +57,6 @@ mlir::LogicalResult UnitMaterializer::materialize(
 
   assert(grid_size > 0 && "Grid size should be at-least greater than zero");
   auto loc = func_.getLoc();
-  auto* ctx = func_.getContext();
 
   // Materialize non-parallel component units: 1 per core
   for (auto component : components.non_parallel_components) {
@@ -83,7 +82,7 @@ mlir::LogicalResult UnitMaterializer::materialize(
   // Materialize parallel component units: 1 per corelet per core
   for (auto& [parallel_op, components_in_parallel] :
        components.parallel_components_map) {
-    auto parallel = dyn_cast<mlir::ktdf::ParallelOp>(parallel_op);
+    auto parallel = mlir::dyn_cast<mlir::ktdf::ParallelOp>(parallel_op);
     if (!parallel) continue;
 
     int num_instances = parallel.getNumInstances();

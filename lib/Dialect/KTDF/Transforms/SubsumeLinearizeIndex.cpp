@@ -111,12 +111,14 @@ struct SubsumeLinearizeIndexPass
       // Process source side independently if it has a map and foldable indices.
       if (AffineMapAttr src_attr = transfer.getSourceMapAttr()) {
         if (llvm::any_of(transfer.getSourceIndices(), is_foldable)) {
-          auto [new_map, new_ops] =
+          auto result_src =
               rewriteMapOperands(rewriter, src_attr.getValue(),
                                  transfer.getSourceIndices(), transfer);
+          auto src_map = result_src.first;
+          auto src_ops = result_src.second;
           rewriter.modifyOpInPlace(transfer, [&]() {
-            transfer.setSourceMapAttr(AffineMapAttr::get(new_map));
-            transfer.getSourceIndicesMutable().assign(new_ops);
+            transfer.setSourceMapAttr(AffineMapAttr::get(src_map));
+            transfer.getSourceIndicesMutable().assign(src_ops);
           });
         }
       }
@@ -124,12 +126,14 @@ struct SubsumeLinearizeIndexPass
       // Process dest side independently if it has a map and foldable indices.
       if (AffineMapAttr dst_attr = transfer.getDestMapAttr()) {
         if (llvm::any_of(transfer.getDestIndices(), is_foldable)) {
-          auto [new_map, new_ops] =
+          auto result_dst =
               rewriteMapOperands(rewriter, dst_attr.getValue(),
                                  transfer.getDestIndices(), transfer);
+          auto dst_map = result_dst.first;
+          auto dst_ops = result_dst.second;
           rewriter.modifyOpInPlace(transfer, [&]() {
-            transfer.setDestMapAttr(AffineMapAttr::get(new_map));
-            transfer.getDestIndicesMutable().assign(new_ops);
+            transfer.setDestMapAttr(AffineMapAttr::get(dst_map));
+            transfer.getDestIndicesMutable().assign(dst_ops);
           });
         }
       }

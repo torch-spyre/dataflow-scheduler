@@ -57,11 +57,9 @@ namespace {
 struct LowerReadFromFifoPattern
     : public mlir::OpRewritePattern<mlir::ktdf::ReadFromFifoOp> {
   LowerReadFromFifoPattern(mlir::MLIRContext* context,
-                           const SchedulerExtContext& scheduler_ctx,
                            arch_view::ResourceKinds& resource_kinds,
                            const ResourceToUnits& components)
       : OpRewritePattern(context),
-        scheduler_ctx_(scheduler_ctx),
         resource_kinds_(resource_kinds),
         components_(components) {}
 
@@ -129,7 +127,6 @@ struct LowerReadFromFifoPattern
   }
 
  private:
-  const SchedulerExtContext& scheduler_ctx_;
   arch_view::ResourceKinds& resource_kinds_;
   const ResourceToUnits& components_;
 };
@@ -137,11 +134,9 @@ struct LowerReadFromFifoPattern
 struct LowerWriteToFifoPattern
     : public mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
   LowerWriteToFifoPattern(mlir::MLIRContext* context,
-                          const SchedulerExtContext& scheduler_ctx,
                           arch_view::ResourceKinds& resource_kinds,
                           const ResourceToUnits& components)
       : OpRewritePattern(context),
-        scheduler_ctx_(scheduler_ctx),
         resource_kinds_(resource_kinds),
         components_(components) {}
 
@@ -207,7 +202,6 @@ struct LowerWriteToFifoPattern
   }
 
  private:
-  const SchedulerExtContext& scheduler_ctx_;
   arch_view::ResourceKinds& resource_kinds_;
   const ResourceToUnits& components_;
 };
@@ -441,12 +435,12 @@ mlir::LogicalResult scheduler::runOperationLowerings(
     arch_view::ResourceKinds& resource_kinds) {
   // Lower linalg.generic compute operations and FIFO operations
   mlir::RewritePatternSet patterns(func.getContext());
-  populateLinalgLoweringPatterns(patterns, scheduler_ctx, resource_kinds);
-  patterns.add<LowerReadFromFifoPattern>(func.getContext(), scheduler_ctx,
-                                         resource_kinds, components);
-  patterns.add<LowerWriteToFifoPattern>(func.getContext(), scheduler_ctx,
-                                        resource_kinds, components);
-  populateDataTransferLoweringPatterns(patterns, scheduler_ctx, components);
+  populateLinalgLoweringPatterns(patterns, resource_kinds);
+  patterns.add<LowerReadFromFifoPattern>(func.getContext(), resource_kinds,
+                                         components);
+  patterns.add<LowerWriteToFifoPattern>(func.getContext(), resource_kinds,
+                                        components);
+  populateDataTransferLoweringPatterns(patterns, components);
   patterns.add<LowerSignalPattern>(func.getContext(), scheduler_ctx,
                                    components);
   patterns.add<LowerGetTileSizePattern>(func.getContext(), scheduler_ctx,

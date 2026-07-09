@@ -25,7 +25,6 @@
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -43,11 +42,8 @@ namespace {
 struct LowerLinalgGenericPattern
     : public mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   LowerLinalgGenericPattern(mlir::MLIRContext* context,
-                            const SchedulerExtContext& scheduler_ctx,
                             arch_view::ResourceKinds& resource_kinds)
-      : OpRewritePattern(context),
-        scheduler_ctx_(scheduler_ctx),
-        resource_kinds_(resource_kinds) {}
+      : OpRewritePattern(context), resource_kinds_(resource_kinds) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::linalg::GenericOp generic_op,
@@ -139,15 +135,14 @@ struct LowerLinalgGenericPattern
   }
 
  private:
-  const SchedulerExtContext& scheduler_ctx_;
   arch_view::ResourceKinds& resource_kinds_;
 };
 
 }  // namespace
 
 void scheduler::populateLinalgLoweringPatterns(
-    mlir::RewritePatternSet& patterns, const SchedulerExtContext& scheduler_ctx,
+    mlir::RewritePatternSet& patterns,
     arch_view::ResourceKinds& resource_kinds) {
-  patterns.add<LowerLinalgGenericPattern>(patterns.getContext(), scheduler_ctx,
+  patterns.add<LowerLinalgGenericPattern>(patterns.getContext(),
                                           resource_kinds);
 }

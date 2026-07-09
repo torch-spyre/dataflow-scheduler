@@ -129,7 +129,7 @@ mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
 
   llvm::SmallVector<mlir::ktdf::PrivateOp, 4> private_ops;
   for (auto& op : llvm::make_early_inc_range(pipeline_body->getOperations())) {
-    if (auto private_op = dyn_cast<mlir::ktdf::PrivateOp>(&op)) {
+    if (auto private_op = llvm::dyn_cast<mlir::ktdf::PrivateOp>(&op)) {
       private_ops.push_back(private_op);
     }
   }
@@ -149,7 +149,8 @@ mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
     // Replace uses of private_op results with the values yielded by
     // private_yield
     auto terminator = private_body->getTerminator();
-    if (auto yield_op = dyn_cast<mlir::ktdf::PrivateYieldOp>(terminator)) {
+    if (auto yield_op =
+            llvm::dyn_cast<mlir::ktdf::PrivateYieldOp>(terminator)) {
       for (size_t i = 0; i < private_op.getNumResults(); ++i) {
         private_op.getResult(i).replaceAllUsesWith(yield_op.getOperand(i));
       }
