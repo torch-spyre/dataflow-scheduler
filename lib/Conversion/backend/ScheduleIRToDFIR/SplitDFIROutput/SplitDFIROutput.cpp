@@ -20,7 +20,7 @@
 //
 // This pass takes a module containing function declarations and definitions
 // with dataflow.program_unit ops, and splits it into:
-//   - global.mlir: All function declarations (excluding _keep_alive functions)
+//   - global.mlir: All function declarations
 //   - <func-name>.mlir: Each function definition containing program_unit ops
 //
 // Example:
@@ -151,18 +151,13 @@ struct SplitDFIROutputPass
       return found;
     };
 
-    auto isKeepAlive = [](mlir::func::FuncOp func) -> bool {
-      return func.getSymName().ends_with("_keep_alive");
-    };
-
-    // Build global.mlir from decl_module (drop keep_alive).
+    // Build global.mlir from decl_module.
     {
       mlir::OwningOpRef<mlir::ModuleOp> global_mod =
           mlir::ModuleOp::create(builder.getUnknownLoc());
       mlir::OpBuilder gb(global_mod->getBodyRegion());
       for (auto& op : decl_module.getBodyRegion().front()) {
         if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(op)) {
-          if (isKeepAlive(func)) continue;
           auto* cloned = gb.clone(op);
           if (auto f = mlir::dyn_cast<mlir::func::FuncOp>(cloned))
             f.setVisibility(mlir::SymbolTable::Visibility::Public);
@@ -178,7 +173,7 @@ struct SplitDFIROutputPass
     bool found_impl = false;
     for (auto& op : impl_module.getBodyRegion().front()) {
       auto func = mlir::dyn_cast<mlir::func::FuncOp>(op);
-      if (!func || isKeepAlive(func) || !hasProgramUnits(func)) continue;
+      if (!func || !hasProgramUnits(func)) continue;
       found_impl = true;
 
       mlir::OwningOpRef<mlir::ModuleOp> impl_mod =

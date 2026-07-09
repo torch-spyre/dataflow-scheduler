@@ -8,13 +8,11 @@
 // GLOBAL: func.func @Add_155
 // GLOBAL: call @"local-schedule-0"
 // GLOBAL: func.func private @"local-schedule-0"()
-// GLOBAL-NOT: keep_alive
 // GLOBAL-NOT: dataflow.program_unit
 
 // IMPL-LABEL: module {
 // IMPL: func.func private @"local-schedule-0"
 // IMPL: dataflow.program_unit
-// IMPL-NOT: keep_alive
 // IMPL-NOT: func.func @Add_155
 
 #map = affine_map<(d0) -> (d0)>
@@ -25,10 +23,6 @@ module {
       return
     }
     func.func private @"local-schedule-0"()
-    func.func private @"local-schedule-0_keep_alive"() {
-      call @"local-schedule-0"() : () -> ()
-      return
-    }
   }
   module {
     func.func private @"local-schedule-0"() attributes {grid = [1]} {
@@ -36,10 +30,6 @@ module {
       dataflow.program_unit iter_arg : %arg0 -> (%0) : {
         "test.op"() : () -> ()
       }
-      return
-    }
-    func.func private @"local-schedule-0_keep_alive"() {
-      call @"local-schedule-0"() : () -> ()
       return
     }
   }

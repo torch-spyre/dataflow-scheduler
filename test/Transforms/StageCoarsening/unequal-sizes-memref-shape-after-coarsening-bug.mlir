@@ -114,9 +114,5 @@ module {
       } {loop_type = #ktdf.loop_type<parallel_loop>}
       return
     }
-    func.func private @"local-schedule-0_keep_alive"() {
-      call @"local-schedule-0"() : () -> ()
-      return
-    }
   }
 }

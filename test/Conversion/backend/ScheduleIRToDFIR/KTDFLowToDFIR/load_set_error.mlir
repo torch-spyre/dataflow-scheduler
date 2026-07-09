@@ -286,10 +286,6 @@
 // CHECK-NEXT:       }
 // CHECK-NEXT:       return
 // CHECK-NEXT:     }
-// CHECK-NEXT:     func.func private @"local-schedule-0_keep_alive"() {
-// CHECK-NEXT:       call @"local-schedule-0"() : () -> ()
-// CHECK-NEXT:       return
-// CHECK-NEXT:     }
 // CHECK-NEXT:   }
 
 
@@ -449,10 +445,6 @@ module {
           }
         } {loop_type = #ktdf.loop_type<parallel_loop>}
       } {loop_type = #ktdf.loop_type<parallel_loop>}
-      return
-    }
-    func.func private @"local-schedule-0_keep_alive"() {
-      call @"local-schedule-0"() : () -> ()
       return
     }
   }

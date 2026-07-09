@@ -83,10 +83,9 @@ def SplitDFIROutputPass : Pass<"emit-split-dfir", "mlir::ModuleOp"> {
   let description = [{
     Converts the two-level hierarchical DFIR produced by KTDFLowToDFIRPass
     into a set of flat modules, one per function, written to disk:
-      - global.mlir: declaration module (entry functions + forward decls),
-        keep_alive functions dropped
+      - global.mlir: declaration module (entry functions + forward decls)
       - <funcname>.mlir: one file per implementation function that contains
-        dataflow.program_unit ops, keep_alive functions dropped
+        dataflow.program_unit ops
     Top-level aliases (#map, #set) are copied into every output module.
   }];
   let constructor = "::scheduler::createSplitDFIROutputPass()";
