@@ -53,6 +53,7 @@ endif()
 
 option(DataflowScheduler_ENABLE_PYTHON_BINDINGS "Build Python bindings" NO)
 option(DataflowScheduler_BUILD_TOOLS "Build tool executables" ${PROJECT_IS_TOP_LEVEL})
+option(DataflowScheduler_ENABLE_WERROR "Treat compiler warnings as errors (-Werror)" YES)
 
 #
 # Umbrella targets
@@ -114,6 +115,14 @@ endif()
 add_subdirectory(external)
 add_dependencies(dataflow-scheduler-headers dataflow-scheduler-dialects-headers ktir-headers)
 add_dependencies(dataflow-scheduler-doc dataflow-scheduler-dialects-doc ktir-doc)
+
+# Treat warnings as errors for all first-party sources. This block is
+# intentionally placed after add_subdirectory(external) so that the flag is
+# not applied to third-party submodules.
+if(DataflowScheduler_ENABLE_WERROR)
+  add_compile_options(-Werror)
+  message(STATUS "DataflowScheduler: -Werror enabled for first-party sources")
+endif()
 
 # Include DataflowScheduler CMake module.
 set(KTIR_INCLUDE_DIRS 
