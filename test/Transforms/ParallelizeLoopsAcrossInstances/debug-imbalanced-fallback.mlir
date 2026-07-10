@@ -3,7 +3,7 @@
 // Verify debug log emits the imbalanced-fallback line with the exact
 // trip count, num_instances, and the per-instance chunk sizes.
 
-// DEBUG: [parallelize-loops-across-instances] imbalanced (fallback) at loc({{.*}}): trip=5, num_instances=2, chunks=3,2
+// DEBUG: [parallelize-loops-across-instances {{.*}}] imbalanced (fallback) at loc({{.*}}): trip=5, num_instances=2, chunks=3,2
 
 module {
   ktdf_arch.device @sample_device attributes {} import("../../Dialect/KTDFArch/sample_device.mlir")

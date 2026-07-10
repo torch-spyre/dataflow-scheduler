@@ -3,7 +3,7 @@
 // Verify debug log emits the balanced-candidate line with the exact
 // trip count and num_instances.
 
-// DEBUG: [parallelize-loops-across-instances] balanced candidate at loc({{.*}}): trip=4, num_instances=2
+// DEBUG: [parallelize-loops-across-instances {{.*}}] balanced candidate at loc({{.*}}): trip=4, num_instances=2
 
 module {
   ktdf_arch.device @sample_device attributes {} import("../../Dialect/KTDFArch/sample_device.mlir")
