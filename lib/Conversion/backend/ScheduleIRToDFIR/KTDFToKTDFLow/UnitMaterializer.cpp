@@ -24,7 +24,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 
 #define DEBUG_TYPE "ktdf-to-operand-lowering"
 
@@ -53,7 +53,7 @@ static std::string unitTypeTag(ResourceType rt) {
 mlir::LogicalResult UnitMaterializer::materialize(
     const ComponentClassification& components, int grid_size,
     UnitSSAMap& unit_ssa_map, mlir::OpBuilder& builder) {
-  LLVM_DEBUG(llvm::dbgs() << "Step 3: Materialize units\n");
+  LDBG(1) << "Step 3: Materialize units";
 
   assert(grid_size > 0 && "Grid size should be at-least greater than zero");
   auto loc = func_.getLoc();
@@ -74,8 +74,8 @@ mlir::LogicalResult UnitMaterializer::materialize(
       mlir::Value unit_value = get_unit_op.getUnit();
       unit_ssa_map.non_parallel[std::make_pair(component, core)] = unit_value;
 
-      LLVM_DEBUG(llvm::dbgs() << "  Created non-parallel unit for " << comp_name
-                              << " core " << core << "\n");
+      LDBG(1) << "  Created non-parallel unit for " << comp_name << " core "
+              << core;
     }
   }
 
@@ -107,15 +107,14 @@ mlir::LogicalResult UnitMaterializer::materialize(
           unit_ssa_map.parallel[std::make_tuple(parallel_op, component, corelet,
                                                 core)] = unit_value;
 
-          LLVM_DEBUG(llvm::dbgs()
-                     << "  Created parallel unit for " << comp_name
-                     << " corelet " << corelet << " core " << core << "\n");
+          LDBG(1) << "  Created parallel unit for " << comp_name << " corelet "
+                  << corelet << " core " << core;
         }
       }
     }
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "Unit materialization complete\n");
+  LDBG(1) << "Unit materialization complete";
   return mlir::success();
 }
 
@@ -123,7 +122,7 @@ mlir::LogicalResult UnitMaterializer::materializeMemoryUnits(
     const llvm::SetVector<ResourceType>& needed_spaces, int grid_size,
     const scheduler::arch_view::MemoryTree& memory_tree,
     MemoryUnitSSAMap& memory_unit_ssa, mlir::OpBuilder& builder) {
-  LLVM_DEBUG(llvm::dbgs() << "Materializing memory units\n");
+  LDBG(1) << "Materializing memory units";
   auto loc = func_.getLoc();
 
   for (auto mspace_attr : needed_spaces) {
@@ -139,8 +138,7 @@ mlir::LogicalResult UnitMaterializer::materializeMemoryUnits(
           builder, loc, mlir::TypeRange{builder.getIndexType()}, type_tag,
           type_tag);
       memory_unit_ssa[{mspace_attr, -1}] = get_unit_op.getUnit();
-      LLVM_DEBUG(llvm::dbgs()
-                 << "  Created global memory unit for " << space_name << "\n");
+      LDBG(1) << "  Created global memory unit for " << space_name;
     } else if (memory_tree.isPerCoreScratchPadMemory(mspace_attr)) {
       for (int core = 0; core < grid_size; ++core) {
         auto unit_name = "C" + std::to_string(core) + "-" + type_tag;
@@ -149,8 +147,8 @@ mlir::LogicalResult UnitMaterializer::materializeMemoryUnits(
             type_tag);
         get_unit_op->setAttr("core", builder.getI32IntegerAttr(core));
         memory_unit_ssa[{mspace_attr, core}] = get_unit_op.getUnit();
-        LLVM_DEBUG(llvm::dbgs() << "  Created per-core memory unit for "
-                                << space_name << " core " << core << "\n");
+        LDBG(1) << "  Created per-core memory unit for " << space_name
+                << " core " << core;
       }
     } else {
       return func_.emitError("Unknown memory space classification for: ")

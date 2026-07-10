@@ -22,7 +22,7 @@
 
 #include "Ktdp/KtdpOps.hpp"
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -41,7 +41,6 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 // A scalar op inside a linalg.generic body is legal iff it is one of the
 // add/mul/sub float arith ops the backend lowers, or the yield terminator.
@@ -53,7 +52,7 @@ bool isLegalGenericBodyOp(mlir::Operation* op) {
 struct KTIRLegalityCheckPass
     : public impl::KTIRLegalityCheckPassBase<KTIRLegalityCheckPass> {
   void runOnOperation() final {
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    LDBG(1) << "========= " PASS_NAME " =========";
     mlir::ModuleOp module = getOperation();
     bool failed = false;
 

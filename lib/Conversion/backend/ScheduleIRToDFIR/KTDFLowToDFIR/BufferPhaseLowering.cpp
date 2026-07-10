@@ -26,7 +26,7 @@
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
@@ -239,7 +239,7 @@ mlir::LogicalResult processOneBufferPhasePair(
   auto cloned_loops = cloneLoopChainWithDoubleBufferingIterArgs(
       loops, initial_offset, offset_sum, mode);
 
-  LLVM_DEBUG(llvm::dbgs() << "Loops cloned, finding marked buffer_phase_op\n");
+  LDBG(1) << "Loops cloned, finding marked buffer_phase_op";
 
   // Find the cloned buffer_phase by marker
   auto cloned_outermost = cloned_loops[loops.front()];
@@ -263,7 +263,7 @@ mlir::LogicalResult processOneBufferPhasePair(
     return mlir::failure();
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "Found cloned buffer_phase and select_memref\n");
+  LDBG(1) << "Found cloned buffer_phase and select_memref";
 
   // Compute the offset value for get_logical_memory_view.
   // Mode A: iter_arg (toggle is at yield).

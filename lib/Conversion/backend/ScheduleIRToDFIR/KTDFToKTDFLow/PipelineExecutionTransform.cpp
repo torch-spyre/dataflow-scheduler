@@ -20,7 +20,7 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "llvm/ADT/DenseSet.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/IR/Dominance.h"
 
 #define DEBUG_TYPE "phase2-transformation"
@@ -31,7 +31,7 @@ mlir::LogicalResult scheduler::transformStagesToExecuteOn(
     mlir::ktdf::PipelineOp pipeline,
     const llvm::SmallVector<mlir::ktdf::StageOp, 8>& sorted_stages,
     const StageToUnitsMap& stage_to_units, mlir::OpBuilder& builder) {
-  LLVM_DEBUG(llvm::dbgs() << "Step 9: Transform stages to execute_on\n");
+  LDBG(1) << "Step 9: Transform stages to execute_on";
 
   for (auto stage : sorted_stages) {
     auto units_it = stage_to_units.mapping.find(stage.getOperation());
@@ -44,8 +44,8 @@ mlir::LogicalResult scheduler::transformStagesToExecuteOn(
       return stage.emitError("Stage has empty unit list");
     }
 
-    LLVM_DEBUG(llvm::dbgs() << "  Creating execute_on for stage with "
-                            << stage_units.size() << " units\n");
+    LDBG(1) << "  Creating execute_on for stage with " << stage_units.size()
+            << " units";
 
     // Create execute_on before the stage
     builder.setInsertionPoint(stage);
@@ -67,18 +67,15 @@ mlir::LogicalResult scheduler::transformStagesToExecuteOn(
                                          original_stage_body->getOperations());
     }
 
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Moved " << num_ops << " operations into execute_on\n");
+    LDBG(1) << "  Moved " << num_ops << " operations into execute_on";
 
     // Replace stage with execute_on by moving execute_on before stage
     stage_execute_on->moveBefore(stage.getOperation());
 
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Transformed stage to execute_on and replaced\n");
+    LDBG(1) << "  Transformed stage to execute_on and replaced";
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "  All " << sorted_stages.size()
-                          << " stages transformed\n");
+  LDBG(1) << "  All " << sorted_stages.size() << " stages transformed";
   return mlir::success();
 }
 
@@ -86,7 +83,7 @@ mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
     mlir::ktdf::PipelineOp pipeline,
     const llvm::SmallVector<mlir::ktdf::StageOp, 8>& sorted_stages,
     const StageToUnitsMap& stage_to_units, mlir::OpBuilder& builder) {
-  LLVM_DEBUG(llvm::dbgs() << "Step 11: Transform pipeline to execute_on\n");
+  LDBG(1) << "Step 11: Transform pipeline to execute_on";
 
   llvm::SmallVector<mlir::Value, 16> all_units;
   llvm::DenseSet<mlir::Value> seen_units;
@@ -108,8 +105,8 @@ mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
     return pipeline.emitError("No units found for pipeline execute_on");
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "  Creating pipeline execute_on with "
-                          << all_units.size() << " units\n");
+  LDBG(1) << "  Creating pipeline execute_on with " << all_units.size()
+          << " units";
 
   // Create pipeline execute_on before the pipeline
   mlir::OpBuilder::InsertPoint insert_pt = builder.saveInsertionPoint();
@@ -136,7 +133,7 @@ mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
 
   // Inline ktdf.private operations and move their non-terminator ops
   for (auto private_op : private_ops) {
-    LLVM_DEBUG(llvm::dbgs() << "  Inlining ktdf.private operations\n");
+    LDBG(1) << "  Inlining ktdf.private operations";
 
     mlir::Block* private_body = private_op.getBody();
     auto& ops = private_body->getOperations();
@@ -171,6 +168,6 @@ mlir::LogicalResult scheduler::transformPipelineToExecuteOn(
 
   builder.restoreInsertionPoint(insert_pt);
 
-  LLVM_DEBUG(llvm::dbgs() << "  Pipeline transformed to execute_on\n");
+  LDBG(1) << "  Pipeline transformed to execute_on";
   return mlir::success();
 }

@@ -24,6 +24,7 @@
 
 #include "dataflow-scheduler/Analysis/PipelineTree.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "llvm/Support/raw_ostream.h"
 
 #define DEBUG_TYPE "pipeline-tree-legalizer"
@@ -60,8 +61,8 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
 
   assert(violating_node->isPipelineNode() && "Expected pipeline node");
 
-  LLVM_DEBUG(llvm::dbgs() << "      Wrapping illegal children of pipeline "
-                          << violating_node->getNodeName() << "\n");
+  LDBG(1) << "      Wrapping illegal children of pipeline "
+          << violating_node->getNodeName();
 
   // Group consecutive illegal children
   llvm::SmallVector<llvm::SmallVector<PipelineTreeNode*>> illegal_groups;
@@ -90,9 +91,8 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
 
   // Wrap each group in a new stage
   for (const auto& group : illegal_groups) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "        Creating coarsened stage wrapper for "
-               << group.size() << " consecutive illegal child(ren)\n");
+    LDBG(1) << "        Creating coarsened stage wrapper for " << group.size()
+            << " consecutive illegal child(ren)";
 
     // Create a new coarsened stage
     StageNode* new_stage = tree.createStageNode(nullptr, next_stage_id++);
@@ -110,8 +110,7 @@ bool PipelineChildrenRule::fixViolation(PipelineTreeNode* violating_node,
     // child)
     violating_node->insertChildNode(new_stage, insert_before);
 
-    LLVM_DEBUG(llvm::dbgs() << "        Created coarsened stage "
-                            << (next_stage_id - 1) << "\n");
+    LDBG(1) << "        Created coarsened stage " << (next_stage_id - 1);
   }
   return true;
 }
@@ -135,8 +134,8 @@ bool StageParentRule::isViolated(PipelineTreeNode* node,
 bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
                                    PipelineTree& tree,
                                    int& next_coarsened_stage_id) {
-  LLVM_DEBUG(llvm::dbgs() << "      Creating nested pipeline for stage "
-                          << violating_node->getNodeName() << "\n");
+  LDBG(1) << "      Creating nested pipeline for stage "
+          << violating_node->getNodeName();
   assert(violating_node->isStageNode() && "Expected stage node");
 
   // Get the non-pipeline parent
@@ -162,13 +161,13 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
         assert(ancestor_pipeline->getTemplateOp());
         nested_pipeline->setTemplateOp(ancestor_pipeline->getTemplateOp());
       }
-      LLVM_DEBUG(llvm::dbgs() << "      Set template from ancestor pipeline\n");
+      LDBG(1) << "      Set template from ancestor pipeline";
       break;
     }
     ancestor = ancestor->getParentNode();
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "      Created nested pipeline node\n");
+  LDBG(1) << "      Created nested pipeline node";
 
   // Collect all stage siblings that should move to the nested pipeline
   // (all stages that are children of the same non-pipeline parent)
@@ -182,8 +181,8 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
     child = child->getNextSibling();
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "      Moving " << stages_to_move.size()
-                          << " stage(s) to nested pipeline\n");
+  LDBG(1) << "      Moving " << stages_to_move.size()
+          << " stage(s) to nested pipeline";
 
   // Insert the nested pipeline as a child of the parent
   // Get the position before the first stage
@@ -199,8 +198,7 @@ bool StageParentRule::fixViolation(PipelineTreeNode* violating_node,
     nested_pipeline->insertChildNode(stage);
   }
 
-  LLVM_DEBUG(
-      { llvm::dbgs() << "      Nested pipeline created successfully\n"; });
+  LDBG(1) << "      Nested pipeline created successfully";
   return true;
 }
 
@@ -238,9 +236,8 @@ bool PrivateMustExistRule::fixViolation(PipelineTreeNode* violating_node,
                                         int& next_coarsened_stage_id) {
   assert(violating_node->isPipelineNode() && "Expected pipeline node");
 
-  LLVM_DEBUG(
-      llvm::dbgs() << "      Creating private node as first child of pipeline "
-                   << violating_node->getNodeName() << "\n");
+  LDBG(1) << "      Creating private node as first child of pipeline "
+          << violating_node->getNodeName();
 
   // Create a new private node (unmaterialized)
   PrivateNode* new_private = tree.createPrivateNode(nullptr);
@@ -248,7 +245,7 @@ bool PrivateMustExistRule::fixViolation(PipelineTreeNode* violating_node,
   // Insert the private node as the first child of the pipeline
   violating_node->insertAsFirstChild(new_private);
 
-  LLVM_DEBUG(llvm::dbgs() << "      Created private node as first child\n");
+  LDBG(1) << "      Created private node as first child";
   return true;
 }
 
@@ -285,15 +282,14 @@ int Legalizer::findAndFixViolations(PipelineTree& tree) {
         return node;
       });
 
-  LLVM_DEBUG(llvm::dbgs() << "  Starting coarsened stage IDs at "
-                          << next_coarsened_stage_id_ << "\n");
+  LDBG(1) << "  Starting coarsened stage IDs at " << next_coarsened_stage_id_;
 
   // Collect initial violations
   violations_.clear();
   collectViolations(tree);
 
   if (violations_.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "  No structure violations found.\n");
+    LDBG(1) << "  No structure violations found.";
     return 0;
   }
 
@@ -336,8 +332,7 @@ int Legalizer::findAndFixViolations(PipelineTree& tree) {
     collectViolations(tree);
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "  All violations resolved after " << iteration
-                          << " iteration(s)\n");
+  LDBG(1) << "  All violations resolved after " << iteration << " iteration(s)";
   return iteration;
 }
 

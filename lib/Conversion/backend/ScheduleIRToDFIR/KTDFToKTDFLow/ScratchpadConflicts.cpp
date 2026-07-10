@@ -31,7 +31,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Links.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 
 #define DEBUG_TYPE "phase2-analysis"
 
@@ -91,7 +91,7 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
     const arch_view::ResourceKinds& resource_kinds,
     std::map<std::pair<mlir::Operation*, mlir::Operation*>,
              llvm::SmallVector<scheduler::ResourceType, 2>>& conflicts) {
-  LLVM_DEBUG(llvm::dbgs() << "Step 3: Compute scratchpad conflicts\n");
+  LDBG(1) << "Step 3: Compute scratchpad conflicts";
 
   for (const auto& [producer_op, successors] : dag.successors) {
     auto producer_stage = mlir::dyn_cast<mlir::ktdf::StageOp>(producer_op);
@@ -148,10 +148,8 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
           bool has_conflict = false;
           for (const auto& written : producer_writes) {
             if (consumer_reads.contains(written)) {
-              LLVM_DEBUG(llvm::dbgs()
-                         << "  Found conflict between " << producer_comp
-                         << " and " << consumer_comp << " in " << written
-                         << "\n");
+              LDBG(1) << "  Found conflict between " << producer_comp << " and "
+                      << consumer_comp << " in " << written;
               has_conflict = true;
               break;
             }
@@ -166,8 +164,8 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
 
       if (!conflicting_units.empty()) {
         conflicts[{producer_op, consumer_op}] = conflicting_units;
-        LLVM_DEBUG(llvm::dbgs() << "  Conflict between stages: " << producer_op
-                                << " -> " << consumer_op << "\n");
+        LDBG(1) << "  Conflict between stages: " << producer_op << " -> "
+                << consumer_op;
       }
     }
   }

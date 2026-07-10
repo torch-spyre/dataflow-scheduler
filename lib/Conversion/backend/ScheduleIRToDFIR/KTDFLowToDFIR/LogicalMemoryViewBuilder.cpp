@@ -28,7 +28,7 @@
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/AffineMap.h"
@@ -110,7 +110,7 @@ llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
           ucc.getOutputs()[0].getUsers().end());
       for (mlir::Operation* d : deallocs) d->erase();
       op->erase();
-      LLVM_DEBUG(llvm::dbgs() << "  Pruned dealloc-only cast\n");
+      LDBG(1) << "  Pruned dealloc-only cast";
     }
   });
 
@@ -411,13 +411,12 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
     mlir::func::FuncOp func,
     const scheduler::arch_view::MemoryTree& memory_tree,
     const SchedulerExtContext& ext_ctx) {
-  LLVM_DEBUG(llvm::dbgs() << "buildLogicalMemoryViews on " << func.getName()
-                          << "\n");
+  LDBG(1) << "buildLogicalMemoryViews on " << func.getName();
 
   // Phase 1: discover needed memory spaces and prune dealloc-only casts.
   auto needed_spaces = discoverAndPrune(func);
   if (needed_spaces.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "  No memory spaces found; skipping\n");
+    LDBG(1) << "  No memory spaces found; skipping";
     return mlir::success();
   }
 

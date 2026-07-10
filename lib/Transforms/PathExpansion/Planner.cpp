@@ -27,6 +27,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
@@ -621,9 +622,8 @@ mlir::LogicalResult validateLinearChain(
 
     // Each stage should have at most one outgoing dependency
     if (deps.size() > 1) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "Stage " << stage->getStageId()
-                 << " has multiple outgoing dependencies (branching)\n");
+      LDBG(1) << "Stage " << stage->getStageId()
+              << " has multiple outgoing dependencies (branching)";
       return mlir::failure();
     }
 
@@ -651,18 +651,16 @@ mlir::LogicalResult validateLinearChain(
     // In a linear chain, each non-source stage should have exactly 1 incoming
     // edge
     if (incoming > 1) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "Stage " << stage->getStageId()
-                 << " has multiple incoming dependencies (merging)\n");
+      LDBG(1) << "Stage " << stage->getStageId()
+              << " has multiple incoming dependencies (merging)";
       return mlir::failure();
     }
   }
 
   // Should have exactly one source and one sink
   if (source_count != 1 || sink_count != 1) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "Expected 1 source and 1 sink, got " << source_count
-               << " sources and " << sink_count << " sinks\n");
+    LDBG(1) << "Expected 1 source and 1 sink, got " << source_count
+            << " sources and " << sink_count << " sinks";
     return mlir::failure();
   }
 
@@ -807,8 +805,7 @@ static llvm::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
     PathExpansionPlan* plan, int& next_stage_id) {
   StageNode* last_inserted_stage = nullptr;
 
-  LLVM_DEBUG(llvm::dbgs() << "Original stages: "
-                          << original_sorted_stages.size() << "\n");
+  LDBG(1) << "Original stages: " << original_sorted_stages.size();
 
   for (size_t i = 0; i < original_sorted_stages.size(); ++i) {
     StageNode* current_stage = original_sorted_stages[i];
@@ -876,7 +873,7 @@ static llvm::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
                                  next_resource, arch_graph, plan, next_stage_id,
                                  last_inserted_stage);
       } else {
-        LLVM_DEBUG(llvm::dbgs() << "  Legal hop to next stage\n");
+        LDBG(1) << "  Legal hop to next stage";
       }
     }
   }
@@ -901,8 +898,7 @@ static llvm::FailureOr<llvm::SmallVector<StageNode*>> legalizeStageConnections(
     }
     new_sorted_or = tree.topologicalSortStages(pipeline);
     if (mlir::failed(new_sorted_or)) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "Failed to topologically sort after expansion\n");
+      LDBG(1) << "Failed to topologically sort after expansion";
       return mlir::failure();
     }
   }
@@ -1092,8 +1088,7 @@ static mlir::LogicalResult analyzeOriginalStageTransfers(
     llvm::ArrayRef<StageNode*> sorted_stages,
     const scheduler::arch_view::RoutingGraph& arch_graph,
     PathExpansionPlan* plan) {
-  LLVM_DEBUG(llvm::dbgs() << "Analyzing " << sorted_stages.size()
-                          << " stages\n");
+  LDBG(1) << "Analyzing " << sorted_stages.size() << " stages";
 
   for (size_t i = 0; i < sorted_stages.size(); ++i) {
     StageNode* current_stage = sorted_stages[i];
@@ -1135,8 +1130,8 @@ static mlir::LogicalResult analyzeFifoOperations(
     llvm::ArrayRef<StageNode*> sorted_stages,
     const scheduler::arch_view::RoutingGraph& arch_graph,
     PathExpansionPlan* plan) {
-  LLVM_DEBUG(llvm::dbgs() << "Analyzing FIFO operations in "
-                          << sorted_stages.size() << " stages\n");
+  LDBG(1) << "Analyzing FIFO operations in " << sorted_stages.size()
+          << " stages";
 
   // Track FIFO allocations by (src, dest) attribute pair to group slots
   // Map from attribute pair to the PrivateResourceSpec* created by factory
@@ -1303,8 +1298,8 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
     llvm::ArrayRef<StageNode*> sorted_stages,
     const scheduler::arch_view::RoutingGraph& arch_graph,
     PathExpansionPlan* plan) {
-  LLVM_DEBUG(llvm::dbgs() << "Populating intermediate stage transfers for "
-                          << sorted_stages.size() << " stages\n");
+  LDBG(1) << "Populating intermediate stage transfers for "
+          << sorted_stages.size() << " stages";
 
   for (size_t i = 0; i < sorted_stages.size(); ++i) {
     StageNode* current_stage = sorted_stages[i];
@@ -1612,10 +1607,8 @@ static mlir::LogicalResult assignApplicableUnit(
   stage_info.applicable_unit =
       getTransferStageUnit(stage, arch_graph, stage_info);
   if (stage_info.applicable_unit) {
-    LLVM_DEBUG(
-        llvm::dbgs()
-        << "  Stage " << stage->getStageId()
-        << ": Assigned applicable unit from first transfer (fallback)\n");
+    LDBG(1) << "  Stage " << stage->getStageId()
+            << ": Assigned applicable unit from first transfer (fallback)";
   }
 
   return mlir::success();
@@ -1626,8 +1619,8 @@ static mlir::LogicalResult assignApplicableUnits(
     llvm::ArrayRef<StageNode*> sorted_stages,
     const scheduler::arch_view::RoutingGraph& arch_graph,
     PathExpansionPlan* plan) {
-  LLVM_DEBUG(llvm::dbgs() << "Assigning applicable units for "
-                          << sorted_stages.size() << " stages\n");
+  LDBG(1) << "Assigning applicable units for " << sorted_stages.size()
+          << " stages";
 
   for (StageNode* stage : sorted_stages) {
     // Skip stages that don't have materialization info
@@ -1652,8 +1645,7 @@ static llvm::FailureOr<llvm::SmallVector<StageNode*>> preparePipelineStages(
   llvm::FailureOr<llvm::SmallVector<StageNode*>> sorted_stages_or =
       tree.topologicalSortStages(pipeline);
   if (mlir::failed(sorted_stages_or)) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "Failed to perform topological sort (cycle detected)\n");
+    LDBG(1) << "Failed to perform topological sort (cycle detected)";
     return mlir::failure();
   }
 
@@ -1661,7 +1653,7 @@ static llvm::FailureOr<llvm::SmallVector<StageNode*>> preparePipelineStages(
 
   // Validate linear chain topology
   if (mlir::failed(validateLinearChain(sorted_stages))) {
-    LLVM_DEBUG(llvm::dbgs() << "Stage topology is not a linear chain\n");
+    LDBG(1) << "Stage topology is not a linear chain";
     return mlir::failure();
   }
 
@@ -1858,7 +1850,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   // Check if expansion is needed
   if (original_path == full_shortest_path) {
     plan->changed = false;
-    LLVM_DEBUG(llvm::dbgs() << "Pipeline already legal\n");
+    LDBG(1) << "Pipeline already legal";
     return plan;
   }
 

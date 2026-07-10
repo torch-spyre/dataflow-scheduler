@@ -31,7 +31,7 @@
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
@@ -313,9 +313,8 @@ mlir::LogicalResult lowerParallelOps(mlir::func::FuncOp func) {
       return mlir::failure();
     }
     int64_t num_iters_per_instance = *num_iters_result;
-    LLVM_DEBUG(llvm::dbgs() << "ktdf.parallel " << parallel_op
-                            << " replaced with scf.for with "
-                            << num_iters_per_instance << " iterations\n");
+    LDBG(1) << "ktdf.parallel " << parallel_op << " replaced with scf.for with "
+            << num_iters_per_instance << " iterations";
 
     // Create constants for loop bounds: 0 to num_iters_per_instance with step 1
     mlir::Value c0 = mlir::arith::ConstantIndexOp::create(builder, loc, 0);

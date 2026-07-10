@@ -23,7 +23,7 @@
 #include "dataflow-scheduler/Transforms/PathExpansion/Materializer.h"
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
@@ -192,7 +192,7 @@ mlir::scf::ForOp PathExpansionMaterializer::materializeLoopNode(
   materializeChildren(loop_node);
   builder_.setInsertionPointAfter(new_loop);
 
-  LLVM_DEBUG(llvm::dbgs() << "  Materialized loop node\n");
+  LDBG(1) << "  Materialized loop node";
   return new_loop;
 }
 
@@ -223,7 +223,7 @@ mlir::ktdf::PipelineOp PathExpansionMaterializer::materializePipelineNode(
 
   builder_.setInsertionPointAfter(new_pipeline);
 
-  LLVM_DEBUG(llvm::dbgs() << "  Materialized pipeline node\n");
+  LDBG(1) << "  Materialized pipeline node";
   return new_pipeline;
 }
 
@@ -291,11 +291,9 @@ void PathExpansionMaterializer::materializePrivateNode(
   // Reset insertion point to after private op
   builder_.setInsertionPointAfter(new_private);
 
-  LLVM_DEBUG(llvm::dbgs() << "  Materialized private node with "
-                          << orig_result_count << " original resources, "
-                          << resource_factory_.getSpecs().size()
-                          << " new buffers, and " << stages_with_deps.size()
-                          << " tokens\n");
+  LDBG(1) << "  Materialized private node with " << orig_result_count
+          << " original resources, " << resource_factory_.getSpecs().size()
+          << " new buffers, and " << stages_with_deps.size() << " tokens";
 }
 
 void PathExpansionMaterializer::buildStageToTokenMapping(
@@ -554,8 +552,7 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
 
   builder_.setInsertionPointAfter(new_stage);
 
-  LLVM_DEBUG(llvm::dbgs() << "  Materialized stage " << stage_node.getStageId()
-                          << "\n");
+  LDBG(1) << "  Materialized stage " << stage_node.getStageId();
   return new_stage;
 }
 

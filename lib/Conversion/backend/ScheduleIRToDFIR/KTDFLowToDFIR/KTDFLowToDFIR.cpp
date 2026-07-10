@@ -41,7 +41,7 @@
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
@@ -60,7 +60,6 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 // Run the full canonicalization pattern set (all loaded dialects + registered
 // ops) with region simplification (DCE) on `func`. Mirrors the upstream
@@ -85,14 +84,14 @@ struct KTDFLowToDFIRPass
       : scheduler_ctx_(scheduler_ctx) {}
 
   void runOnOperation() override {
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    LDBG(1) << "========= " PASS_NAME " =========";
     mlir::ModuleOp module = getOperation();
 
     // Construct MemoryTree from DeviceManager once for the whole module
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {
-      LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME << "] No device found\n");
+      LDBG(1) << "No device found";
       return;
     }
     scheduler::arch_view::MemoryTree memory_tree(*device);
@@ -101,12 +100,11 @@ struct KTDFLowToDFIRPass
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
     module.walk([&](mlir::func::FuncOp func) { funcs.push_back(func); });
     for (auto func : funcs) {
-      LLVM_DEBUG(llvm::dbgs() << "Running " << PASS_NAME << " on "
-                              << func.getName() << "\n");
+      LDBG(1) << "Running " << PASS_NAME << " on " << func.getName();
 
       auto split = partitionPreludeAndWork(func);
       if (split.work_ops.empty()) {
-        LLVM_DEBUG(llvm::dbgs() << "  no work ops; skipping function\n");
+        LDBG(1) << "  no work ops; skipping function";
         continue;
       }
 
@@ -115,8 +113,7 @@ struct KTDFLowToDFIRPass
         return signalPassFailure();
       }
       if (components.empty()) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "  no ktdf_lowering.execute_on ops; skipping function\n");
+        LDBG(1) << "  no ktdf_lowering.execute_on ops; skipping function";
       } else {
         if (mlir::failed(buildProgramUnits(func, split.work_ops, components))) {
           return signalPassFailure();
@@ -141,8 +138,7 @@ struct KTDFLowToDFIRPass
       }
 
       // Run operation lowerings after program units have been created
-      LLVM_DEBUG(llvm::dbgs() << "Running operation lowerings for "
-                              << func.getName() << "\n");
+      LDBG(1) << "Running operation lowerings for " << func.getName() << "";
       if (mlir::failed(runOperationLowerings(func, schedulerExtContext(),
                                              components, resource_kinds))) {
         return signalPassFailure();

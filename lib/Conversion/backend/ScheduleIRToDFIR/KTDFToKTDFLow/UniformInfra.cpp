@@ -21,7 +21,7 @@
 #include "Ktdp/KtdpOps.hpp"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 
 #define DEBUG_TYPE "ktdf-to-operand-lowering"
@@ -32,7 +32,7 @@ mlir::LogicalResult UniformInfra::createMapsAndQueries(
     const ComponentClassification& components, int grid_size,
     const UnitSSAMap& unit_ssa_map, QueriedUnitsMap& queried_units,
     UniformMapsStorage& uniform_maps, mlir::OpBuilder& builder) {
-  LLVM_DEBUG(llvm::dbgs() << "Step 4: Create maps and queries\n");
+  LDBG(1) << "Step 4: Create maps and queries";
 
   auto loc = func_.getLoc();
 
@@ -41,7 +41,7 @@ mlir::LogicalResult UniformInfra::createMapsAndQueries(
       builder, loc, builder.getIndexType());
   mlir::Value tile_id = tile_id_op.getResult()[0];
 
-  LLVM_DEBUG(llvm::dbgs() << "  Created symbolic tile_id\n");
+  LDBG(1) << "  Created symbolic tile_id";
 
   // Create maps and queries for non-parallel components
   for (auto component : components.non_parallel_components) {
@@ -73,8 +73,7 @@ mlir::LogicalResult UniformInfra::createMapsAndQueries(
     mlir::Value queried = query_op.getResult();
     queried_units.non_parallel[component] = queried;
 
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Created map and query for " << comp_name << "\n");
+    LDBG(1) << "  Created map and query for " << comp_name;
   }
 
   // Create maps and queries for parallel components
@@ -118,13 +117,13 @@ mlir::LogicalResult UniformInfra::createMapsAndQueries(
         queried_units.parallel[std::make_pair(
             std::make_pair(parallel_op, component), corelet)] = queried;
 
-        LLVM_DEBUG(llvm::dbgs() << "  Created map and query for " << comp_name
-                                << " corelet " << corelet << "\n");
+        LDBG(1) << "  Created map and query for " << comp_name << " corelet "
+                << corelet;
       }
     }
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "Map and query creation complete\n");
+  LDBG(1) << "Map and query creation complete";
   return mlir::success();
 }
 
@@ -141,7 +140,7 @@ mlir::LogicalResult UniformInfra::buildMemoryUniformMaps(
     const MemoryUnitSSAMap& memory_unit_ssa, const SchedulerExtContext& ext_ctx,
     llvm::DenseMap<ResourceType, mlir::Value>& resolved_units,
     mlir::OpBuilder& builder) {
-  LLVM_DEBUG(llvm::dbgs() << "Building memory uniform maps\n");
+  LDBG(1) << "Building memory uniform maps";
   auto loc = pu.getLoc();
 
   // The iterator block argument (%arg0) is the query key.
@@ -184,8 +183,7 @@ mlir::LogicalResult UniformInfra::buildMemoryUniformMaps(
         builder, loc, builder.getIndexType(), map_op.getResult(), iter_arg);
     resolved_units[mspace] = query_op.getResult();
 
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Built memory uniform map for " << mspace << "\n");
+    LDBG(1) << "  Built memory uniform map for " << mspace;
   }
   return mlir::success();
 }

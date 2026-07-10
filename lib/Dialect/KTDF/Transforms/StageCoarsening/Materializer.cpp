@@ -23,7 +23,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/StageCoarsening/Materializer.h"
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 
 #define DEBUG_TYPE "stage-coarsening-materializer"
@@ -232,7 +232,7 @@ scf::ForOp StageCoarseningMaterializer::materializeLoopNode(
   materializeChildren(loop_node);
   builder_.setInsertionPointAfter(new_loop);
 
-  LLVM_DEBUG(llvm::dbgs() << "    Created loop with IV mapped\n");
+  LDBG(1) << "    Created loop with IV mapped";
   return new_loop;
 }
 
@@ -249,8 +249,7 @@ ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
     loc = orig_stage.getLoc();
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "    Materializing stage "
-                          << stage_node.getStageId() << "\n");
+  LDBG(1) << "    Materializing stage " << stage_node.getStageId();
 
   // Build depends_in and depends_out from stage dependencies
   llvm::SmallVector<Value> depends_in;
@@ -262,8 +261,8 @@ ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
     assert(it != stage_to_token_map_.end() &&
            "expected token map to be updated for this stage");
     depends_out.push_back(it->second);
-    LLVM_DEBUG(llvm::dbgs() << "      Added depends_out token for stage "
-                            << stage_node.getStageId() << "\n");
+    LDBG(1) << "      Added depends_out token for stage "
+            << stage_node.getStageId();
   }
 
   // For depends_in: find stages that this stage depends on
@@ -284,9 +283,8 @@ ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
       auto it = stage_to_token_map_.find(other_stage);
       assert(it != stage_to_token_map_.end());
       depends_in.push_back(it->second);
-      LLVM_DEBUG(llvm::dbgs()
-                 << "      Added depends_in token for this stage from stage "
-                 << other_stage->getStageId() << "\n");
+      LDBG(1) << "      Added depends_in token for this stage from stage "
+              << other_stage->getStageId();
     }
   }
 
@@ -317,13 +315,12 @@ ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
 
   if (first_child) {
     // Stage has children (loops), materialize them first
-    LLVM_DEBUG(llvm::dbgs() << "    Stage has children, materializing them\n");
+    LDBG(1) << "    Stage has children, materializing them";
     materializeChildren(stage_node);
 
     // Now clone the stage body into the innermost loop
     if (orig_stage) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "    Cloning stage body into innermost loop\n");
+      LDBG(1) << "    Cloning stage body into innermost loop";
 
       // Find the innermost loop node
       const scheduler::PipelineTreeNode* first_loop =
@@ -348,7 +345,7 @@ ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
     }
   } else if (orig_stage) {
     // Stage has no children, clone the original stage body directly
-    LLVM_DEBUG(llvm::dbgs() << "    Cloning original stage body\n");
+    LDBG(1) << "    Cloning original stage body";
     cloneStageBody(orig_stage);
   } else {
     llvm_unreachable("Unmaterialized stage with no children and no template");
@@ -378,8 +375,7 @@ ktdf::StageOp StageCoarseningMaterializer::materializeStageNode(
   // Restore insertion point after the stage
   builder_.setInsertionPointAfter(new_stage);
 
-  LLVM_DEBUG(llvm::dbgs() << "    Created stage " << stage_node.getStageId()
-                          << "\n");
+  LDBG(1) << "    Created stage " << stage_node.getStageId();
   return new_stage;
 }
 
@@ -403,7 +399,7 @@ ktdf::PipelineOp StageCoarseningMaterializer::materializePipelineNode(
   materializeChildren(pipeline_node);
   builder_.setInsertionPointAfter(new_pipeline);
 
-  LLVM_DEBUG(llvm::dbgs() << "    Created pipeline\n");
+  LDBG(1) << "    Created pipeline";
   return new_pipeline;
 }
 
@@ -415,7 +411,7 @@ void StageCoarseningMaterializer::materializePrivateNode(
   // for nested pipelines by moving relevant allocations to the nested
   // pipeline's private clause.
 
-  LLVM_DEBUG(llvm::dbgs() << "    Materializing private clause\n");
+  LDBG(1) << "    Materializing private clause";
 
   // Get the parent pipeline node to access its stages for token mapping
   const scheduler::PipelineTreeNode* parent =
@@ -457,8 +453,7 @@ void StageCoarseningMaterializer::materializePrivateNode(
 void StageCoarseningMaterializer::materializePrivateNodeFromScratch(
     const llvm::SmallVector<scheduler::StageNode*>& stages_with_deps,
     llvm::SmallVector<Value>& new_tokens) {
-  LLVM_DEBUG(llvm::dbgs()
-             << "    Creating private node from scratch with only tokens\n");
+  LDBG(1) << "    Creating private node from scratch with only tokens";
 
   // Create result types (only tokens - one per stage with dependencies)
   llvm::SmallVector<Type> result_types;
@@ -483,8 +478,7 @@ void StageCoarseningMaterializer::materializePrivateNodeFromScratch(
         CreateTokenOp::create(builder_, builder_.getUnknownLoc()).getResult();
     new_tokens.push_back(new_token);
 
-    LLVM_DEBUG(llvm::dbgs() << "      Created new token for stage "
-                            << stage->getStageId() << "\n");
+    LDBG(1) << "      Created new token for stage " << stage->getStageId();
   }
 
   // Create yield in the private body
@@ -540,8 +534,7 @@ void StageCoarseningMaterializer::materializePrivateNodeFromTemplate(
         CreateTokenOp::create(builder_, orig_private.getLoc()).getResult();
     new_tokens.push_back(new_token);
 
-    LLVM_DEBUG(llvm::dbgs() << "      Created new token for stage "
-                            << stage->getStageId() << "\n");
+    LDBG(1) << "      Created new token for stage " << stage->getStageId();
   }
 
   // Get the yield operation and determine result types from mapped operands.
@@ -604,9 +597,8 @@ void StageCoarseningMaterializer::buildStageToTokenMapping(
   for (size_t i = 0; i < stages_with_deps.size(); ++i) {
     Value token_result = new_private.getResult(non_token_result_count + i);
     stage_to_token_map_[stages_with_deps[i]] = token_result;
-    LLVM_DEBUG(llvm::dbgs()
-               << "      Mapped stage " << stages_with_deps[i]->getStageId()
-               << " to token result " << (non_token_result_count + i) << "\n");
+    LDBG(1) << "      Mapped stage " << stages_with_deps[i]->getStageId()
+            << " to token result " << (non_token_result_count + i);
   }
 }
 

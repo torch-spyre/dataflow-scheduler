@@ -23,6 +23,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/GlobalStageDAG.h"
 
 #include <llvm/Support/Debug.h>
+#include <llvm/Support/DebugLog.h>
 
 #include <algorithm>
 #include <functional>
@@ -41,7 +42,7 @@ using namespace mlir::ktdf;
 auto mlir::ktdf::analyzeStageDependencies(ArrayRef<StageOp> stages,
                                           StageDependencyDAG& dag)
     -> LogicalResult {
-  LLVM_DEBUG(llvm::dbgs() << "Analyze stage dependencies\n");
+  LDBG(1) << "Analyze stage dependencies";
 
   for (auto stage : stages) {
     dag.predecessors[stage.getOperation()] = {};
@@ -114,7 +115,7 @@ auto mlir::ktdf::topologicalSortStages(ArrayRef<StageOp> stages,
                                        const StageDependencyDAG& dag,
                                        SmallVectorImpl<StageOp>& sorted_stages)
     -> LogicalResult {
-  LLVM_DEBUG(llvm::dbgs() << "Topologically sort stages\n");
+  LDBG(1) << "Topologically sort stages";
 
   if (stages.empty()) return success();
 

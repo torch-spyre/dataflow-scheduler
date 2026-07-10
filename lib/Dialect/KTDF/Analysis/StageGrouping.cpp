@@ -29,7 +29,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "llvm/ADT/EquivalenceClasses.h"
 #include "llvm/ADT/SmallSet.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Operation.h"
@@ -101,10 +101,8 @@ void StageGroupingAnalysis::init(llvm::ArrayRef<StageOp> stages) {
     groups_.push_back(group);
     group_id++;
   }
-  LLVM_DEBUG({
-    llvm::dbgs() << "Stage grouping analysis complete\n";
-    llvm::dbgs() << "  Total groups: " << groups_.size() << "\n";
-  });
+  LDBG(1) << "Stage grouping analysis complete";
+  LDBG(1) << "  Total groups: " << groups_.size();
 }
 
 const StageGroup* StageGroupingAnalysis::getGroupForStage(StageOp stage) const {

@@ -49,7 +49,7 @@
 #include "dataflow-scheduler/Transforms/Utils/PipelineTreeLegalizer.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -67,7 +67,6 @@ namespace mlir::ktdf {
 }  // namespace mlir::ktdf
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 //===----------------------------------------------------------------------===//
 // Stage Coarsening Pass
@@ -147,45 +146,39 @@ struct StageCoarseningPass
 //===----------------------------------------------------------------------===//
 
 void StageCoarseningPass::runOnOperation() {
-  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+  LDBG(1) << "========= " PASS_NAME " =========";
   auto module_op = getOperation();
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "\n=== Stage Coarsening Pass ===\n";
-    llvm::dbgs() << "Loop nest depth: " << loopNestDepth << "\n\n";
-  });
+  LDBG(1) << "Loop nest depth: " << loopNestDepth;
 
   // Identify all transform candidates
   llvm::SmallVector<TransformCandidate> candidates;
   identifyTransformCandidates(module_op, candidates);
 
   if (candidates.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "No transform candidates found.\n");
+    LDBG(1) << "No transform candidates found.";
     return;
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "Found " << candidates.size()
-                          << " transform candidate(s)\n\n");
+  LDBG(1) << "Found " << candidates.size() << " transform candidate(s)\n";
 
   // Apply transformation to each candidate
   for (TransformCandidate& candidate : candidates) {
     applyTransformation(candidate);
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "=== Stage Coarsening Pass Complete ===\n\n");
+  LDBG(1) << "=== Stage Coarsening Pass Complete ===\n";
 }
 
 void StageCoarseningPass::identifyTransformCandidates(
     ModuleOp module_op, llvm::SmallVector<TransformCandidate>& candidates) {
   // Walk all functions in the module
   module_op.walk([&](func::FuncOp func_op) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "Analyzing function: " << func_op.getName() << "\n");
+    LDBG(1) << "Analyzing function: " << func_op.getName() << "";
 
     // Find all pipelines in this function
     func_op.walk([&](ktdf::PipelineOp pipeline) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "  Found pipeline, checking for loop nest above it...\n");
+      LDBG(1) << "  Found pipeline, checking for loop nest above it...";
 
       // Walk up the parent chain to find perfectly nested loops
       Operation* current_op = pipeline.getOperation();
@@ -262,10 +255,8 @@ void StageCoarseningPass::identifyTransformCandidates(
 }
 
 void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
-  LLVM_DEBUG({
-    llvm::dbgs() << "\n--- Applying Transformation in steps ---\n";
-    llvm::dbgs() << "Loop nest depth: " << candidate.loop_nest_.size() << "\n";
-  });
+  LDBG(1) << "--- Applying Transformation in steps ---";
+  LDBG(1) << "Loop nest depth: " << candidate.loop_nest_.size();
 
   // Get device and create memory tree
   auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
@@ -291,13 +282,12 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
   });
 
   // Perform stage grouping analysis once
-  LLVM_DEBUG(llvm::dbgs() << "\n  Performing stage grouping analysis...\n");
+  LDBG(1) << "\n  Performing stage grouping analysis...";
   ktdf::StageGroupingAnalysis grouping(candidate.pipeline_, memory_tree);
   LLVM_DEBUG(grouping.print(llvm::dbgs()));
 
   // Step 2a: Distribute and sink loops into pipeline
-  LLVM_DEBUG(
-      llvm::dbgs() << "\n--- Step 2a: Distribute and Sink into Pipeline ---\n");
+  LDBG(1) << "\n--- Step 2a: Distribute and Sink into Pipeline ---";
   llvm::SmallVector<ktdf::BufferExpansionInfo*> buffer_expansion_infos;
   DistributeAndSinkIntoPipeline(candidate, tree, grouping,
                                 buffer_expansion_infos);
@@ -309,8 +299,7 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
 
   // Step 2b: Further sink into stage groups containing a single stage
   // (expand buffers)
-  LLVM_DEBUG(
-      llvm::dbgs() << "\n--- Step 2b: Sink into Single-Stage Groups ---\n");
+  LDBG(1) << "\n--- Step 2b: Sink into Single-Stage Groups ---";
   SinkIntoSingleStage(candidate, tree, grouping);
   LLVM_DEBUG({
     llvm::dbgs() << "\n=== Pipeline Tree after Step 2b ===\n";
@@ -319,8 +308,7 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
   });
 
   // Step 2c: Discover and correct illegal structures iteratively
-  LLVM_DEBUG(llvm::dbgs()
-             << "\n--- Step 2c: Discover and Correct Illegal Structures ---\n");
+  LDBG(1) << "\n--- Step 2c: Discover and Correct Illegal Structures ---";
   DiscoverAndCorrectStructure(candidate, tree);
   LLVM_DEBUG({
     llvm::dbgs() << "\n=== Pipeline Tree after Step 2c ===\n";
@@ -329,7 +317,7 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
   });
 
   // Step 2d: Correct stage dependencies that cross pipeline boundaries
-  LLVM_DEBUG(llvm::dbgs() << "\n--- Step 2d: Correct Stage Dependencies ---\n");
+  LDBG(1) << "\n--- Step 2d: Correct Stage Dependencies ---";
   CorrectStageDependencies(candidate, tree);
   LLVM_DEBUG({
     llvm::dbgs() << "\n=== Pipeline Tree after Step 2d (Final) ===\n";
@@ -350,19 +338,17 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
     TransformCandidate& candidate, scheduler::PipelineTree& tree,
     const ktdf::StageGroupingAnalysis& grouping,
     llvm::SmallVectorImpl<ktdf::BufferExpansionInfo*>& expansion_infos) {
-  LLVM_DEBUG(llvm::dbgs() << "Distributing loops into pipeline...\n");
+  LDBG(1) << "Distributing loops into pipeline...";
 
   // Validate candidate
   if (!candidate.pipeline_ || !candidate.loop_nest_parent_) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "  ERROR: Invalid candidate (null pipeline or parent)\n");
+    LDBG(1) << "  ERROR: Invalid candidate (null pipeline or parent)";
     return;
   }
 
   // For each stage group, create unmaterialized loop nest and insert
   // as children of pipeline
-  LLVM_DEBUG(
-      llvm::dbgs() << "\n  Distributing loop nests to stage groups...\n");
+  LDBG(1) << "\n  Distributing loop nests to stage groups...";
 
   // Process each group
   const llvm::SmallVector<ktdf::StageGroup>& groups = grouping.getGroups();
@@ -372,9 +358,8 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
 
     if (stages.empty()) continue;
 
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Group " << group_idx << ": Creating loop nest for "
-               << stages.size() << " stage(s)\n");
+    LDBG(1) << "  Group " << group_idx << ": Creating loop nest for "
+            << stages.size() << " stage(s)";
 
     // Find stage nodes for this group using the operation-to-node mapping
     llvm::SmallVector<scheduler::StageNode*> stage_nodes;
@@ -417,8 +402,8 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
       current_parent->insertChildNode(stage_node);
     }
 
-    LLVM_DEBUG(llvm::dbgs() << "    Moved " << stage_nodes.size()
-                            << " stage(s) under loop nest\n");
+    LDBG(1) << "    Moved " << stage_nodes.size()
+            << " stage(s) under loop nest";
   }
 
   // Now remove the original loops from the tree
@@ -439,13 +424,13 @@ void StageCoarseningPass::DistributeAndSinkIntoPipeline(
   ktdf::PerformBufferExpansionAnalysis(
       candidate.loop_nest_, candidate.pipeline_, grouping, expansion_infos);
 
-  LLVM_DEBUG(llvm::dbgs() << "\n  Loop distribution complete.\n");
+  LDBG(1) << "\n  Loop distribution complete.";
 }
 
 void StageCoarseningPass::SinkIntoSingleStage(
     TransformCandidate& candidate, scheduler::PipelineTree& tree,
     const ktdf::StageGroupingAnalysis& grouping) {
-  LLVM_DEBUG(llvm::dbgs() << "Sinking into single-stage groups...\n");
+  LDBG(1) << "Sinking into single-stage groups...";
 
   const llvm::SmallVector<ktdf::StageGroup>& groups = grouping.getGroups();
 
@@ -460,9 +445,8 @@ void StageCoarseningPass::SinkIntoSingleStage(
 
     // Only process single-stage groups
     if (!group.isSingleStage()) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "  Group " << group_idx << ": Skipping (contains "
-                 << group.getStages().size() << " stages)\n");
+      LDBG(1) << "  Group " << group_idx << ": Skipping (contains "
+              << group.getStages().size() << " stages)";
       continue;
     }
 
@@ -497,7 +481,7 @@ void StageCoarseningPass::SinkIntoSingleStage(
             });
     assert(outermost_loop && "Expected to find an outermost loop");
 
-    LLVM_DEBUG(llvm::dbgs() << "    Sinking loop nest into stage\n");
+    LDBG(1) << "    Sinking loop nest into stage";
 
     // Sink the loop nest into the stage:
     scheduler::PipelineTreeNode* mutable_outermost =
@@ -509,28 +493,27 @@ void StageCoarseningPass::SinkIntoSingleStage(
     stage_node->insertChildNode(mutable_outermost);
     pipeline_node->insertChildNode(stage_node, insert);
 
-    LLVM_DEBUG(llvm::dbgs() << "    Successfully sank loop nest into stage\n");
+    LDBG(1) << "    Successfully sank loop nest into stage";
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "  Sinking into single-stage groups complete.\n");
+  LDBG(1) << "  Sinking into single-stage groups complete.";
 }
 
 void StageCoarseningPass::DiscoverAndCorrectStructure(
     TransformCandidate& candidate, scheduler::PipelineTree& tree) {
-  LLVM_DEBUG(
-      llvm::dbgs() << "Discovering and correcting illegal structures...\n");
+  LDBG(1) << "Discovering and correcting illegal structures...";
 
   scheduler::pipeline_tree::Legalizer legalizer;
 
   // Find and fix all violations iteratively
   legalizer.findAndFixViolations(tree);
 
-  LLVM_DEBUG(llvm::dbgs() << "  Structure legalization complete.\n");
+  LDBG(1) << "  Structure legalization complete.";
 }
 
 void StageCoarseningPass::CorrectStageDependencies(
     TransformCandidate& candidate, scheduler::PipelineTree& tree) {
-  LLVM_DEBUG(llvm::dbgs() << "Correcting stage dependencies...\n");
+  LDBG(1) << "Correcting stage dependencies...";
 
   // Step 1: Build pipeline-to-depth map and collect all stages
   llvm::DenseMap<const scheduler::PipelineNode*, unsigned> pipeline_to_depth;
@@ -602,35 +585,33 @@ void StageCoarseningPass::CorrectStageDependencies(
 
       // If source is at lower depth than sink (outer -> inner)
       if (source_depth < sink_depth) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "    Correcting outer->inner dependency: Stage "
-                   << source_stage->getStageId() << " (depth " << source_depth
-                   << ") -> Stage " << sink_stage->getStageId() << " (depth "
-                   << sink_depth << ")\n");
+        LDBG(1) << "    Correcting outer->inner dependency: Stage "
+                << source_stage->getStageId() << " (depth " << source_depth
+                << ") -> Stage " << sink_stage->getStageId() << " (depth "
+                << sink_depth << ")";
 
         // Walk up from sink to find stage at source's depth
         scheduler::StageNode* new_sink =
             findStageAtPipeline(sink_stage, source_pipeline);
         if (new_sink) {
-          LLVM_DEBUG(llvm::dbgs() << "      Redirected to Stage "
-                                  << new_sink->getStageId() << "\n");
+          LDBG(1) << "      Redirected to Stage " << new_sink->getStageId()
+                  << "";
           source_stage->replaceDependency(sink_stage, new_sink);
         }
       }
       // If source is at higher depth than sink (inner -> outer)
       else if (source_depth > sink_depth) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "    Correcting inner->outer dependency: Stage "
-                   << source_stage->getStageId() << " (depth " << source_depth
-                   << ") -> Stage " << sink_stage->getStageId() << " (depth "
-                   << sink_depth << ")\n");
+        LDBG(1) << "    Correcting inner->outer dependency: Stage "
+                << source_stage->getStageId() << " (depth " << source_depth
+                << ") -> Stage " << sink_stage->getStageId() << " (depth "
+                << sink_depth << ")";
 
         // Walk up from source to find stage at sink's depth
         scheduler::StageNode* new_source =
             findStageAtPipeline(source_stage, sink_pipeline);
         if (new_source) {
-          LLVM_DEBUG(llvm::dbgs() << "      Moved dependency to Stage "
-                                  << new_source->getStageId() << "\n");
+          LDBG(1) << "      Moved dependency to Stage "
+                  << new_source->getStageId() << "";
 
           // Add dependency to new source (if not already present)
           const llvm::SmallVector<scheduler::StageNode*>& new_source_deps =
@@ -658,7 +639,7 @@ void StageCoarseningPass::CorrectStageDependencies(
     source_stage->removeNullifiedDependencies();
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "  Stage dependency correction complete.\n");
+  LDBG(1) << "  Stage dependency correction complete.";
 }
 
 //===----------------------------------------------------------------------===//
@@ -668,7 +649,7 @@ void StageCoarseningPass::CorrectStageDependencies(
 void StageCoarseningPass::GenerateTransformedIR(
     TransformCandidate& candidate, scheduler::PipelineTree& tree,
     llvm::ArrayRef<const ktdf::BufferExpansionInfo*> expansion_infos) {
-  LLVM_DEBUG(llvm::dbgs() << "\n--- Step 3: Generate Transformed IR ---\n");
+  LDBG(1) << "\n--- Step 3: Generate Transformed IR ---";
 
   // Get the outer pipeline node from the tree
   scheduler::PipelineTreeNode* outer_pipeline =
@@ -688,10 +669,8 @@ void StageCoarseningPass::GenerateTransformedIR(
   ktdf::BufferCloner* buffer_cloner = nullptr;
   std::optional<ktdf::StageCoarseningBufferCloner> cloner_storage;
   if (!expansion_infos.empty()) {
-    LLVM_DEBUG({
-      llvm::dbgs() << "  Creating buffer cloner for " << expansion_infos.size()
-                   << " buffer(s)\n";
-    });
+    LDBG(1) << "  Creating buffer cloner for " << expansion_infos.size()
+            << " buffer(s)";
     cloner_storage.emplace(expansion_infos);
     buffer_cloner = &cloner_storage.value();
   }
@@ -704,9 +683,9 @@ void StageCoarseningPass::GenerateTransformedIR(
   // Erase the original candidate loop nest and all the old ops under it
   root->erase();
 
-  DEBUG_WITH_TYPE(VerboseDebug, {
-    llvm::dbgs() << "IR after materialization:\n";
-    new_outer_pipeline->dump();
+  LDBG_OS(1, [&](llvm::raw_ostream& os) {
+    os << "IR after materialization:\n";
+    new_outer_pipeline->print(os);
   });
 
   auto new_outer_pipeline_op = dyn_cast<ktdf::PipelineOp>(new_outer_pipeline);
@@ -714,27 +693,27 @@ void StageCoarseningPass::GenerateTransformedIR(
     return;
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "\n--- Cleaning Up Private Ops ---\n");
+  LDBG(1) << "\n--- Cleaning Up Private Ops ---";
   if (failed(scheduler::cleanupPrivateOpsInPipeline(new_outer_pipeline_op))) {
     return;
   }
 
-  DEBUG_WITH_TYPE(VerboseDebug, {
-    llvm::dbgs() << "IR after private cleanup:\n";
-    new_outer_pipeline->dump();
+  LDBG_OS(1, [&](llvm::raw_ostream& os) {
+    os << "IR after private cleanup:\n";
+    new_outer_pipeline->print(os);
   });
 
   // Fix scoping of private results that are only used in inner pipelines
-  LLVM_DEBUG(llvm::dbgs() << "\n--- Fixing Private Result Scoping ---\n");
+  LDBG(1) << "\n--- Fixing Private Result Scoping ---";
   ktdf::ScopeCorrection scope_corrector(builder, new_outer_pipeline);
   scope_corrector.run();
 
-  DEBUG_WITH_TYPE(VerboseDebug, {
-    llvm::dbgs() << "IR after private scoping correction:\n";
-    new_outer_pipeline->dump();
+  LDBG_OS(1, [&](llvm::raw_ostream& os) {
+    os << "IR after private scoping correction:\n";
+    new_outer_pipeline->print(os);
   });
 
-  LLVM_DEBUG(llvm::dbgs() << "  IR generation complete.\n");
+  LDBG(1) << "  IR generation complete.";
 }
 
 }  // namespace

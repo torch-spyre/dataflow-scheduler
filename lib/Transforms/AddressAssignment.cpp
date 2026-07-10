@@ -33,8 +33,7 @@
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Affine/IR/ValueBoundsOpInterfaceImpl.h"
@@ -49,7 +48,7 @@
 #define PASS_NAME "address-assignment"
 #define DEBUG_TYPE PASS_NAME
 
-static llvm::cl::opt<bool> DisableAddressAssignmentPass(
+static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME, llvm::cl::desc("Disable Address Assignment pass"),
     llvm::cl::init(false));
 
@@ -61,15 +60,10 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
-
 /// Compute the upper bound for a dynamic dimension.
 /// Returns -1 if the bound cannot be computed.
 int64_t computeDynamicDimensionBound(mlir::Value dynamic_size, size_t dim_idx) {
-  LLVM_DEBUG({
-    llvm::dbgs() << "  Dynamic dim " << dim_idx << ": SSA value "
-                 << dynamic_size << "\n";
-  });
+  LDBG(1) << "  Dynamic dim " << dim_idx << ": SSA value " << dynamic_size;
 
   llvm::FailureOr<int64_t> upper_bound =
       mlir::ValueBoundsConstraintSet::computeConstantBound(
@@ -77,18 +71,15 @@ int64_t computeDynamicDimensionBound(mlir::Value dynamic_size, size_t dim_idx) {
           /*stopCondition=*/nullptr, /*closedUB=*/true);
 
   if (mlir::succeeded(upper_bound)) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "    Computed upper bound: " << *upper_bound << "\n");
+    LDBG(1) << "    Computed upper bound: " << *upper_bound;
     return *upper_bound;
   }
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "    Failed to compute constant upper bound\n";
-    llvm::dbgs() << "    Note: ValueBoundsConstraintSet could not "
-                 << "resolve the bound to a constant value.\n";
-    llvm::dbgs() << "    This may require more sophisticated "
-                 << "analysis or manual annotation.\n";
-  });
+  LDBG(1) << "    Failed to compute constant upper bound";
+  LDBG(1) << "    Note: ValueBoundsConstraintSet could not resolve the bound "
+             "to a constant value.";
+  LDBG(1) << "    This may require more sophisticated analysis or manual "
+             "annotation.";
   return -1;
 }
 
@@ -121,11 +112,8 @@ int64_t computeTotalElements(mlir::memref::AllocOp alloc) {
 int64_t computeAllocationSize(mlir::memref::AllocOp alloc) {
   auto memref_type = alloc.getType();
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "[" << PASS_NAME << "] Analyzing allocation: " << alloc
-                 << "\n";
-    llvm::dbgs() << "  Type: " << memref_type << "\n";
-  });
+  LDBG(1) << "Analyzing allocation: " << alloc;
+  LDBG(1) << "  Type: " << memref_type;
 
   int64_t total_elements = computeTotalElements(alloc);
   if (total_elements < 0) {
@@ -136,9 +124,8 @@ int64_t computeAllocationSize(mlir::memref::AllocOp alloc) {
       getElementSizeBytes(memref_type.getElementType());
   int64_t total_bytes = total_elements * element_size_bytes;
 
-  LLVM_DEBUG(llvm::dbgs() << "  Total size: " << total_bytes << " bytes ("
-                          << total_elements << " elements * "
-                          << element_size_bytes << " bytes/element)\n");
+  LDBG(1) << "  Total size: " << total_bytes << " bytes (" << total_elements
+          << " elements * " << element_size_bytes << " bytes/element)";
 
   return total_bytes;
 }
@@ -153,9 +140,7 @@ llvm::SmallVector<mlir::memref::AllocOp> collectAllocations(
     if (memref_type.getMemorySpace()) {
       allocs.push_back(alloc);
     } else {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "Skipping allocation with missing memory space: " << alloc
-                 << "\n");
+      LDBG(1) << "Skipping allocation with missing memory space: " << alloc;
     }
     return mlir::WalkResult::advance();
   });
@@ -166,10 +151,8 @@ llvm::SmallVector<mlir::memref::AllocOp> collectAllocations(
 /// Log allocation statistics.
 void logAllocationStats(
     const llvm::SmallVector<mlir::memref::AllocOp>& allocs) {
-  LLVM_DEBUG({
-    llvm::dbgs() << "[" << PASS_NAME << "] Found " << allocs.size()
-                 << " allocations with memory space attributes\n";
-  });
+  LDBG(1) << "Found " << allocs.size()
+          << " allocations with memory space attributes";
 }
 
 /// Result of processing a single allocation.
@@ -196,11 +179,9 @@ void materializeAddressAssignment(mlir::memref::AllocOp alloc,
   auto cast = mlir::UnrealizedConversionCastOp::create(builder, alloc.getLoc(),
                                                        alloc_type, addr_value);
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "  Materialized address assignment:\n";
-    llvm::dbgs() << "    Original alloc: " << alloc << "\n";
-    llvm::dbgs() << "    Replaced with: " << cast << "\n";
-  });
+  LDBG(1) << "  Materialized address assignment:";
+  LDBG(1) << "    Original alloc: " << alloc;
+  LDBG(1) << "    Replaced with: " << cast;
 
   // Collect all dealloc operations that use this allocation
   llvm::SmallVector<mlir::memref::DeallocOp> deallocs_to_remove;
@@ -215,8 +196,7 @@ void materializeAddressAssignment(mlir::memref::AllocOp alloc,
 
   // Remove the dealloc operations
   for (auto dealloc : deallocs_to_remove) {
-    LLVM_DEBUG(
-        { llvm::dbgs() << "    Removing dealloc: " << dealloc << "\n"; });
+    LDBG(1) << "    Removing dealloc: " << dealloc;
     dealloc.erase();
   }
 
@@ -230,8 +210,7 @@ std::optional<AllocationResult> processAllocation(
     mlir::OpBuilder& builder) {
   int64_t size = computeAllocationSize(alloc);
   if (size < 0) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Skipping allocation with unknown size: " << alloc << "\n");
+    LDBG(1) << "  Skipping allocation with unknown size: " << alloc;
     return std::nullopt;
   }
 
@@ -259,12 +238,10 @@ std::optional<AllocationResult> processAllocation(
 
   size_t assigned_address = *address_result;
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "  Assigned address " << assigned_address
-                 << " to allocation: " << alloc << "\n";
-    llvm::dbgs() << "    Size: " << size << " bytes, Alignment: " << alignment
-                 << " bytes\n";
-  });
+  LDBG(1) << "  Assigned address " << assigned_address
+          << " to allocation: " << alloc;
+  LDBG(1) << "    Size: " << size << " bytes, Alignment: " << alignment
+          << " bytes";
 
   // Materialize the address assignment in the IR
   materializeAddressAssignment(alloc, assigned_address, builder);
@@ -281,8 +258,7 @@ std::pair<int, int> processAllocations(
     return {0, 0};
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "\n[" << PASS_NAME
-                          << "] Processing allocations with MemoryTracker:\n");
+  LDBG(1) << "Processing allocations with MemoryTracker:";
 
   mlir::OpBuilder builder(context);
   int successful_assignments = 0;
@@ -297,15 +273,12 @@ std::pair<int, int> processAllocations(
     }
   }
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "\n[" << PASS_NAME << "] Allocation summary:\n";
-    llvm::dbgs() << "  Total allocations: " << allocs.size() << "\n";
-    llvm::dbgs() << "  Successfully assigned: " << successful_assignments
-                 << "\n";
-    llvm::dbgs() << "  Failed assignments: " << failed_assignments << "\n";
-    // TODO: Use memory hierarchy view to diagnose memref.alloc in namespaces
-    // that are not supposed to be address assigned by the scheduler
-  });
+  LDBG(1) << "Allocation summary:";
+  LDBG(1) << "  Total allocations: " << allocs.size();
+  LDBG(1) << "  Successfully assigned: " << successful_assignments;
+  LDBG(1) << "  Failed assignments: " << failed_assignments;
+  // TODO: Use memory hierarchy view to diagnose memref.alloc in namespaces
+  // that are not supposed to be address assigned by the scheduler
 
   return {successful_assignments, failed_assignments};
 }
@@ -318,13 +291,12 @@ struct AddressAssignmentPass
       : scheduler_ctx_(ctx) {}
 
   void runOnOperation() override {
-    if (DisableAddressAssignmentPass) return;
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    if (DisableThisPass) return;
+    LDBG(1) << "========= " PASS_NAME " =========";
 
     mlir::ModuleOp module = getOperation();
 
-    LLVM_DEBUG(llvm::dbgs() << "[" << PASS_NAME
-                            << "] Starting address assignment analysis\n");
+    LDBG(1) << "Starting address assignment analysis";
 
     // Collect all allocations with memory space attributes
     auto allocs = collectAllocations(module);

@@ -19,7 +19,7 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/ComponentClassifier.h"
 
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/Utils.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 
 #define DEBUG_TYPE "ktdf-to-operand-lowering"
 
@@ -28,7 +28,7 @@ using namespace scheduler;
 mlir::LogicalResult ComponentClassifier::classify(
     const llvm::SmallVector<mlir::ktdf::StageOp, 8>& stages,
     ComponentClassification& result) {
-  LLVM_DEBUG(llvm::dbgs() << "Step 1: Classify components\n");
+  LDBG(1) << "Step 1: Classify components";
 
   llvm::SetVector<ResourceType> all_parallel_components;
   llvm::SetVector<ResourceType> temp_non_parallel_components;
@@ -52,9 +52,9 @@ mlir::LogicalResult ComponentClassifier::classify(
         all_parallel_components.insert(component);
 
         auto str_attr = mlir::dyn_cast<mlir::StringAttr>(component);
-        LLVM_DEBUG(llvm::dbgs() << "  Component "
-                                << (str_attr ? str_attr.getValue() : "unknown")
-                                << " is parallel\n");
+        LDBG(1) << "  Component "
+                << (str_attr ? str_attr.getValue() : "unknown")
+                << " is parallel";
       } else {
         // Candidate for non-parallel (may be overridden if also in parallel)
         temp_non_parallel_components.insert(component);
@@ -70,25 +70,18 @@ mlir::LogicalResult ComponentClassifier::classify(
       result.non_parallel_components.insert(comp);
 
       auto str_attr = mlir::dyn_cast<mlir::StringAttr>(comp);
-      LLVM_DEBUG(llvm::dbgs() << "  Component "
-                              << (str_attr ? str_attr.getValue() : "unknown")
-                              << " is non-parallel\n");
+      LDBG(1) << "  Component " << (str_attr ? str_attr.getValue() : "unknown")
+              << " is non-parallel";
     } else {
       auto str_attr = mlir::dyn_cast<mlir::StringAttr>(comp);
-      LLVM_DEBUG(
-          llvm::dbgs()
-          << "  Component " << (str_attr ? str_attr.getValue() : "unknown")
-          << " excluded from non-parallel (appears in parallel region)\n");
+      LDBG(1) << "  Component " << (str_attr ? str_attr.getValue() : "unknown")
+              << " excluded from non-parallel (appears in parallel region)";
     }
   }
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "Component classification complete:\n";
-    llvm::dbgs() << "  Non-parallel: " << result.non_parallel_components.size()
-                 << "\n";
-    llvm::dbgs() << "  Parallel regions: "
-                 << result.parallel_components_map.size() << "\n";
-  });
+  LDBG(1) << "Component classification complete:";
+  LDBG(1) << "  Non-parallel: " << result.non_parallel_components.size();
+  LDBG(1) << "  Parallel regions: " << result.parallel_components_map.size();
 
   return mlir::success();
 }
