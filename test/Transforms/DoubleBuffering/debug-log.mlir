@@ -3,7 +3,7 @@
 
 // RUN: dataflow-scheduler-opt -allow-unregistered-dialect --debug-only=double-buffering %s -double-buffering 2>&1 | FileCheck %s
 
-// CHECK: [double-buffering] starting
+// CHECK: [double-buffering {{.*}}] starting
 
 func.func @debug_log() {
   %c0 = arith.constant 0 : index
