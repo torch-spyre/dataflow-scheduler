@@ -39,7 +39,7 @@
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -51,7 +51,7 @@
 #define PASS_NAME "parallelize-loops-across-instances"
 #define DEBUG_TYPE PASS_NAME
 
-static llvm::cl::opt<bool> DisableParallelizeLoopsAcrossInstancesPass(
+static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME,
     llvm::cl::desc("Disable Parallelize Loops Across Instances pass"),
     llvm::cl::init(false));
@@ -64,7 +64,6 @@ namespace scheduler {
 using namespace scheduler;
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 //===----------------------------------------------------------------------===//
 // Balance Status Enum
@@ -212,33 +211,29 @@ std::optional<Candidate> findCandidate(
   if (!enclosing_group) {
     return std::nullopt;
   }
-  LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] pipeline at "
-                          << pipeline->getLoc() << " is enclosed by "
-                          << enclosing_group->getLoc() << "\n");
+  LDBG(1) << " pipeline at " << pipeline->getLoc() << " is enclosed by "
+          << enclosing_group->getLoc();
   auto applicable_groups = getEquivalenceClass(enclosing_group);
   const auto num_instances = applicable_groups.size();
   if (num_instances < 2) {
     return std::nullopt;
   }
-  LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] pipeline at "
-                          << pipeline->getLoc() << " has " << num_instances
-                          << " applicable groups\n");
+  LDBG(1) << " pipeline at " << pipeline->getLoc() << " has " << num_instances
+          << " applicable groups ";
 
   // Step 3: enclosing scope.
   auto scope = mlir::ktdf::getPipelineEnclosingScope(pipeline);
   if (scope.loops.empty()) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
-               << ": no enclosing scf.for scope\n");
+    LDBG(1) << " skip pipeline at " << pipeline.getLoc()
+            << ": no enclosing scf.for scope";
     return std::nullopt;
   }
 
   // Step 4: loop selection.
   auto picked = selectLoop(scope.loops, num_instances);
   if (!picked.has_value()) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" PASS_NAME "] skip pipeline at " << pipeline.getLoc()
-               << ": no parallel loop in scope satisfies requirements\n");
+    LDBG(1) << "skip pipeline at " << pipeline.getLoc()
+            << ": no parallel loop in scope satisfies requirements";
     return std::nullopt;
   }
   mlir::scf::ForOp loop = *picked;
@@ -255,22 +250,20 @@ std::optional<Candidate> findCandidate(
     if (!balanced) {
       int64_t chunk = (*trip + num_instances - 1) / num_instances;
       int64_t leftover = *trip - (num_instances - 1) * chunk;
-      LLVM_DEBUG(llvm::dbgs()
-                 << "[" PASS_NAME "] imbalanced (fallback) at " << loop.getLoc()
-                 << ": trip=" << *trip << ", num_instances=" << num_instances
-                 << ", chunks=" << chunk << "," << leftover << "\n");
+      LDBG(1) << " imbalanced (fallback) at " << loop.getLoc()
+              << ": trip=" << *trip << ", num_instances=" << num_instances
+              << ", chunks=" << chunk << "," << leftover;
     } else {
-      LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] balanced candidate at "
-                              << loop.getLoc() << ": trip=" << *trip
-                              << ", num_instances=" << num_instances << "\n");
+      LDBG(1) << " balanced candidate at " << loop.getLoc()
+              << ": trip=" << *trip << ", num_instances=" << num_instances;
     }
   } else {
     // Dynamic trip count - balance unknown
     balance_status = BalanceStatus::kBalanceUnknown;
 
-    LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME "] dynamic candidate at "
-                            << loop.getLoc() << ": trip count is dynamic"
-                            << ", num_instances=" << num_instances << "\n");
+    LDBG(1) << " dynamic candidate at " << loop.getLoc()
+            << ": trip count is dynamic"
+            << ", num_instances=" << num_instances;
   }
 
   return Candidate{pipeline, loop,           upper_bound,
@@ -336,8 +329,8 @@ struct ParallelizeLoopsAcrossInstancesPass
     : public impl::ParallelizeLoopsAcrossInstancesPassBase<
           ParallelizeLoopsAcrossInstancesPass> {
   void runOnOperation() override {
-    if (DisableParallelizeLoopsAcrossInstancesPass) return;
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    if (DisableThisPass) return;
+    LDBG(1) << "========= " PASS_NAME " =========";
 
     mlir::ModuleOp module = getOperation();
 
@@ -345,7 +338,7 @@ struct ParallelizeLoopsAcrossInstancesPass
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {
-      LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME << "] No device found\n");
+      LDBG(1) << "No device found";
       return;
     }
     auto& resource_kinds = getChildAnalysis<arch_view::ResourceKinds>(**device);

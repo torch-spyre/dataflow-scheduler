@@ -45,7 +45,7 @@
 #include "dataflow-scheduler/Transforms/Utils/CustomLinalgTiling.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/Utils.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Bufferization/Transforms/Passes.h"
@@ -71,9 +71,8 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
-static llvm::cl::opt<bool> DisableConstructThreeStagePipelinePass(
+static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME,
     llvm::cl::desc("Disable construction of three stage pipeline"),
     llvm::cl::init(false));
@@ -234,9 +233,8 @@ void ConstructThreeStagePipelinePass::resetState() {
 mlir::LogicalResult
 ConstructThreeStagePipelinePass::generalizeLinalgArithMathOps(
     mlir::func::FuncOp func_op) {
-  LLVM_DEBUG(
-      llvm::dbgs()
-      << "Generalizing linalg, arith, and math operations to linalg.generic\n");
+  LDBG(1)
+      << "Generalizing linalg, arith, and math operations to linalg.generic";
 
   llvm::SmallVector<mlir::linalg::LinalgOp> linalg_ops;
 
@@ -253,8 +251,7 @@ ConstructThreeStagePipelinePass::generalizeLinalgArithMathOps(
 
   // Generalize named linalg operations
   for (mlir::linalg::LinalgOp linalg_op : linalg_ops) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Generalizing linalg op: " << linalg_op->getName() << "\n");
+    LDBG(1) << "  Generalizing linalg op: " << linalg_op->getName() << "";
     rewriter.setInsertionPoint(linalg_op);
 
     llvm::FailureOr<mlir::linalg::GenericOp> generic_result =
@@ -267,7 +264,7 @@ ConstructThreeStagePipelinePass::generalizeLinalgArithMathOps(
   }
 
   // Convert arith and math operations to linalg using elementwise patterns
-  LLVM_DEBUG(llvm::dbgs() << "  Converting arith/math operations\n");
+  LDBG(1) << "  Converting arith/math operations";
 
   mlir::RewritePatternSet patterns(&getContext());
   mlir::linalg::populateElementwiseToLinalgConversionPatterns(patterns);
@@ -278,14 +275,13 @@ ConstructThreeStagePipelinePass::generalizeLinalgArithMathOps(
     return mlir::failure();
   }
 
-  LLVM_DEBUG(llvm::dbgs()
-             << "  Successfully generalized compute ops to linalg.generic\n");
+  LDBG(1) << "  Successfully generalized compute ops to linalg.generic";
   return mlir::success();
 }
 
 mlir::LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(
     mlir::func::FuncOp func_op) {
-  LLVM_DEBUG(llvm::dbgs() << "Fusing consecutive linalg.generic operations\n");
+  LDBG(1) << "Fusing consecutive linalg.generic operations";
 
   llvm::SmallVector<mlir::linalg::GenericOp> worklist;
   func_op.walk([&](mlir::linalg::GenericOp generic_op) {
@@ -310,7 +306,7 @@ mlir::LogicalResult ConstructThreeStagePipelinePass::fuseLinalgOps(
           mlir::linalg::fuseElementwiseOps(rewriter, operand);
 
       if (mlir::succeeded(fusion_result)) {
-        LLVM_DEBUG(llvm::dbgs() << "  Successfully fused operations\n");
+        LDBG(1) << "  Successfully fused operations";
         auto fused_op =
             mlir::cast<mlir::linalg::GenericOp>(fusion_result->fusedOp);
 
@@ -436,26 +432,23 @@ void ConstructThreeStagePipelinePass::annotateLoopsWithIteratorTypes(
         mlir::ktdf::LoopTypeAttr::get(&getContext(), loop_type);
     for_op->setAttr("loop_type", loop_type_attr);
 
-    LLVM_DEBUG(llvm::dbgs() << "  Annotated loop " << i << " with loop_type: "
-                            << (loop_type == mlir::ktdf::LoopType::ParallelLoop
-                                    ? "parallel"
-                                    : "reduction")
-                            << "\n");
+    LDBG(1) << "  Annotated loop " << i << " with loop_type: "
+            << (loop_type == mlir::ktdf::LoopType::ParallelLoop ? "parallel"
+                                                                : "reduction")
+            << "";
   }
 }
 
 void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
     llvm::ArrayRef<mlir::linalg::LinalgOp> linalg_ops) {
-  LLVM_DEBUG(
-      llvm::dbgs() << "Creating SCF loops from linalg.generic operations\n");
+  LDBG(1) << "Creating SCF loops from linalg.generic operations";
 
   assert(linalg_ops.size() <= 1 &&
          "Currently only supporting one linalg.generic operation after fusion");
 
   mlir::IRRewriter rewriter(&getContext());
   for (mlir::linalg::LinalgOp linalg_op : linalg_ops) {
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Processing: " << linalg_op->getName() << "\n");
+    LDBG(1) << "  Processing: " << linalg_op->getName() << "";
 
     rewriter.setInsertionPoint(linalg_op);
 
@@ -516,7 +509,7 @@ void ConstructThreeStagePipelinePass::createLoopsFromLinalg(
       annotateLoopsWithIteratorTypes(tiled_result->loops, generic_op);
     }
 
-    LLVM_DEBUG(llvm::dbgs() << "  Successfully tiled linalg operation\n");
+    LDBG(1) << "  Successfully tiled linalg operation";
 
     // Store the tiled loops for later pipeline creation
     if (!tiled_result->loops.empty()) {
@@ -625,15 +618,14 @@ mlir::ktdf::PrivateOp ConstructThreeStagePipelinePass::createPrivateOp(
 
 void ConstructThreeStagePipelinePass::createPipeline(
     mlir::scf::ForOp innermost_loop) {
-  LLVM_DEBUG(llvm::dbgs() << "Creating ktdf.pipeline with three stages\n");
+  LDBG(1) << "Creating ktdf.pipeline with three stages";
 
   compute_ops_.clear();
   innermost_loop.getBody()->walk([&](mlir::linalg::LinalgOp linalg_op) {
     compute_ops_.push_back(linalg_op);
   });
 
-  LLVM_DEBUG(llvm::dbgs() << "  Found " << compute_ops_.size()
-                          << " linalg compute operations\n");
+  LDBG(1) << "  Found " << compute_ops_.size() << " linalg compute operations";
 
   // Save original scf.yield operands to ops_to_delete_ before changing the
   // yield. This ensures tensor.insert_slice and linalg.generic get cleaned up
@@ -737,7 +729,7 @@ void ConstructThreeStagePipelinePass::deleteOpAndUnusedChainOfOperands(
 }
 
 void ConstructThreeStagePipelinePass::cleanupOperations() {
-  LLVM_DEBUG(llvm::dbgs() << "Cleaning up operations\n");
+  LDBG(1) << "Cleaning up operations";
 
   for (auto* op : ops_to_delete_) {
     if (!op || !op->use_empty()) continue;
@@ -968,7 +960,7 @@ ConstructThreeStagePipelinePass::getStridesFromMemRefType(
 void ConstructThreeStagePipelinePass::createComputeOps(
     mlir::OpBuilder& builder, mlir::Location loc,
     mlir::ktdf::PrivateOp private_op) {
-  LLVM_DEBUG(llvm::dbgs() << "Creating compute operations in stage 2\n");
+  LDBG(1) << "Creating compute operations in stage 2";
 
   if (compute_ops_.size() != 1) {
     mlir::emitError(loc, "Expected exactly one compute op after fusion, got ")
@@ -1031,8 +1023,7 @@ void ConstructThreeStagePipelinePass::createComputeOps(
   // Clone compute operation into stage 2 and create write_to_fifo for each
   // store
   mlir::linalg::LinalgOp compute_op = compute_ops_[0];
-  LLVM_DEBUG(llvm::dbgs() << "  Cloning compute op: " << compute_op->getName()
-                          << "\n");
+  LDBG(1) << "  Cloning compute op: " << compute_op->getName() << "";
 
   // Create a dummy tensor.empty for the output operand with the tiled tensor
   // type
@@ -1359,8 +1350,7 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
 }
 
 void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
-  LLVM_DEBUG(llvm::dbgs() << "Processing function: " << func_op.getName()
-                          << "\n");
+  LDBG(1) << "Processing function: " << func_op.getName() << "";
 
   // Initialize const_builder_ at start of function
   if (!func_op.empty()) {
@@ -1376,8 +1366,7 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
     return;
   }
 
-  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After generalization:\n"
-                                             << func_op << "\n\n");
+  LDBG(1) << "After generalization:\n" << func_op << "\n";
 
   // Step 2: Fuse consecutive linalg.generic operations
   if (mlir::failed(fuseLinalgOps(func_op))) {
@@ -1386,8 +1375,7 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
     return;
   }
 
-  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After fusion:\n"
-                                             << func_op << "\n\n");
+  LDBG(1) << "After fusion:\n" << func_op << "\n";
 
   // Collect ktdp load/store operations and linalg operations
   llvm::SmallVector<mlir::linalg::LinalgOp> linalg_ops;
@@ -1406,8 +1394,7 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
   // Step 3: Create loops from linalg operations
   createLoopsFromLinalg(linalg_ops);
 
-  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After loops created:\n"
-                                             << func_op << "\n\n");
+  LDBG(1) << "After loops created:\n" << func_op << "\n";
 
   // Step 4: Create pipeline if we have tiled loops
   if (!tiled_loops_.empty()) {
@@ -1415,8 +1402,7 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
     createPipeline(innermost_loop);
   }
 
-  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After pipeline created:\n"
-                                             << func_op << "\n\n");
+  LDBG(1) << "After pipeline created:\n" << func_op << "\n";
 
   // Step 5: Replace access tiles with reinterpret_cast after pipeline creation
   replaceAccessTilesWithReinterpretCast(func_op);
@@ -1424,19 +1410,18 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
   // Step 6: Cleanup operations (removes original load/store/compute ops)
   cleanupOperations();
 
-  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << "After cleanup:\n"
-                                             << func_op << "\n\n");
+  LDBG(1) << "After cleanup:\n" << func_op << "\n";
 }
 
 void ConstructThreeStagePipelinePass::runOnOperation() {
-  if (DisableConstructThreeStagePipelinePass) return;
+  if (DisableThisPass) return;
 
   mlir::ModuleOp module = getOperation();
 
   auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
   auto* const device = devices.getOrImportDevice();
   if (!device) {
-    LLVM_DEBUG(llvm::dbgs() << "No device found.\n");
+    LDBG(1) << "No device found.";
     signalPassFailure();
     return;
   }
@@ -1448,8 +1433,7 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
     return;
   }
 
-  LLVM_DEBUG(
-      llvm::dbgs() << "Starting ConstructThreeStagePipeline transformation\n");
+  LDBG(1) << "Starting ConstructThreeStagePipeline transformation";
 
   // Process each function in each nested module
   module.walk([&](mlir::func::FuncOp func_op) {

@@ -20,7 +20,7 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/GlobalStageDAG.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 
 #define DEBUG_TYPE "phase2-signal-insertion"
 
@@ -33,7 +33,7 @@ mlir::LogicalResult scheduler::insertSignalsInPipeline(
     const std::map<std::pair<mlir::Operation*, mlir::Operation*>,
                    llvm::SmallVector<scheduler::ResourceType, 2>>& conflicts,
     mlir::OpBuilder& builder) {
-  LLVM_DEBUG(llvm::dbgs() << "Step 9: Insert signal operations\n");
+  LDBG(1) << "Step 9: Insert signal operations";
 
   auto loc = pipeline.getLoc();
 
@@ -46,7 +46,7 @@ mlir::LogicalResult scheduler::insertSignalsInPipeline(
                                        consumer_stage.getOperation())) > 0;
     if (!has_conflict) continue;
 
-    LLVM_DEBUG(llvm::dbgs() << "  Inserting signal between stages\n");
+    LDBG(1) << "  Inserting signal between stages";
     builder.setInsertionPointAfter(producer_stage);
 
     // Narrow to immediate leaf/root stages across any nested pipeline boundary.
@@ -72,6 +72,6 @@ mlir::LogicalResult scheduler::insertSignalsInPipeline(
     }
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "  Signal insertion complete\n");
+  LDBG(1) << "  Signal insertion complete";
   return mlir::success();
 }

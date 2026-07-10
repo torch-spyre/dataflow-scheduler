@@ -30,7 +30,7 @@
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -49,7 +49,6 @@ namespace mlir::ktdf {
 }  // namespace mlir::ktdf
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 // TODO: should use much large size when proper L1 usage analysis is available.
 constexpr int64_t kMaxCandidateTileSize = 2;
@@ -71,9 +70,8 @@ struct TileSizeInfo {
 
 void logUnresolved(ktdf::TilingReserveSizeOp reserve_size_op,
                    llvm::StringRef reason) {
-  LLVM_DEBUG(
-      llvm::dbgs() << "[" PASS_NAME << "] unresolved tiling.reserve_size at "
-                   << reserve_size_op.getLoc() << ": " << reason << "\n");
+  LDBG(1) << "unresolved tiling.reserve_size at " << reserve_size_op.getLoc()
+          << ": " << reason;
 }
 
 void collectAssociatedLoops(
@@ -180,7 +178,7 @@ std::optional<int64_t> chooseTileSize(
 struct TileSizeSelectionPass
     : public ktdf::impl::TileSizeSelectionPassBase<TileSizeSelectionPass> {
   void runOnOperation() override {
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    LDBG(1) << "========= " PASS_NAME " =========";
     ModuleOp module = getOperation();
 
     SmallVector<ktdf::TilingReserveSizeOp> reserve_size_ops;

@@ -46,7 +46,7 @@
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/AffineExpr.h"
@@ -59,7 +59,7 @@
 #define PASS_NAME "affine-min-canonicalization"
 #define DEBUG_TYPE PASS_NAME
 
-static llvm::cl::opt<bool> DisableAffineMinCanonicalizationPass(
+static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME,
     llvm::cl::desc("Disable Affine Min Canonicalization pass"),
     llvm::cl::init(false));
@@ -72,7 +72,6 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 /// Check if an affine map matches the pattern ()[s0, s1] -> (-s0 + s1)
 /// or equivalent forms like ()[s0, s1] -> (s1 - s0)
@@ -99,13 +98,11 @@ bool isSubtractionMap(mlir::AffineMap map) {
 
   bool matches = (result == expected1) || (result == expected2);
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "  Comparing expressions:\n";
-    llvm::dbgs() << "    Result: " << result << "\n";
-    llvm::dbgs() << "    Expected1 (s1-s0): " << expected1 << "\n";
-    llvm::dbgs() << "    Expected2 (-s0+s1): " << expected2 << "\n";
-    llvm::dbgs() << "    Match: " << (matches ? "YES" : "NO") << "\n";
-  });
+  LDBG(1) << "  Comparing expressions:";
+  LDBG(1) << "    Result: " << result;
+  LDBG(1) << "    Expected1 (s1-s0): " << expected1;
+  LDBG(1) << "    Expected2 (-s0+s1): " << expected2;
+  LDBG(1) << "    Match: " << (matches ? "YES" : "NO");
 
   return matches;
 }
@@ -119,15 +116,12 @@ struct CanonicalizeToAffineMin
   mlir::LogicalResult matchAndRewrite(
       mlir::affine::AffineApplyOp applyOp,
       mlir::PatternRewriter& rewriter) const override {
-    LLVM_DEBUG({
-      llvm::dbgs() << "[" << PASS_NAME << "] Checking affine.apply: " << applyOp
-                   << "\n";
-      llvm::dbgs() << "  Map: " << applyOp.getAffineMap() << "\n";
-    });
+    LDBG(1) << "Checking affine.apply: " << applyOp;
+    LDBG(1) << "  Map: " << applyOp.getAffineMap();
 
     // Check if the map matches our pattern: ()[s0, s1] -> (-s0 + s1)
     if (!isSubtractionMap(applyOp.getAffineMap())) {
-      LLVM_DEBUG(llvm::dbgs() << "  Map does not match subtraction pattern\n");
+      LDBG(1) << "  Map does not match subtraction pattern";
       return mlir::failure();
     }
 
@@ -186,17 +180,14 @@ struct CanonicalizeToAffineMin
       return mlir::failure();
     }
 
-    LLVM_DEBUG({
-      llvm::dbgs() << "[" << PASS_NAME
-                   << "] Matched canonicalization pattern:\n";
-      llvm::dbgs() << "  IV: " << iv << "\n";
-      llvm::dbgs() << "  Step: " << step << "\n";
-      llvm::dbgs() << "  UB: " << ub << "\n";
-      llvm::dbgs() << "  Replacing:\n";
-      llvm::dbgs() << "    " << *addOp << "\n";
-      llvm::dbgs() << "    " << *minOp << "\n";
-      llvm::dbgs() << "    " << *applyOp << "\n";
-    });
+    LDBG(1) << "Matched canonicalization pattern:";
+    LDBG(1) << "  IV: " << iv;
+    LDBG(1) << "  Step: " << step;
+    LDBG(1) << "  UB: " << ub;
+    LDBG(1) << "  Replacing:";
+    LDBG(1) << "    " << *addOp;
+    LDBG(1) << "    " << *minOp;
+    LDBG(1) << "    " << *applyOp;
 
     // Create the affine.min operation
     mlir::MLIRContext* ctx = applyOp.getContext();
@@ -220,10 +211,8 @@ struct CanonicalizeToAffineMin
     auto minMapOp = mlir::affine::AffineMinOp::create(
         rewriter, applyOp.getLoc(), minMap, operands);
 
-    LLVM_DEBUG({
-      llvm::dbgs() << "[" << PASS_NAME << "] Created affine.min:\n";
-      llvm::dbgs() << "    " << *minMapOp << "\n";
-    });
+    LDBG(1) << "Created affine.min:";
+    LDBG(1) << "    " << *minMapOp;
 
     // Replace the affine.apply with affine.min
     rewriter.replaceOp(applyOp, minMapOp.getResult());
@@ -239,14 +228,11 @@ struct AffineMinCanonicalizationPass
     : public impl::AffineMinCanonicalizationPassBase<
           AffineMinCanonicalizationPass> {
   void runOnOperation() override {
-    if (DisableAffineMinCanonicalizationPass) return;
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    if (DisableThisPass) return;
+    LDBG(1) << "========= " PASS_NAME " =========";
 
     mlir::MLIRContext* ctx = &getContext();
     mlir::RewritePatternSet patterns(ctx);
-
-    LLVM_DEBUG(llvm::dbgs() << "[" << PASS_NAME
-                            << "] Starting affine.min canonicalization\n");
 
     // Add our canonicalization pattern
     patterns.add<CanonicalizeToAffineMin>(ctx);
@@ -258,8 +244,7 @@ struct AffineMinCanonicalizationPass
       return;
     }
 
-    LLVM_DEBUG(llvm::dbgs()
-               << "[" << PASS_NAME << "] Canonicalization complete\n");
+    LDBG(1) << "Canonicalization complete";
   }
 };
 

@@ -26,7 +26,7 @@
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -35,7 +35,7 @@
 #define PASS_NAME "normalize-grid-to-1d"
 #define DEBUG_TYPE PASS_NAME
 
-static llvm::cl::opt<bool> DisableNormalizeGridTo1DPass(
+static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME, llvm::cl::desc("Disable Normalize Grid To 1D pass"),
     llvm::cl::init(false));
 
@@ -47,7 +47,6 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 // ASSUMPTION (runtime contract): the flat compute-tile id produced by
 // ktdp.get_compute_tile_id is numbered ROW-MAJOR over the original grid
@@ -93,8 +92,8 @@ llvm::SmallVector<mlir::Value> delinearizeRowMajor(
 struct NormalizeGridTo1DPass
     : public impl::NormalizeGridTo1DPassBase<NormalizeGridTo1DPass> {
   void runOnOperation() override {
-    if (DisableNormalizeGridTo1DPass) return;
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    if (DisableThisPass) return;
+    LDBG(1) << "========= " PASS_NAME " =========";
 
     mlir::ModuleOp module = getOperation();
     auto* ctx = &getContext();

@@ -64,7 +64,7 @@
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/SCFTilingUtils.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -83,11 +83,9 @@ namespace scheduler {
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
 }  // namespace scheduler
 
-namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
-}  // namespace
+namespace {}  // namespace
 
-static llvm::cl::opt<bool> DisableTileSCFForLoopsPass(
+static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME, llvm::cl::desc("Disable Tile SCF For Loops pass"),
     llvm::cl::init(false));
 
@@ -98,8 +96,8 @@ struct TileSCFForLoopsPass
   using TileSCFForLoopsPassBase<TileSCFForLoopsPass>::TileSCFForLoopsPassBase;
 
   void runOnOperation() override {
-    if (DisableTileSCFForLoopsPass) return;
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    if (DisableThisPass) return;
+    LDBG(1) << "========= " PASS_NAME " =========";
 
     mlir::Operation* op = getOperation();
 

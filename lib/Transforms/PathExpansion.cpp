@@ -35,7 +35,7 @@
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/Support/CommandLine.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/Pass/Pass.h"
@@ -43,7 +43,7 @@
 #define PASS_NAME "path-expansion"
 #define DEBUG_TYPE PASS_NAME
 
-static llvm::cl::opt<bool> DisablePathExpansionPass(
+static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME, llvm::cl::desc("Disable Path Expansion pass"),
     llvm::cl::init(false));
 
@@ -55,7 +55,6 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 //===----------------------------------------------------------------------===//
 // Path Expansion Pass
@@ -79,12 +78,10 @@ struct PathExpansionPass
 };
 
 void PathExpansionPass::runOnOperation() {
-  if (DisablePathExpansionPass) return;
-  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+  if (DisableThisPass) return;
+  LDBG(1) << "========= " PASS_NAME " =========";
 
   mlir::ModuleOp module_op = getOperation();
-
-  LLVM_DEBUG(llvm::dbgs() << "=== Path Expansion Pass ===\n");
 
   auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
   auto* const device = devices.getOrImportDevice();
@@ -111,8 +108,7 @@ void PathExpansionPass::runOnOperation() {
       });
   for (mlir::ktdf::PipelineOp cand : candidates) {
     if (mlir::failed(processPipeline(cand, routing_graph))) {
-      LLVM_DEBUG(llvm::dbgs() << "Unable to process pipeline \n";
-                 printLocation(llvm::dbgs(), cand));
+      LDBG(1) << "Unable to process pipeline ";
     }
   }
 }
@@ -120,8 +116,7 @@ void PathExpansionPass::runOnOperation() {
 mlir::LogicalResult PathExpansionPass::processPipeline(
     mlir::ktdf::PipelineOp pipeline_op,
     const scheduler::arch_view::RoutingGraph& routing_graph) {
-  LLVM_DEBUG(llvm::dbgs() << "Processing pipeline at " << pipeline_op.getLoc()
-                          << "\n");
+  LDBG(1) << "Processing pipeline at " << pipeline_op.getLoc() << "";
 
   // Build PipelineTree for this pipeline
   PipelineTree tree;
@@ -139,16 +134,16 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   // Plan path expansion
   auto plan = planPathExpansion(tree, pipeline_node, routing_graph);
   if (!plan) {
-    LLVM_DEBUG(llvm::dbgs() << "  Planning failed\n");
+    LDBG(1) << "  Planning failed";
     return mlir::failure();
   }
 
   if (!plan->changed) {
-    LLVM_DEBUG(llvm::dbgs() << "  Pipeline already legal, no changes needed\n");
+    LDBG(1) << "  Pipeline already legal, no changes needed";
     return mlir::success();
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "  Pipeline needs expansion\n");
+  LDBG(1) << "  Pipeline needs expansion";
 
   // Materialize the modified pipeline tree
   mlir::OpBuilder builder(pipeline_op.getContext());
@@ -164,11 +159,11 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   mlir::Operation* new_pipeline_op = materializer.materialize(*pipeline_node);
 
   if (!new_pipeline_op) {
-    LLVM_DEBUG(llvm::dbgs() << "  Materialization failed\n");
+    LDBG(1) << "  Materialization failed";
     return mlir::failure();
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "  Materialization succeeded\n");
+  LDBG(1) << "  Materialization succeeded";
 
   auto new_pipeline = mlir::dyn_cast<mlir::ktdf::PipelineOp>(new_pipeline_op);
   if (!new_pipeline) {
@@ -176,7 +171,7 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   }
 
   if (mlir::failed(cleanupPrivateOpsInPipeline(new_pipeline))) {
-    LLVM_DEBUG(llvm::dbgs() << "  Private cleanup failed\n");
+    LDBG(1) << "  Private cleanup failed";
     return mlir::failure();
   }
 

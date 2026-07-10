@@ -44,7 +44,7 @@
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
@@ -62,7 +62,6 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 struct KTDFToKTDFLoweringPass
     : public impl::KTDFToKTDFLoweringPassBase<KTDFToKTDFLoweringPass> {
@@ -73,13 +72,13 @@ struct KTDFToKTDFLoweringPass
       : scheduler_ctx_(scheduler_ctx) {}
 
   void runOnOperation() override {
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    LDBG(1) << "========= " PASS_NAME " =========";
     mlir::ModuleOp module = getOperation();
 
     auto& devices = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = devices.getOrImportDevice();
     if (!device) {
-      LLVM_DEBUG(llvm::dbgs() << "No device found.\n");
+      LDBG(1) << "No device found.";
       signalPassFailure();
       return;
     }
@@ -91,15 +90,14 @@ struct KTDFToKTDFLoweringPass
       return mlir::WalkResult::skip();
     });
     for (auto func : funcs) {
-      LLVM_DEBUG(llvm::dbgs() << "Running " << PASS_NAME << " on "
-                              << func.getName() << "\n");
+      LDBG(1) << "Running " << PASS_NAME << " on " << func.getName();
 
       // Pre-compute stages for reuse across multiple steps
       llvm::SmallVector<mlir::ktdf::StageOp, 8> stages;
       mlir::ktdf::collectStages(func, stages);
 
       if (stages.empty()) {
-        LLVM_DEBUG(llvm::dbgs() << "  No stages found - skipped\n");
+        LDBG(1) << "  No stages found - skipped";
         continue;
       }
 
@@ -206,7 +204,7 @@ struct KTDFToKTDFLoweringPass
       }
 
       if (wired_queries == 0) {
-        LLVM_DEBUG(llvm::dbgs() << "  No queries wired to stages\n");
+        LDBG(1) << "  No queries wired to stages";
         return signalPassFailure();
       }
 
@@ -223,14 +221,12 @@ struct KTDFToKTDFLoweringPass
       });
 
       if (!pipelines.empty()) {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "  Processing " << pipelines.size() << " pipelines\n");
+        LDBG(1) << "  Processing " << pipelines.size() << " pipelines";
 
         // Process pipelines in reverse order (post-order walk for nested
         // pipelines)
         for (auto pipeline : llvm::reverse(pipelines)) {
-          LLVM_DEBUG(llvm::dbgs() << "  Processing pipeline at "
-                                  << pipeline.getLoc() << "\n");
+          LDBG(1) << "  Processing pipeline at " << pipeline.getLoc() << "";
 
           // Collect stages that are direct children of this pipeline (not
           // nested)
@@ -244,8 +240,7 @@ struct KTDFToKTDFLoweringPass
           if (pipeline_stages.empty()) {
             // Skip pipelines that have no direct stages (already transformed or
             // empty)
-            LLVM_DEBUG(llvm::dbgs()
-                       << "  Skipping pipeline with no direct stages\n");
+            LDBG(1) << "  Skipping pipeline with no direct stages";
             continue;
           }
 
@@ -260,15 +255,14 @@ struct KTDFToKTDFLoweringPass
           std::map<std::pair<mlir::Operation*, mlir::Operation*>,
                    llvm::SmallVector<scheduler::ResourceType, 2>>
               conflicts;
-          LLVM_DEBUG(llvm::dbgs()
-                     << "Step 7: Computing scratchpad conflicts\n");
+          LDBG(1) << "Step 7: Computing scratchpad conflicts";
           if (mlir::failed(computeScratchpadConflicts(
                   stage_to_units, dag, resource_kinds, conflicts))) {
-            LLVM_DEBUG(llvm::dbgs() << "Step 7 failed\n");
+            LDBG(1) << "Step 7 failed";
             return signalPassFailure();
           }
-          LLVM_DEBUG(llvm::dbgs() << "Step 7 complete: " << conflicts.size()
-                                  << " conflicts found\n");
+          LDBG(1) << "Step 7 complete: " << conflicts.size()
+                  << " conflicts found";
 
           // Step 8: Topologically sort stages
           llvm::SmallVector<mlir::ktdf::StageOp, 8> sorted_stages;
@@ -303,7 +297,7 @@ struct KTDFToKTDFLoweringPass
           }
         }
 
-        LLVM_DEBUG(llvm::dbgs() << "  Phase 2 complete\n");
+        LDBG(1) << "  Phase 2 complete";
       }
 
       // Remove loop_type attributes from all scf.for loops now that
@@ -311,8 +305,7 @@ struct KTDFToKTDFLoweringPass
       func.walk(
           [](mlir::scf::ForOp for_op) { for_op->removeAttr("loop_type"); });
 
-      LLVM_DEBUG(llvm::dbgs()
-                 << "Lowering complete for " << func.getName() << "\n");
+      LDBG(1) << "Lowering complete for " << func.getName() << "";
     }
   }
 

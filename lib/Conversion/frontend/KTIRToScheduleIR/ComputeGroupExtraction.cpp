@@ -83,7 +83,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "llvm/ADT/EquivalenceClasses.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -107,9 +107,8 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
-static llvm::cl::opt<bool> DisableComputeGroupExtractionPass(
+static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME,
     llvm::cl::desc("Disable Compute Group Extraction pass"),
     llvm::cl::init(false));
@@ -445,12 +444,9 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   builder.setInsertionPointToEnd(func_block);
   mlir::func::ReturnOp::create(builder, top_level_module.getLoc());
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "Extracted compute group into function: " << func_name
-                 << "\n";
-    llvm::dbgs() << "Operations: " << ops_to_move.size() << "\n";
-    llvm::dbgs() << "Block arguments: " << args.size() << "\n";
-  });
+  LDBG(1) << "Extracted compute group into function: " << func_name;
+  LDBG(1) << "Operations: " << ops_to_move.size();
+  LDBG(1) << "Block arguments: " << args.size();
 }
 
 void ComputeGroupExtractionPass::processBlockForExtraction(
@@ -566,10 +562,8 @@ void ComputeGroupExtractionPass::runOn(mlir::ModuleOp module_op) {
       return mlir::WalkResult::advance();
     }
 
-    LLVM_DEBUG({
-      llvm::dbgs() << "Access tile equivalence classes:\n";
-      printEqClasses(access_tile_eq_classes);
-    });
+    LDBG(1) << "Access tile equivalence classes:";
+    LLVM_DEBUG(printEqClasses(access_tile_eq_classes));
 
     // Process block to collect compute groups
     processBlockForExtraction(block, access_tile_eq_classes);
@@ -630,9 +624,8 @@ void ComputeGroupExtractionPass::runOn(mlir::ModuleOp module_op) {
 }
 
 void ComputeGroupExtractionPass::runOnOperation() {
-  if (DisableComputeGroupExtractionPass) return;
-  DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
-  LLVM_DEBUG(llvm::dbgs() << "Compute Group Extraction Pass\n");
+  if (DisableThisPass) return;
+  LDBG(1) << "========= " PASS_NAME " =========";
   mlir::ModuleOp module_op = getOperation();
   runOn(module_op);
 }

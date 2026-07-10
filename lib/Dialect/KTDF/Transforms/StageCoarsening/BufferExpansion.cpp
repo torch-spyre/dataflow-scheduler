@@ -76,7 +76,7 @@
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/StageGrouping.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
@@ -145,9 +145,7 @@ static OpFoldResult computeLoopSize(scf::ForOp loop, OpBuilder& builder) {
     int64_t trip_count =
         (*upper_const - *lower_const + *step_const - 1) / *step_const;
     IntegerAttr size_attr = builder.getI64IntegerAttr(trip_count);
-    LLVM_DEBUG({
-      llvm::dbgs() << "      Dimension size (constant): " << trip_count << "\n";
-    });
+    LDBG(1) << "      Dimension size (constant): " << trip_count;
     return OpFoldResult(size_attr);
   }
 
@@ -170,17 +168,15 @@ static OpFoldResult computeLoopSize(scf::ForOp loop, OpBuilder& builder) {
     assert(!tile_sizes.empty() &&
            "Expected at least one tile size in ktdf.tiling.derive_size");
     size_val = tile_sizes.back();
-    LLVM_DEBUG({
-      llvm::dbgs() << "      Dimension size from ktdf.tiling.derive_size\n";
-    });
+    LDBG(1) << "      Dimension size from ktdf.tiling.derive_size";
   } else {
     // Use the upper bound directly as the trip count
     size_val = upper;
-    LLVM_DEBUG({ llvm::dbgs() << "      Dimension size from upper bound\n"; });
+    LDBG(1) << "      Dimension size from upper bound";
   }
 
   // Dynamic size - return the Value directly
-  LLVM_DEBUG({ llvm::dbgs() << "      Dimension size (dynamic)\n"; });
+  LDBG(1) << "      Dimension size (dynamic)";
   return OpFoldResult(size_val);
 }
 
@@ -243,10 +239,8 @@ memref::AllocOp StageCoarseningBufferCloner::cloneAllocOp(
 
   auto original_type = alloc_op.getType();
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "  Expanding buffer allocation with " << info->sizes.size()
-                 << " new dimension(s)\n";
-  });
+  LDBG(1) << "  Expanding buffer allocation with " << info->sizes.size()
+          << " new dimension(s)";
 
   // Build new shape: [expansion_dims..., original_dims...]
   llvm::SmallVector<int64_t> new_shape;
@@ -300,10 +294,8 @@ memref::AllocOp StageCoarseningBufferCloner::cloneAllocOp(
   auto new_alloc = memref::AllocOp::create(builder, alloc_op.getLoc(), new_type,
                                            dynamic_sizes);
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "    Original type: " << original_type << "\n";
-    llvm::dbgs() << "    Expanded type: " << new_type << "\n";
-  });
+  LDBG(1) << "    Original type: " << original_type;
+  LDBG(1) << "    Expanded type: " << new_type;
 
   return new_alloc;
 }
@@ -344,10 +336,7 @@ ktdf::DataTransferOp StageCoarseningBufferCloner::cloneDataTransfer(
     return nullptr;
   }
 
-  LLVM_DEBUG({
-    llvm::dbgs()
-        << "  Adjusting data transfer indices for expanded buffer(s)\n";
-  });
+  LDBG(1) << "  Adjusting data transfer indices for expanded buffer(s)";
 
   // Build new index lists with loop IV values prepended
   llvm::SmallVector<Value> new_src_indices;
@@ -477,10 +466,8 @@ mlir::ktdf::identifyCommonMemrefs(const StageGroupingAnalysis& grouping) {
     }
   }
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "    Found " << memref_to_groups.size()
-                 << " unique memrefs across all stages\n";
-  });
+  LDBG(1) << "    Found " << memref_to_groups.size()
+          << " unique memrefs across all stages";
 
   return memref_to_groups;
 }
@@ -533,16 +520,12 @@ llvm::SmallVector<Value> mlir::ktdf::filterCandidateBuffers(
         candidate_buffers.end())
       candidate_buffers.push_back(memref);
 
-    LLVM_DEBUG({
-      llvm::dbgs() << "    Candidate buffer found: used in " << group_set.size()
-                   << " groups\n";
-    });
+    LDBG(1) << "    Candidate buffer found: used in " << group_set.size()
+            << " groups";
   }
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "    Identified " << candidate_buffers.size()
-                 << " candidate buffers for expansion\n";
-  });
+  LDBG(1) << "    Identified " << candidate_buffers.size()
+          << " candidate buffers for expansion";
 
   return candidate_buffers;
 }
@@ -598,10 +581,8 @@ mlir::ktdf::analyzeLoopDependencies(llvm::ArrayRef<Value> candidate_buffers,
 
     if (!dependent_ivs.empty()) {
       buffer_to_loop_ivs[buffer] = dependent_ivs;
-      LLVM_DEBUG({
-        llvm::dbgs() << "    Buffer depends on " << dependent_ivs.size()
-                     << " loop IV(s)\n";
-      });
+      LDBG(1) << "    Buffer depends on " << dependent_ivs.size()
+              << " loop IV(s)";
     }
   }
 
@@ -641,10 +622,8 @@ void mlir::ktdf::calculateExpansionInfo(
     }
 
     if (!info->loop_ivs.empty()) {
-      LLVM_DEBUG({
-        llvm::dbgs() << "    Buffer expansion: " << info->loop_ivs.size()
-                     << " new dimension(s)\n";
-      });
+      LDBG(1) << "    Buffer expansion: " << info->loop_ivs.size()
+              << " new dimension(s)";
 
       // Assert that all users of this buffer are data transfer operations.
       // If other operations use a buffer that is a candidate for expansion,
@@ -662,12 +641,9 @@ void mlir::ktdf::calculateExpansionInfo(
   }
 
   if (expansion_infos.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "    No buffers need expansion\n");
+    LDBG(1) << "    No buffers need expansion";
   } else {
-    LLVM_DEBUG({
-      llvm::dbgs() << "    Total buffers to expand: " << expansion_infos.size()
-                   << "\n";
-    });
+    LDBG(1) << "    Total buffers to expand: " << expansion_infos.size();
   }
 }
 
@@ -679,7 +655,7 @@ void mlir::ktdf::PerformBufferExpansionAnalysis(
     llvm::ArrayRef<scf::ForOp> loop_nest, PipelineOp pipeline,
     const StageGroupingAnalysis& grouping,
     llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos) {
-  LLVM_DEBUG(llvm::dbgs() << "  Performing buffer expansion analysis...\n");
+  LDBG(1) << "  Performing buffer expansion analysis...";
 
   // Step 1: Identify common memrefs across stage groups
   auto memref_to_groups = identifyCommonMemrefs(grouping);

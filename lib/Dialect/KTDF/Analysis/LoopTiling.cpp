@@ -20,6 +20,7 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/Utils.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/IR/Operation.h"
@@ -137,8 +138,7 @@ void LoopTilingInfo::computeLoopNests(Operation* root_op) {
   root_op->walk<WalkOrder::PreOrder>(
       [&](scf::ForOp for_op) { all_loops.push_back(for_op); });
 
-  LLVM_DEBUG(llvm::dbgs() << "Found " << all_loops.size()
-                          << " scf.for loops in total\n");
+  LDBG(1) << "Found " << all_loops.size() << " scf.for loops in total";
 
   // Track which loops have been processed to avoid duplicates
   llvm::DenseSet<Operation*> visited;
@@ -155,9 +155,8 @@ void LoopTilingInfo::computeLoopNests(Operation* root_op) {
 
     // Limit to maximum depth
     if (nested_loops.size() > kMaxLoopNestDepth) {
-      LLVM_DEBUG(llvm::dbgs()
-                 << "Limiting nest depth from " << nested_loops.size() << " to "
-                 << kMaxLoopNestDepth << "\n");
+      LDBG(1) << "Limiting nest depth from " << nested_loops.size() << " to "
+              << kMaxLoopNestDepth;
       nested_loops.resize(kMaxLoopNestDepth);
     }
 
@@ -212,8 +211,7 @@ void LoopTilingInfo::computeLoopNests(Operation* root_op) {
     }
   }
 
-  LLVM_DEBUG(llvm::dbgs() << "Total nests created: " << loop_nests_.size()
-                          << "\n");
+  LDBG(1) << "Total nests created: " << loop_nests_.size();
 }
 
 void LoopTilingInfo::assignMetadata(PerfectNestingInfo& nest) {

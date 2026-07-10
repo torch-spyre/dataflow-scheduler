@@ -18,7 +18,7 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/StageCoarsening/ScopeCorrection.h"
 
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/IR/IRMapping.h"
 
 #define DEBUG_TYPE "stage-coarsening"
@@ -29,19 +29,19 @@ using namespace mlir::ktdf;
 void ScopeCorrection::run() {
   outer_private_ = outer_pipeline_.getPrivateOp();
   if (!outer_private_) {
-    LLVM_DEBUG(llvm::dbgs() << "  No outer private node found, skipping.\n");
+    LDBG(1) << "  No outer private node found, skipping.";
     return;
   }
 
   auto inner_pipelines = findInnerPipelines();
   if (inner_pipelines.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "  No inner pipelines found, skipping.\n");
+    LDBG(1) << "  No inner pipelines found, skipping.";
     return;
   }
 
   analyzePrivateResultUsage();
   if (pipeline_to_sc_info_.empty()) {
-    LLVM_DEBUG(llvm::dbgs() << "  No results need to be moved.\n");
+    LDBG(1) << "  No results need to be moved.";
     return;
   }
 
@@ -98,8 +98,7 @@ void ScopeCorrection::analyzePrivateResultUsage() {
     }
 
     if (!only_used_in_inner || !target_inner_pipeline) continue;
-    LLVM_DEBUG(llvm::dbgs()
-               << "  Result #" << idx << " only used in inner pipeline\n");
+    LDBG(1) << "  Result #" << idx << " only used in inner pipeline";
 
     auto& sc_info = pipeline_to_sc_info_[target_inner_pipeline];
     sc_info.target_pipeline = target_inner_pipeline;
@@ -119,8 +118,8 @@ void ScopeCorrection::analyzePrivateResultUsage() {
 
 void ScopeCorrection::movePrivateResultsToInnerPipeline(
     PipelineOp inner_pipeline, ScopeCorrectionInfo& sc_info) {
-  LLVM_DEBUG(llvm::dbgs() << "  Moving " << sc_info.result_indices.size()
-                          << " result(s) to inner pipeline\n");
+  LDBG(1) << "  Moving " << sc_info.result_indices.size()
+          << " result(s) to inner pipeline";
 
   // Find or create the inner pipeline's private operation
   auto inner_private = inner_pipeline.getPrivateOp();
@@ -167,8 +166,7 @@ PrivateOp ScopeCorrection::recreatePrivateOp(
       if (!exclude_set.contains(&op)) {
         builder_.clone(op, value_map);
       } else {
-        LLVM_DEBUG(llvm::dbgs()
-                   << "      Skipping excluded operation: " << op << "\n");
+        LDBG(1) << "      Skipping excluded operation: " << op;
       }
     }
   }
@@ -209,7 +207,7 @@ PrivateOp ScopeCorrection::recreatePrivateOp(
 
 void ScopeCorrection::extendInnerPrivate(PrivateOp inner_private,
                                          ScopeCorrectionInfo& sc_info) {
-  LLVM_DEBUG(llvm::dbgs() << "    Extending existing inner private\n");
+  LDBG(1) << "    Extending existing inner private";
 
   // Get the old yield to preserve existing operands
   auto old_yield =
@@ -244,7 +242,7 @@ void ScopeCorrection::extendInnerPrivate(PrivateOp inner_private,
 
 void ScopeCorrection::createInnerPrivate(PipelineOp inner_pipeline,
                                          ScopeCorrectionInfo& sc_info) {
-  LLVM_DEBUG(llvm::dbgs() << "    Creating new inner private\n");
+  LDBG(1) << "    Creating new inner private";
 
   // Determine result types from operations to move
   llvm::SmallVector<Type> result_types = sc_info.getMovingResultTypes();
@@ -264,7 +262,7 @@ void ScopeCorrection::createInnerPrivate(PipelineOp inner_pipeline,
 
 void ScopeCorrection::updateOuterPrivate(
     llvm::ArrayRef<unsigned> removed_indices) {
-  LLVM_DEBUG(llvm::dbgs() << "    Updating outer private\n");
+  LDBG(1) << "    Updating outer private";
 
   // Build set of indices to remove for O(1) lookup
   llvm::DenseSet<unsigned> to_remove(removed_indices.begin(),

@@ -28,7 +28,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/RegionClonePrune.h"
-#include "llvm/Support/Debug.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
@@ -47,7 +47,6 @@ namespace mlir::ktdf {
 }  // namespace mlir::ktdf
 
 namespace {
-const char VerboseDebug[] = DEBUG_TYPE "-verbose";
 
 /// Find the underlying memref.alloc that defines `dest`. If `dest` is a
 /// direct alloc result, return it. If `dest` is a result of a
@@ -88,8 +87,7 @@ void performHoist(const ktdf::reuse::Candidate& c) {
   scf::ForOp target_loop = c.target_loop;
   Value orig_dest = transfer.getDestination();
 
-  LLVM_DEBUG(llvm::dbgs() << "[" << PASS_NAME << "] hoisting "
-                          << *transfer.getOperation() << "\n");
+  LDBG(1) << " hoisting " << *transfer.getOperation() << "\n";
 
   // 1. Fresh destination alloc immediately before target_loop.
   Value new_dest = cloneDestAllocAbove(orig_dest, target_loop.getOperation());
@@ -158,7 +156,7 @@ struct BroadcastPromotionPass
       BroadcastPromotionPass>::BroadcastPromotionPassBase;
 
   void runOnOperation() override {
-    DEBUG_WITH_TYPE(VerboseDebug, llvm::dbgs() << PASS_NAME " running\n");
+    LDBG(1) << "========= " PASS_NAME " =========";
     ModuleOp module = getOperation();
     bool changed = true;
     while (changed) {
