@@ -171,7 +171,7 @@ struct StageMaterializationInfo {
                       // (needed for transfer stages that are intermdiate-stage
                       // facing)
     kSyntheticTransfer,  // Generate new transfer stage (usually for
-                         // intermediate memory stages ie L1)
+                         // intermediate memory ie L1)
   };
 
   Kind kind = Kind::kPreserveOriginal;

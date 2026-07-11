@@ -483,25 +483,6 @@ void RoutingGraph::print(llvm::raw_ostream& os) const {
   os << "}\n";
 }
 
-RoutingGraph::ResourceNode::ResourceKind RoutingGraph::inferResourceKind(
-    ResourceType resource) {
-  if (!resource) {
-    llvm_unreachable("cannot infer kind from null attribute");
-  }
-
-  // KtdpMemorySpaceAttr indicates memory resource
-  if (mlir::isa<mlir::ktdp::KtdpMemorySpaceAttr>(resource)) {
-    return ResourceNode::ResourceKind::Memory;
-  }
-
-  // StringAttr indicates compute resource (by convention)
-  if (mlir::isa<mlir::StringAttr>(resource)) {
-    return ResourceNode::ResourceKind::Compute;
-  }
-
-  llvm_unreachable("unknown resource attribute type");
-}
-
 llvm::StringRef RoutingGraph::stringifyResourceKind(
     ResourceNode::ResourceKind kind) {
   switch (kind) {

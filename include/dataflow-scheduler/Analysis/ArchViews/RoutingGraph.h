@@ -123,9 +123,6 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
 
   static llvm::StringRef stringifyResourceKind(ResourceNode::ResourceKind kind);
 
-  /// Infer resource kind from attribute type
-  static ResourceNode::ResourceKind inferResourceKind(ResourceType resource);
-
  private:
   void initialize();
 
