@@ -124,6 +124,9 @@ if(DataflowScheduler_ENABLE_WERROR)
   message(STATUS "DataflowScheduler: -Werror enabled for first-party sources")
 endif()
 
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN YES)
+
 # Include DataflowScheduler CMake module.
 set(KTIR_INCLUDE_DIRS 
   ${PROJECT_SOURCE_DIR}/include
