@@ -186,9 +186,6 @@ struct ConstructThreeStagePipelinePass
       llvm::SmallVector<mlir::Value>& indices,
       llvm::SmallVector<int64_t>& strides);
 
-  // Get strides from memref type, computing default row-major strides if needed
-  llvm::SmallVector<int64_t> getStridesFromMemRefType(
-      mlir::MemRefType memref_type);
 
   // Clean up operations after pipeline creation
   void cleanupOperations();
@@ -953,24 +950,6 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
   }
 }
 
-llvm::SmallVector<int64_t>
-ConstructThreeStagePipelinePass::getStridesFromMemRefType(
-    mlir::MemRefType memref_type) {
-  llvm::SmallVector<int64_t> strides;
-  if (auto strided_layout =
-          mlir::dyn_cast<mlir::StridedLayoutAttr>(memref_type.getLayout())) {
-    strides.assign(strided_layout.getStrides().begin(),
-                   strided_layout.getStrides().end());
-  } else {
-    // Compute default row-major strides
-    int64_t stride = 1;
-    for (int i = memref_type.getRank() - 1; i >= 0; --i) {
-      strides.insert(strides.begin(), stride);
-      stride *= memref_type.getShape()[i];
-    }
-  }
-  return strides;
-}
 
 }  // namespace
 
