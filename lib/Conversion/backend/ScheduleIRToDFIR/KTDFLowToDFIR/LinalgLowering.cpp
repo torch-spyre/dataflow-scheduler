@@ -82,7 +82,7 @@ struct LowerLinalgGenericPattern
     rewriter.setInsertionPoint(generic_op);
     for (mlir::Operation* op : ops_to_lower) {
       mlir::LogicalResult result =
-          llvm::TypeSwitch<mlir::Operation*, mlir::LogicalResult>(op)
+          mlir::TypeSwitch<mlir::Operation*, mlir::LogicalResult>(op)
               // arith.mulf %lhs, %rhs -> vectorchain.binary {binary_op = mul}
               .Case<mlir::arith::MulFOp>([&](mlir::arith::MulFOp mulf_op) {
                 return lowerMulFOp(mulf_op, rewriter, identity_map);
