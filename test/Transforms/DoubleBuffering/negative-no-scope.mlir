@@ -20,6 +20,7 @@
 // CHECK-NEXT:      return
 // CHECK-NEXT:    }
 
+ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
 func.func @no_scope(%src: memref<64xf16, "DDR">,
                    %dst: memref<64xf16, "DDR">) {
   %c0 = arith.constant 0 : index

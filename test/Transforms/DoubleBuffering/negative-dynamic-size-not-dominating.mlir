@@ -25,6 +25,7 @@
 // CHECK-NEXT:      return
 // CHECK-NEXT:    }
 
+ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
 func.func @dynamic_size_not_dominating(%src: memref<?xf16, "DDR">,
                                         %dst: memref<?xf16, "DDR">,
                                         %M: index) {

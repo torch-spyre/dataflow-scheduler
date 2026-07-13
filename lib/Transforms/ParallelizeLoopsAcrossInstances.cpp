@@ -332,12 +332,15 @@ struct ParallelizeLoopsAcrossInstancesPass
     if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
 
-    mlir::ModuleOp module = getOperation();
+    mlir::ModuleOp module_op = getOperation();
 
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {
-      LDBG(1) << "No device found";
+      module_op->emitError(
+          "Unable to import the device specification. This could happen if the "
+          "device spec file is empty or contains multiple devices");
+      signalPassFailure();
       return;
     }
     auto& resource_kinds =
@@ -346,7 +349,7 @@ struct ParallelizeLoopsAcrossInstancesPass
     // Pre-order walk over pipelines. Collect candidates first, then rewrite,
     // so the walk's iterator is not invalidated by op erasure.
     llvm::SmallVector<Candidate> candidates;
-    module.walk<mlir::WalkOrder::PreOrder>(
+    module_op.walk<mlir::WalkOrder::PreOrder>(
         [&](mlir::ktdf::PipelineOp pipeline) {
           if (auto c = findCandidate(pipeline, resource_kinds)) {
             candidates.push_back(*c);

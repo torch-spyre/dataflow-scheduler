@@ -28,6 +28,7 @@
 // CHECK-NEXT:      return
 // CHECK-NEXT:    }
 
+ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
 func.func @multi_producer(%src1: memref<64xf16, "DDR">,
                           %src2: memref<64xf16, "DDR">,
                           %dst: memref<64xf16, "DDR">) {

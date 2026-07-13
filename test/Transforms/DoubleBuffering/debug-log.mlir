@@ -4,7 +4,7 @@
 // RUN: dataflow-scheduler-opt -allow-unregistered-dialect --debug-only=double-buffering %s -double-buffering 2>&1 | FileCheck %s
 
 // CHECK: [double-buffering {{.*}}] starting
-
+ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
 func.func @debug_log() {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index

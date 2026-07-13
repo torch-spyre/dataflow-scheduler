@@ -513,25 +513,28 @@ struct DoubleBufferingPass
     if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
 
-    mlir::ModuleOp module = getOperation();
+    mlir::ModuleOp module_op = getOperation();
 
     LDBG(1) << "starting";
 
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {
-      LDBG(1) << " No device found, skipping";
+      module_op->emitError(
+          "Unable to import the device specification. This could happen if the "
+          "device spec file is empty or contains multiple devices");
+      signalPassFailure();
       return;
     }
     auto& memory_tree =
         getChildAnalysis<arch_view::MemoryTree>(device->getDeclaration());
 
-    mlir::DominanceInfo dom(module);
+    mlir::DominanceInfo dom(module_op);
 
     llvm::SmallVector<
         std::pair<mlir::ktdf::PipelineOp, llvm::SmallVector<CandidateShape>>>
         per_pipeline_shapes;
-    module.walk<mlir::WalkOrder::PreOrder>(
+    module_op.walk<mlir::WalkOrder::PreOrder>(
         [&](mlir::ktdf::PipelineOp pipeline) {
           auto scope = mlir::ktdf::getPipelineEnclosingScope(pipeline);
           if (!isPipelineEligible(pipeline, scope)) {

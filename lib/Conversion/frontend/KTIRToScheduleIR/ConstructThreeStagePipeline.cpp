@@ -1416,12 +1416,14 @@ void ConstructThreeStagePipelinePass::runOnFunc(mlir::func::FuncOp func_op) {
 void ConstructThreeStagePipelinePass::runOnOperation() {
   if (DisableThisPass) return;
 
-  mlir::ModuleOp module = getOperation();
+  mlir::ModuleOp module_op = getOperation();
 
   auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
   auto* const device = device_manager.getOrImportDevice();
   if (!device) {
-    LDBG(1) << "No device found.";
+    module_op->emitError(
+        "Unable to import the device specification. This could happen if the "
+        "device spec file is empty or contains multiple devices");
     signalPassFailure();
     return;
   }
@@ -1437,7 +1439,7 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
   LDBG(1) << "Starting ConstructThreeStagePipeline transformation";
 
   // Process each function in each nested module
-  module.walk([&](mlir::func::FuncOp func_op) {
+  module_op.walk([&](mlir::func::FuncOp func_op) {
     resetState();
     runOnFunc(func_op);
   });

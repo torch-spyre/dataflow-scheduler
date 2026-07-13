@@ -85,12 +85,15 @@ struct KTDFLowToDFIRPass
 
   void runOnOperation() override {
     LDBG(1) << "========= " PASS_NAME " =========";
-    mlir::ModuleOp module = getOperation();
+    mlir::ModuleOp module_op = getOperation();
 
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {
-      LDBG(1) << "No device found";
+      module_op->emitError(
+          "Unable to import the device specification. This could happen if the "
+          "device spec file is empty or contains multiple devices");
+      signalPassFailure();
       return;
     }
     auto declaration = device->getDeclaration();
@@ -99,7 +102,7 @@ struct KTDFLowToDFIRPass
         getChildAnalysis<arch_view::ResourceKinds>(declaration);
 
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
-    module.walk([&](mlir::func::FuncOp func) { funcs.push_back(func); });
+    module_op.walk([&](mlir::func::FuncOp func) { funcs.push_back(func); });
     for (auto func : funcs) {
       LDBG(1) << "Running " << PASS_NAME << " on " << func.getName();
 
@@ -125,7 +128,7 @@ struct KTDFLowToDFIRPass
       // were cloned into child modules but whose originals are now unused in
       // the top-level module). runRegionDCE recurses into nested regions, so
       // passing the module's regions covers child modules created above.
-      mlir::IRRewriter rewriter(module.getContext());
+      mlir::IRRewriter rewriter(module_op.getContext());
       (void)mlir::runRegionDCE(rewriter, func.getBody());
 
       if (mlir::failed(

@@ -498,12 +498,15 @@ struct ScalarBroadcastLegalizationPass
   void runOnOperation() override {
     if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
-    mlir::ModuleOp module = getOperation();
+    mlir::ModuleOp module_op = getOperation();
     llvm::SmallVector<BroadcastLegalizationSite> sites;
 
     auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
     auto* const device = device_manager.getOrImportDevice();
     if (!device) {
+      module_op->emitError(
+          "Unable to import the device specification. This could happen if the "
+          "device spec file is empty or contains multiple devices");
       signalPassFailure();
       return;
     }
@@ -511,7 +514,7 @@ struct ScalarBroadcastLegalizationPass
         getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
 
     mlir::LogicalResult status = mlir::success();
-    module.walk([&](mlir::ktdf::PipelineOp pipeline) {
+    module_op.walk([&](mlir::ktdf::PipelineOp pipeline) {
       if (mlir::failed(status)) return mlir::WalkResult::interrupt();
       if (mlir::failed(
               collectSites(pipeline, scheduler_ctx_, sites, resource_kinds)))
