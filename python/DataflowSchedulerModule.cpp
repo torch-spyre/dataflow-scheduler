@@ -18,10 +18,28 @@
 
 #include <mlir/Bindings/Python/NanobindAdaptors.h>
 
+#include "dataflow-scheduler-c/RegisterEverything.h"
+
 namespace nb = nanobind;
 
 NB_MODULE(_dataflow_scheduler, scheduler) {
   scheduler.doc() = "mlir_scheduler main python extension";
 
-  // TODO: Provide registration entry point.
+  scheduler.def(
+      "register_all_passes", []() { dataflowSchedulerRegisterAllPasses(); },
+      "Registers all passes defined and used by the scheduler.");
+  scheduler.def(
+      "register_all_dialects",
+      [](MlirDialectRegistry registry) {
+        dataflowSchedulerRegisterAllDialects(registry);
+      },
+      nb::arg("registry"),
+      "Registers all dialects defined and used by the scheduler.");
+  scheduler.def(
+      "register_all_extensions",
+      [](MlirDialectRegistry registry) {
+        dataflowSchedulerRegisterAllExtensions(registry);
+      },
+      nb::arg("registry"),
+      "Registers all extensions provided and required by the scheduler.");
 }

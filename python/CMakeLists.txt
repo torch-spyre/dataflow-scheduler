@@ -51,6 +51,7 @@ declare_mlir_python_extension(DataflowSchedulerPythonExtensions.Main
     MLIRCAPITensor
     MLIRCAPITransforms
     KTIR::KtdpCAPI
+    DataflowScheduler::CAPIRegisterEverything
   PRIVATE_LINK_LIBS
     LLVMSupport
 )
