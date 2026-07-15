@@ -40,7 +40,7 @@ void scheduler::buildKTDPToDFIRPipeline(
   pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
   pm.addPass(createPathExpansionPass(scheduler_ctx));
-  pm.addPass(createScalarBroadcastLegalizationPass(scheduler_ctx));
+  pm.addPass(createScalarBroadcastLegalizationPass());
   pm.addPass(createNormalizeSCFForLoopsPass());
   // Canonicalize to get rid of intervening code and single iteration loops
   pm.addPass(mlir::createCanonicalizerPass());

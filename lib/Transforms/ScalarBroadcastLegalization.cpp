@@ -22,6 +22,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <llvm/ADT/SmallPtrSet.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/TypeSwitch.h>
 #include <llvm/Support/LogicalResult.h>
@@ -37,7 +38,6 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
-#include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -51,7 +51,6 @@
 #define DEBUG_TYPE PASS_NAME
 
 using namespace scheduler;
-using ResourceType = mlir::Attribute;
 
 namespace scheduler {
 #define GEN_PASS_DEF_SCALARBROADCASTLEGALIZATIONPASS
@@ -90,25 +89,14 @@ auto getResourceKind(mlir::ktdf::StageOp stage) -> mlir::Attribute {
 [[nodiscard]]
 auto getResourceKind(mlir::Value value, bool is_source) -> mlir::Attribute {
   // Try to get the space from the type of the value.
-  if (const auto kind = getResourceKind(value.getType(), is_source); kind) {
-    return kind;
-  }
+  if (auto kind = getResourceKind(value.getType(), is_source)) return kind;
 
   // Infer the space from the stage transfer units.
-  if (auto stage =
-          value.getDefiningOp()->getParentOfType<mlir::ktdf::StageOp>();
-      stage) {
-    if (const auto kind = getResourceKind(stage); kind) {
-      return kind;
-    }
-  }
+  auto stage = value.getDefiningOp()->getParentOfType<mlir::ktdf::StageOp>();
+  if (stage) return getResourceKind(stage);
 
   return nullptr;
 }
-
-}  // namespace
-
-namespace {
 
 struct Hop {
   mlir::ktdf::DataTransferOp transfer;
@@ -246,16 +234,9 @@ auto tryGetSizeInBits(mlir::Type type) -> std::optional<unsigned> {
 
 [[nodiscard]]
 auto tryGetSizeInBytes(mlir::Type type) -> std::optional<unsigned> {
-  if (const auto maybe_bits = tryGetSizeInBits(type); maybe_bits) {
-    return (*maybe_bits + 7) / 8;
-  }
-
-  return std::nullopt;
+  const auto maybe_bits = tryGetSizeInBits(type);
+  return maybe_bits ? std::optional{(*maybe_bits + 7) / 8} : std::nullopt;
 }
-
-}  // namespace
-
-namespace {
 
 struct BroadcastLegalizationSite {
   mlir::linalg::GenericOp generic_op;
@@ -267,19 +248,16 @@ struct BroadcastLegalizationSite {
 
 static bool isBroadcastOverVectorDim(mlir::AffineMap m) {
   if (m.getNumResults() == 0) return false;
-  return mlir::isa<mlir::AffineConstantExpr>(
-      m.getResult(m.getNumResults() - 1));
+  return mlir::isa<mlir::AffineConstantExpr>(m.getResults().back());
 }
 
 static mlir::LogicalResult collectSites(
-    mlir::ktdf::PipelineOp pipeline, const SchedulerExtContext& scheduler_ctx,
+    mlir::ktdf::PipelineOp pipeline,
     llvm::SmallVector<BroadcastLegalizationSite>& sites,
     arch_view::ResourceKinds& resource_kinds) {
   mlir::LogicalResult result = mlir::success();
 
   pipeline.walk([&](mlir::linalg::GenericOp generic_op) {
-    if (mlir::failed(result)) return mlir::WalkResult::interrupt();
-
     auto stage = generic_op->getParentOfType<mlir::ktdf::StageOp>();
     if (!stage) return mlir::WalkResult::advance();
     auto compute_kind = getResourceKind(stage);
@@ -425,15 +403,12 @@ static void applyTransformation(const BroadcastLegalizationSite& site,
   mlir::Value input = generic_op.getDpsInputs()[site.operand_index];
 
   // Step 1: Traverse hops source→target.
-  mlir::ktdf::DataTransferOp last_transfer;
+  llvm::SmallPtrSet<mlir::Operation*, 4> seen_transfers;
   for (auto hop : site.hops) {
-    // Visit every transfer only once.
-    if (hop.transfer == last_transfer) {
-      continue;
-    }
-    last_transfer = hop.transfer;
+    if (!seen_transfers.insert(hop.transfer.getOperation()).second) continue;
 
-    bool is_fifo_hop = !!hop.via.getFeature<mlir::ktdf_arch::feature::Queue>();
+    bool is_fifo_hop =
+        hop.via.getFeature<mlir::ktdf_arch::feature::Queue>() != nullptr;
 
     if (!is_fifo_hop) {
       // Memref hop: widen the alloc and update transfer sizes.
@@ -490,11 +465,6 @@ static void applyTransformation(const BroadcastLegalizationSite& site,
 struct ScalarBroadcastLegalizationPass
     : public impl::ScalarBroadcastLegalizationPassBase<
           ScalarBroadcastLegalizationPass> {
-  ScalarBroadcastLegalizationPass()
-      : scheduler_ctx_(SchedulerExtContext::dummyContext()) {}
-  explicit ScalarBroadcastLegalizationPass(const SchedulerExtContext& ctx)
-      : scheduler_ctx_(ctx) {}
-
   void runOnOperation() override {
     if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
@@ -513,16 +483,14 @@ struct ScalarBroadcastLegalizationPass
     auto& resource_kinds =
         getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
 
-    mlir::LogicalResult status = mlir::success();
-    module_op.walk([&](mlir::ktdf::PipelineOp pipeline) {
-      if (mlir::failed(status)) return mlir::WalkResult::interrupt();
-      if (mlir::failed(
-              collectSites(pipeline, scheduler_ctx_, sites, resource_kinds)))
-        status = mlir::failure();
-      return mlir::WalkResult::advance();
-    });
+    const auto walk_result =
+        module_op.walk([&](mlir::ktdf::PipelineOp pipeline) {
+          if (mlir::failed(collectSites(pipeline, sites, resource_kinds)))
+            return mlir::WalkResult::interrupt();
+          return mlir::WalkResult::advance();
+        });
 
-    if (mlir::failed(status)) {
+    if (walk_result.wasInterrupted()) {
       signalPassFailure();
       return;
     }
@@ -533,18 +501,10 @@ struct ScalarBroadcastLegalizationPass
       applyTransformation(site, builder);
     }
   }
-
- private:
-  const SchedulerExtContext& scheduler_ctx_;
 };
 
 }  // namespace
 
 std::unique_ptr<mlir::Pass> scheduler::createScalarBroadcastLegalizationPass() {
   return std::make_unique<ScalarBroadcastLegalizationPass>();
-}
-
-std::unique_ptr<mlir::Pass> scheduler::createScalarBroadcastLegalizationPass(
-    const SchedulerExtContext& scheduler_ctx) {
-  return std::make_unique<ScalarBroadcastLegalizationPass>(scheduler_ctx);
 }
