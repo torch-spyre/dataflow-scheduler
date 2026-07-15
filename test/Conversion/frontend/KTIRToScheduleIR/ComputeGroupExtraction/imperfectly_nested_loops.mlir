@@ -11,21 +11,21 @@
 // CHECK:             %[[CONSTANT_1:.*]] = arith.constant 5 : index
 // CHECK:             %[[CONSTANT_2:.*]] = arith.constant 3 : index
 // CHECK:             scf.for %[[VAL_0:.*]] = %[[CONSTANT_0]] to %[[CONSTANT_1]] step %[[CONSTANT_0]] {
-// CHECK:               func.call @"local-schedule-1"() : () -> ()
+// CHECK:               func.call @local_schedule_1() : () -> ()
 // CHECK:               scf.for %[[VAL_1:.*]] = %[[CONSTANT_0]] to %[[CONSTANT_2]] step %[[CONSTANT_0]] {
-// CHECK:                 func.call @"local-schedule-0"() : () -> ()
+// CHECK:                 func.call @local_schedule_0() : () -> ()
 // CHECK:               }
-// CHECK:               func.call @"local-schedule-2"() : () -> ()
+// CHECK:               func.call @local_schedule_2() : () -> ()
 // CHECK:             }
 // CHECK:             return
 // CHECK:           }
-// CHECK:           func.func private @"local-schedule-0"()
-// CHECK:           func.func private @"local-schedule-1"()
-// CHECK:           func.func private @"local-schedule-2"()
+// CHECK:           func.func private @local_schedule_0()
+// CHECK:           func.func private @local_schedule_1()
+// CHECK:           func.func private @local_schedule_2()
 // CHECK:         }
 
-// CHECK:   module {
-// CHECK:           func.func @"local-schedule-0"() {
+// CHECK:   module @local_schedule_0 {
+// CHECK:           func.func @local_schedule_0() {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 20480 : index
 // CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
@@ -44,8 +44,8 @@
 // CHECK:           }
 // CHECK:         }
 
-// CHECK:   module {
-// CHECK:           func.func @"local-schedule-1"() {
+// CHECK:   module @local_schedule_1 {
+// CHECK:           func.func @local_schedule_1() {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 16384 : index
 // CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
@@ -64,8 +64,8 @@
 // CHECK:           }
 // CHECK:         }
 
-// CHECK:   module {
-// CHECK:           func.func @"local-schedule-2"() {
+// CHECK:   module @local_schedule_2 {
+// CHECK:           func.func @local_schedule_2() {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 24576 : index
 // CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index

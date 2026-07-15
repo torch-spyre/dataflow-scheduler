@@ -7,14 +7,14 @@
 // CHECK: #[[$ATTR_2:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 2 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK:   module {
 // CHECK:           func.func @add() attributes {grid = [2, 2]} {
-// CHECK:             call @"local-schedule-0"() : () -> ()
+// CHECK:             call @local_schedule_0() : () -> ()
 // CHECK:             return
 // CHECK:           }
-// CHECK:           func.func private @"local-schedule-0"()
+// CHECK:           func.func private @local_schedule_0()
 // CHECK:         }
 
-// CHECK:   module {
-// CHECK:           func.func @"local-schedule-0"() attributes {grid = [2, 2]} {
+// CHECK:   module @local_schedule_0 {
+// CHECK:           func.func @local_schedule_0() attributes {grid = [2, 2]} {
 // CHECK:             %[[CONSTANT_0:.*]] = arith.constant 1024 : index
 // CHECK:             %[[CONSTRUCT_MEMORY_VIEW_0:.*]] = ktdp.construct_memory_view %[[CONSTANT_0]], sizes: [96, 64], strides: [64, 1] {coordinate_set = #[[$ATTR_1]], memory_space = #ktdp.spyre_memory_space<HBM>} : memref<96x64xf16>
 // CHECK:             %[[GET_COMPUTE_TILE_ID_0:.*]] = ktdp.get_compute_tile_id : index
