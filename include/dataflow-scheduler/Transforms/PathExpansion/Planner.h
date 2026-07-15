@@ -50,19 +50,6 @@
 namespace scheduler {
 
 //===----------------------------------------------------------------------===//
-// Lightweight Analysis Structures
-//===----------------------------------------------------------------------===//
-
-/// Summary of a stage's inferred properties (used during analysis only)
-struct StageSummary {
-  StageNode* node = nullptr;
-  // Anchor resource from applicable units (can be null if no applicable units)
-  ResourceType anchor_resource;
-  bool is_transfer_only = false;
-  bool is_compute_containing = false;
-};
-
-//===----------------------------------------------------------------------===//
 // Materialization Side Information
 //===----------------------------------------------------------------------===//
 
@@ -253,16 +240,10 @@ mlir::LogicalResult validateLinearChain(
 // Planning Functions
 //===----------------------------------------------------------------------===//
 
-/// Analyze stages and extract their anchor resources
-/// This is a pure analysis step that doesn't modify the tree
-/// Takes sorted stages to ensure path inference order matches DAG order
-llvm::FailureOr<llvm::SmallVector<StageSummary>> analyzeStages(
+/// Extract anchor resources from sorted stages (one entry per stage, null if
+/// the stage has no applicable units). Pure analysis; does not modify the tree.
+llvm::FailureOr<llvm::SmallVector<ResourceType>> extractAnchorResources(
     llvm::ArrayRef<StageNode*> sorted_stages);
-
-/// Infer the original resource path from stage summaries
-/// Returns the sequence of resources implied by the current stages
-llvm::FailureOr<llvm::SmallVector<ResourceType>> inferOriginalPath(
-    llvm::ArrayRef<StageSummary> summaries);
 
 /// Main planning entry point
 /// Analyzes the pipeline, compares with architecture graph, and if needed:

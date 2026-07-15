@@ -288,33 +288,6 @@ static ResourceType extractAnchorResource(mlir::ktdf::StageOp stage_op) {
   return applicable_units->getValue()[0];
 }
 
-/// Analyze a single stage: extract anchor resource only
-static llvm::FailureOr<StageSummary> analyzeStage(StageNode* stage_node) {
-  StageSummary summary;
-  summary.node = stage_node;
-
-  auto stage_op =
-      mlir::dyn_cast<mlir::ktdf::StageOp>(stage_node->getOperation());
-  if (!stage_op) {
-    return mlir::failure();
-  }
-
-  summary.anchor_resource = extractAnchorResource(stage_op);
-
-  // Determine stage type
-  bool has_compute = false;
-  bool has_transfer = false;
-  stage_op.walk([&](mlir::Operation* op) {
-    if (mlir::isa<mlir::ktdf::DataTransferOp>(op)) has_transfer = true;
-    if (mlir::isa<mlir::linalg::LinalgOp>(op)) has_compute = true;
-    return mlir::WalkResult::advance();
-  });
-  summary.is_transfer_only = has_transfer && !has_compute;
-  summary.is_compute_containing = has_compute;
-
-  return summary;
-}
-
 //===----------------------------------------------------------------------===//
 // Stage DAG Validation Functions
 //===----------------------------------------------------------------------===//
@@ -374,19 +347,18 @@ mlir::LogicalResult validateLinearChain(
 // Stage Analysis Functions
 //===----------------------------------------------------------------------===//
 
-llvm::FailureOr<llvm::SmallVector<StageSummary>> analyzeStages(
+llvm::FailureOr<llvm::SmallVector<ResourceType>> extractAnchorResources(
     llvm::ArrayRef<StageNode*> sorted_stages) {
-  llvm::SmallVector<StageSummary> summaries;
+  llvm::SmallVector<ResourceType> anchors;
+  anchors.reserve(sorted_stages.size());
 
   for (StageNode* stage : sorted_stages) {
-    llvm::FailureOr<StageSummary> summary_or = analyzeStage(stage);
-    if (mlir::failed(summary_or)) {
-      return mlir::failure();
-    }
-    summaries.push_back(*summary_or);
+    auto stage_op = mlir::dyn_cast<mlir::ktdf::StageOp>(stage->getOperation());
+    if (!stage_op) return mlir::failure();
+    anchors.push_back(extractAnchorResource(stage_op));
   }
 
-  return summaries;
+  return anchors;
 }
 
 /// Helper to determine a stage's resource (for original stages only).
@@ -423,39 +395,6 @@ static ResourceType firstTransferDestMemSpace(mlir::ktdf::StageOp stage_op) {
     return result ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
   });
   return result;
-}
-
-llvm::FailureOr<llvm::SmallVector<ResourceType>> inferOriginalPath(
-    llvm::ArrayRef<StageSummary> summaries) {
-  llvm::SmallVector<ResourceType> path;
-
-  if (summaries.empty()) return mlir::failure();
-
-  // Collect anchor resources from compute stages only (the unique compute
-  // resources form the coarse original path that buildFullShortestPath expands)
-  for (const auto& summary : summaries) {
-    if (summary.anchor_resource) {
-      if (path.empty() || path.back() != summary.anchor_resource) {
-        path.push_back(summary.anchor_resource);
-      }
-    }
-  }
-
-  // For the early-exit check we also need at least the start/end memory
-  // resources. Since original transfer stages have memref operands pointing to
-  // DDR, add those at front/back if not already there.
-  // We just need the first and last original stage's resource for endpoints.
-  // Those will be non-anchor stages sitting before/after the first/last compute
-  // stage in the sorted list. We reconstruct them here by looking at the first
-  // and last summary and using their stages.
-  // For the early-exit path comparison to work we simply collect all non-null
-  // anchor resources; the comparison with full_shortest_path (which now also
-  // contains LS nodes) will never match anyway, so the path here only needs to
-  // be non-empty and contain at least one compute resource so that
-  // buildFullShortestPath finds start/end nodes.
-  if (path.empty()) return mlir::failure();
-
-  return path;
 }
 
 //===----------------------------------------------------------------------===//
@@ -536,7 +475,7 @@ buildFullShortestPath(llvm::ArrayRef<ResourceType> original_resource_path,
 /// stages, iterating until stable (handles chains of intermediate stages).
 static void assignOriginalStageResources(
     llvm::ArrayRef<StageNode*> sorted_stages,
-    llvm::ArrayRef<StageSummary> summaries, PathExpansionPlan* plan) {
+    llvm::ArrayRef<ResourceType> anchor_resources, PathExpansionPlan* plan) {
   size_t n = sorted_stages.size();
 
   // Initialise all entries with kPreserveOriginal and null stage_resource.
@@ -552,8 +491,8 @@ static void assignOriginalStageResources(
     StageMaterializationInfo& info = plan->stage_info[stage];
 
     // Rule 1: anchor resource (compute stage).
-    if (summaries[i].anchor_resource) {
-      info.stage_resource = summaries[i].anchor_resource;
+    if (anchor_resources[i]) {
+      info.stage_resource = anchor_resources[i];
       continue;
     }
 
@@ -1298,23 +1237,18 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   }
   llvm::SmallVector<StageNode*> sorted_stages = *sorted_stages_or;
 
-  // Prep Step 2: Analyze stages (extract anchor resources)
-  llvm::FailureOr<llvm::SmallVector<StageSummary>> summaries_or =
-      analyzeStages(sorted_stages);
-  if (mlir::failed(summaries_or)) {
+  // Prep Step 2: Extract per-stage anchor resources
+  llvm::FailureOr<llvm::SmallVector<ResourceType>> anchors_or =
+      extractAnchorResources(sorted_stages);
+  if (mlir::failed(anchors_or)) {
     return nullptr;
   }
-  llvm::SmallVector<StageSummary> summaries = *summaries_or;
+  llvm::SmallVector<ResourceType> anchors = *anchors_or;
 
-  // Prep Step 3: Infer original path (compute resources only)
-  llvm::FailureOr<llvm::SmallVector<ResourceType>> original_path_or =
-      inferOriginalPath(summaries);
-  if (mlir::failed(original_path_or)) {
-    return nullptr;
-  }
-  llvm::SmallVector<ResourceType> original_path = *original_path_or;
-
-  if (original_path.size() < 1) {
+  // Prep Step 3: Require at least one anchor stage (compute stage with a known
+  // applicable_unit). Without one there is no compute resource to route
+  // from/to.
+  if (llvm::none_of(anchors, [](ResourceType r) { return r != nullptr; })) {
     return nullptr;
   }
 
@@ -1331,7 +1265,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   // Prep Step 4: Assign stage_resource to every original stage.
   // This must happen before building endpoint_path so that the resource values
   // are available for the endpoint_path loop below.
-  assignOriginalStageResources(sorted_stages, summaries, plan.get());
+  assignOriginalStageResources(sorted_stages, anchors, plan.get());
 
   // Prep Step 5: Build the endpoint_path (deduplicated resource sequence).
   llvm::SmallVector<ResourceType> endpoint_path;
