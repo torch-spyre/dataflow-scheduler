@@ -93,6 +93,7 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/RegionUtils.h"
 
@@ -171,8 +172,6 @@ struct ComputeGroupExtractionPass
       mlir::Block* block,
       llvm::EquivalenceClasses<mlir::Value>& access_tile_eq_classes);
 
-  /// Counter for generating unique function names
-  int function_counter = 0;
   /// Collected compute groups
   llvm::SmallVector<ComputeGroup> groups_to_extract_;
 };
@@ -328,9 +327,6 @@ void ComputeGroupExtractionPass::extractComputeGroup(
     const ComputeGroup& group) {
   assert(group.first_load && group.last_store);
 
-  std::string func_name =
-      "local-schedule-" + std::to_string(function_counter++);
-
   mlir::OpBuilder builder(top_level_module);
 
   // Get the original function to copy its attributes
@@ -369,18 +365,23 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   }
   auto func_type = builder.getFunctionType(arg_types, {});
 
+  // Create a new child module in the top-level module, assigning it a symbol
+  // name unique within the top-level module. The same name is reused for the
+  // function inside, keeping module and function in a 1:1 correspondence.
+  builder.setInsertionPointToEnd(top_level_module.getBody());
+  auto extracted_module =
+      mlir::ModuleOp::create(top_level_module.getLoc(), "local_schedule");
+  builder.insert(extracted_module);
+  mlir::SymbolTable top_level_symbol_table(top_level_module);
+  (void)top_level_symbol_table.renameToUnique(extracted_module, {});
+  llvm::StringRef func_name = extracted_module.getSymName().value();
+
   // Create forward declaration in the original module
   builder.setInsertionPointToEnd(original_module.getBody());
   auto forward_decl = mlir::func::FuncOp::create(top_level_module.getLoc(),
                                                  func_name, func_type);
   forward_decl.setPrivate();
   builder.insert(forward_decl);
-
-  // Create a new child module in the top-level module for this extracted
-  // function
-  builder.setInsertionPointToEnd(top_level_module.getBody());
-  auto extracted_module =
-      mlir::ModuleOp::create(builder, top_level_module.getLoc());
 
   // Create the function definition in the extracted module
   builder.setInsertionPointToStart(extracted_module.getBody());
