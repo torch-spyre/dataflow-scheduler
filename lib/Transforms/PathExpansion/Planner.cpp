@@ -1123,6 +1123,66 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
 // Orchestration
 //===----------------------------------------------------------------------===//
 
+static bool hasAnchorStage(llvm::ArrayRef<StageNode*> sorted_stages) {
+  return llvm::any_of(sorted_stages, [](StageNode* stage) {
+    auto op = mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
+    return op && op.getApplicableUnits().has_value();
+  });
+}
+
+static llvm::SmallVector<ResourceType> buildEndpointPath(
+    llvm::ArrayRef<StageNode*> sorted_stages, const PathExpansionPlan* plan) {
+  llvm::SmallVector<ResourceType> endpoint_path;
+  for (StageNode* stage : sorted_stages) {
+    ResourceType res = plan->stage_info.at(stage).stage_resource;
+    if (res) endpoint_path.push_back(res);
+  }
+  return endpoint_path;
+}
+
+static bool needsExpansion(
+    llvm::ArrayRef<ResourceType> endpoint_path,
+    const scheduler::arch_view::RoutingGraph::Path& full_path,
+    const scheduler::arch_view::RoutingGraph& arch_graph) {
+  llvm::SmallVector<ResourceType> full_path_no_ls;
+  for (auto node_id : full_path) {
+    auto node_opt = arch_graph.getNode(node_id);
+    assert(node_opt);
+    if (node_opt->kind != scheduler::arch_view::RoutingGraph::ResourceNode::
+                              ResourceKind::LoadStoreUnit) {
+      full_path_no_ls.push_back(node_opt->resource);
+    }
+  }
+  return full_path_no_ls != endpoint_path;
+}
+
+static void debugPrintInitialPlannerState(
+    PipelineNode* pipeline, llvm::ArrayRef<StageNode*> sorted_stages) {
+  llvm::dbgs() << "Original PipelineTree before expansion:\n";
+  pipeline->print(llvm::dbgs());
+  llvm::dbgs() << "\nOriginal topological order: ";
+  for (StageNode* stage : sorted_stages) {
+    llvm::dbgs() << "Stage " << stage->getStageId() << " ";
+  }
+  llvm::dbgs() << "\n\n";
+}
+
+static void debugPrintFullPath(
+    const scheduler::arch_view::RoutingGraph::Path& full_path) {
+  llvm::dbgs() << "Full shortest path (node IDs): ";
+  for (auto node_id : full_path) llvm::dbgs() << node_id << " ";
+  llvm::dbgs() << "\n";
+}
+
+static void debugPrintPlanningSummary(
+    llvm::ArrayRef<StageNode*> expanded_stages, const PathExpansionPlan* plan) {
+  llvm::dbgs() << "\n=== Planning Complete ===\n";
+  llvm::dbgs() << "Total stages: " << expanded_stages.size() << "\n";
+  llvm::dbgs() << "Total private resources: "
+               << plan->resource_factory.getSpecs().size() << "\n";
+  debugPrintResourceSpecs(llvm::dbgs(), plan->resource_factory);
+}
+
 /// Execute the 3-step path expansion algorithm
 static mlir::LogicalResult executeExpansionSteps(
     llvm::SmallVector<StageNode*>& expanded_stages, PipelineTree& tree,
@@ -1170,7 +1230,6 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   auto plan = std::make_unique<PathExpansionPlan>();
   plan->changed = false;
 
-  // Prep Step 1: Prepare and validate pipeline stages
   llvm::FailureOr<llvm::SmallVector<StageNode*>> sorted_stages_or =
       preparePipelineStages(tree, pipeline);
   if (mlir::failed(sorted_stages_or)) {
@@ -1178,48 +1237,19 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   }
   llvm::SmallVector<StageNode*> sorted_stages = *sorted_stages_or;
 
-  // Prep Step 2: Require at least one anchor stage (a stage whose
-  // applicable_unit is already specified in the input IR). Without one there
-  // is no compute resource to route from/to.
-  if (llvm::none_of(sorted_stages, [](StageNode* s) {
-        auto op =
-            mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(s->getOperation());
-        return op && op.getApplicableUnits().has_value();
-      })) {
+  if (!hasAnchorStage(sorted_stages)) {
     return nullptr;
   }
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "Original PipelineTree before expansion:\n";
-    pipeline->print(llvm::dbgs());
-    llvm::dbgs() << "\nOriginal topological order: ";
-    for (StageNode* stage : sorted_stages) {
-      llvm::dbgs() << "Stage " << stage->getStageId() << " ";
-    }
-    llvm::dbgs() << "\n\n";
-  });
+  LLVM_DEBUG(debugPrintInitialPlannerState(pipeline, sorted_stages));
 
-  // Prep Step 3: Assign stage_resource to every original stage.
-  // This must happen before building endpoint_path so that the resource values
-  // are available for the endpoint_path loop below.
   assignOriginalStageResources(sorted_stages, plan.get());
-
-  // Prep Step 4: Build the endpoint_path (resource sequence for original
-  // stages).
-  llvm::SmallVector<ResourceType> endpoint_path;
-  for (StageNode* stage : sorted_stages) {
-    ResourceType res = plan->stage_info[stage].stage_resource;
-    if (res) {
-      endpoint_path.push_back(res);
-    }
-  }
-
+  llvm::SmallVector<ResourceType> endpoint_path =
+      buildEndpointPath(sorted_stages, plan.get());
   if (endpoint_path.size() < 2) {
     return nullptr;
   }
 
-  // Prep Step 5: Build full shortest path (node-ID sequence) by concatenating
-  // per-segment BFS results across all consecutive resource pairs.
   std::optional<scheduler::arch_view::RoutingGraph::Path> full_path_opt =
       buildFullShortestPath(endpoint_path, arch_graph);
   if (!full_path_opt) {
@@ -1228,26 +1258,9 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   }
   scheduler::arch_view::RoutingGraph::Path full_path = *full_path_opt;
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "Full shortest path (node IDs): ";
-    for (auto nid : full_path) llvm::dbgs() << nid << " ";
-    llvm::dbgs() << "\n";
-  });
+  LLVM_DEBUG(debugPrintFullPath(full_path));
 
-  // Check if expansion is needed by comparing endpoint_path against the full
-  // path with LS-unit nodes stripped out.  If they match, every hop in the
-  // original pipeline already passes through the correct LS units (via the
-  // existing FIFO types) and no structural changes are needed.
-  llvm::SmallVector<ResourceType> full_path_no_ls;
-  for (auto nid : full_path) {
-    auto node_opt = arch_graph.getNode(nid);
-    assert(node_opt);
-    if (node_opt->kind != scheduler::arch_view::RoutingGraph::ResourceNode::
-                              ResourceKind::LoadStoreUnit) {
-      full_path_no_ls.push_back(node_opt->resource);
-    }
-  }
-  if (full_path_no_ls == endpoint_path) {
+  if (!needsExpansion(endpoint_path, full_path, arch_graph)) {
     plan->changed = false;
     LDBG(1) << "Pipeline already legal";
     return plan;
@@ -1265,13 +1278,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
     return nullptr;
   }
 
-  LLVM_DEBUG({
-    llvm::dbgs() << "\n=== Planning Complete ===\n";
-    llvm::dbgs() << "Total stages: " << expanded_stages.size() << "\n";
-    llvm::dbgs() << "Total private resources: "
-                 << plan->resource_factory.getSpecs().size() << "\n";
-    debugPrintResourceSpecs(llvm::dbgs(), plan->resource_factory);
-  });
+  LLVM_DEBUG(debugPrintPlanningSummary(expanded_stages, plan.get()));
 
   return plan;
 }
