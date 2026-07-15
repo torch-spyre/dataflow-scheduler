@@ -49,20 +49,6 @@ struct DeviceInitContext {
   // Value: Size in bytes
   llvm::DenseMap<RoutingGraph::NodeId, size_t> node_sizes;
 
-  // Tracks load/store unit SSA values (exec_units with load_store attribute)
-  // These are NOT created as nodes, but used as transfer units on edges
-  // Contains: result of load/store exec_unit ops
-  llvm::DenseSet<mlir::Value> load_store_units;
-
-  // For load/store unit datapath patterns like: A -> LS -> B
-  // We see two datapaths: "A to LS" and "LS to B"
-  // This map tracks ALL sources from the first datapaths (can be multiple)
-  // Key: the LS unit
-  // Value: vector of sources (A1, A2, ...) from "A to LS" datapaths
-  // When we see the second datapath "LS to B", we create edges: A1 -> B, A2 ->
-  // B, ... with LS as transfer unit
-  llvm::DenseMap<mlir::Value, llvm::SmallVector<mlir::Value>> ls_unit_sources;
-
   explicit DeviceInitContext(RoutingGraph& g) : graph(g) {}
 };
 
@@ -86,21 +72,19 @@ void processMemoryOp(mlir::ktdf_arch::MemoryOp mem_op, DeviceInitContext& ctx) {
 // Process an execution unit operation
 void processExecutionUnitOp(mlir::ktdf_arch::ExecutionUnitOp exec_op,
                             DeviceInitContext& ctx) {
-  // Skip load/store units - they are modeled as transfer units on edges
-  if (exec_op.getLoadStoreAttr() && exec_op.getLoadStore()) {
-    // Don't create a node, just track the value for datapath processing
-    ctx.load_store_units.insert(exec_op.getResult());
-    return;
-  }
-
   auto kind = exec_op.getKind();
   // Use a default kind if not specified
   if (!kind) {
     kind = mlir::StringAttr::get(exec_op.getContext(), "exec_unit");
   }
 
-  auto node_id = ctx.graph.addNode(
-      kind, RoutingGraph::ResourceNode::ResourceKind::Compute);
+  // Load/store units become LoadStoreUnit nodes; other exec units become
+  // Compute nodes.
+  bool is_ls = exec_op.getLoadStoreAttr() && exec_op.getLoadStore();
+  auto node_kind = is_ls
+                       ? RoutingGraph::ResourceNode::ResourceKind::LoadStoreUnit
+                       : RoutingGraph::ResourceNode::ResourceKind::Compute;
+  auto node_id = ctx.graph.addNode(kind, node_kind);
   ctx.value_to_node_id[exec_op.getResult()] = node_id;
 }
 
@@ -148,65 +132,13 @@ void processGroupOp(mlir::ktdf_arch::GroupOp group_op, DeviceInitContext& ctx) {
   }
 }
 
-// Process a datapath operation
-//
-// Load/store units (exec_units with load_store attribute) are modeled as
-// transfer units on edges, not as separate nodes. When we encounter a pattern:
-//   A -> LS_unit -> B
-// We create a single edge: A -> B with LS_unit's kind as the transfer unit.
-//
+// Process a datapath operation — all resources (including LS units) are now
+// first-class nodes, so every datapath creates a direct edge.
 void processDatapathOp(mlir::ktdf_arch::DatapathOp datapath_op,
                        DeviceInitContext& ctx) {
   auto source_val = datapath_op.getSource();
   auto target_val = datapath_op.getTarget();
 
-  // Check if source or target is a load/store unit
-  bool source_is_ls = ctx.load_store_units.contains(source_val);
-  bool target_is_ls = ctx.load_store_units.contains(target_val);
-
-  // Case 1: Source is a load/store unit (second half of pattern: LS -> B)
-  if (source_is_ls) {
-    // Find all original sources from the first half (A1 -> LS, A2 -> LS, ...)
-    auto orig_sources_it = ctx.ls_unit_sources.find(source_val);
-    assert(orig_sources_it != ctx.ls_unit_sources.end() &&
-           "Load/store unit must have sources from previous datapaths");
-
-    // Get the load/store unit op to access its kind
-    auto ls_unit_op =
-        source_val.getDefiningOp<mlir::ktdf_arch::ExecutionUnitOp>();
-    assert(ls_unit_op && "Load/store value must be defined by ExecutionUnitOp");
-
-    auto target_it = ctx.value_to_node_id.find(target_val);
-    assert(target_it != ctx.value_to_node_id.end() &&
-           "Datapath target must be a defined resource");
-    auto target_id = target_it->second;
-
-    // Use the load/store unit's kind as the transfer unit
-    auto transfer_unit = ls_unit_op.getKind();
-
-    // Create edges from all sources to the target: A1 -> B, A2 -> B, ...
-    for (auto orig_source_val : orig_sources_it->second) {
-      auto source_it = ctx.value_to_node_id.find(orig_source_val);
-      assert(source_it != ctx.value_to_node_id.end() &&
-             "Original datapath source must be a defined resource");
-
-      auto source_id = source_it->second;
-
-      // Create edge: Ai -> B with LS_unit as transfer unit
-      ctx.graph.addEdge(source_id, target_id, transfer_unit, 1);
-    }
-    return;
-  }
-
-  // Case 2: Target is a load/store unit (first half of pattern: A -> LS)
-  if (target_is_ls) {
-    // Store the source for when we process the second half (LS -> B)
-    // Multiple sources can feed into the same LS unit
-    ctx.ls_unit_sources[target_val].push_back(source_val);
-    return;
-  }
-
-  // Case 3: Neither is a load/store unit - direct connection
   auto source_it = ctx.value_to_node_id.find(source_val);
   auto target_it = ctx.value_to_node_id.find(target_val);
 
@@ -222,11 +154,7 @@ void processDatapathOp(mlir::ktdf_arch::DatapathOp datapath_op,
   assert(source_id != target_id &&
          "Datapath cannot connect a resource to itself");
 
-  // Extract transfer unit from kind attribute (if any)
-  mlir::Attribute transfer_unit = datapath_op.getKind();
-
-  // Add the edge
-  ctx.graph.addEdge(source_id, target_id, transfer_unit, 1);
+  ctx.graph.addEdge(source_id, target_id, 1);
 }
 
 // Process a region recursively
@@ -300,12 +228,11 @@ RoutingGraph::NodeId RoutingGraph::addNode(ResourceType resource,
   return node_id;
 }
 
-void RoutingGraph::addEdge(NodeId source, NodeId target,
-                           ResourceType transfer_unit, unsigned cost) {
+void RoutingGraph::addEdge(NodeId source, NodeId target, unsigned cost) {
   assert(hasNode(source) && "source node must exist before adding edge");
   assert(hasNode(target) && "target node must exist before adding edge");
 
-  adjacency_[source].push_back({source, target, transfer_unit, cost});
+  adjacency_[source].push_back({source, target, cost});
 }
 
 bool RoutingGraph::hasNode(NodeId node_id) const {
@@ -471,13 +398,7 @@ void RoutingGraph::print(llvm::raw_ostream& os) const {
       } else {
         os << "<null>";
       }
-      os << " [";
-      if (edge.transfer_unit) {
-        os << "transfer_unit=";
-        edge.transfer_unit.print(os);
-        os << ", ";
-      }
-      os << "cost=" << edge.cost << "]\n";
+      os << " [cost=" << edge.cost << "]\n";
     }
   }
   os << "}\n";
@@ -490,6 +411,8 @@ llvm::StringRef RoutingGraph::stringifyResourceKind(
       return "Memory";
     case ResourceNode::ResourceKind::Compute:
       return "Compute";
+    case ResourceNode::ResourceKind::LoadStoreUnit:
+      return "LoadStoreUnit";
   }
   llvm_unreachable("unknown RoutingGraph::ResourceNode::ResourceKind");
 }
