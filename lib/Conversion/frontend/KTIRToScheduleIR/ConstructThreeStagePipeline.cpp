@@ -664,6 +664,10 @@ void ConstructThreeStagePipelinePass::createPipeline(
   // Query the interface type from memory to the compute unit
   if (!incoming.getFeature<mlir::ktdf_arch::feature::Queue>().isOrdered() ||
       !outgoing.getFeature<mlir::ktdf_arch::feature::Queue>().isOrdered()) {
+    innermost_loop.emitError(
+        "ConstructThreeStagePipeline: compute unit link does not use an "
+        "ordered "
+        "queue; only ordered queues are supported");
     signalPassFailure();
     return;
   }
@@ -841,6 +845,9 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
 
   const auto compute_kind = resource_kinds_->getComputeKind();
   if (!compute_kind) {
+    getOperation()->emitError(
+        "ConstructThreeStagePipeline: no compute resource kind found in device "
+        "description");
     signalPassFailure();
     return;
   }
@@ -850,6 +857,9 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
   auto outgoing = mlir::ktdf_arch::getLink(
       mlir::ktdf_arch::LinkDirection::Outgoing, compute);
   if (!incoming || !outgoing) {
+    getOperation()->emitError(
+        "ConstructThreeStagePipeline: compute resource has no incoming or "
+        "outgoing link in device description");
     signalPassFailure();
     return;
   }
@@ -858,12 +868,19 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
   const auto granularity_out =
       outgoing.getProperty<mlir::ktdf_arch::TransferGranularityAttr>();
   if (!granularity_in || !granularity_out) {
+    getOperation()->emitError(
+        "ConstructThreeStagePipeline: compute resource link is missing a "
+        "TransferGranularity property");
     signalPassFailure();
     return;
   }
   const auto max_in = maxOrDefault(granularity_in.asArrayRef());
   const auto max_out = maxOrDefault(granularity_out.asArrayRef());
   if (max_in != max_out) {
+    getOperation()->emitError(
+        "ConstructThreeStagePipeline: incoming and outgoing transfer "
+        "granularities differ (")
+        << max_in << " vs " << max_out << ")";
     signalPassFailure();
     return;
   }
@@ -1432,6 +1449,9 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
 
   auto compute_kind = resource_kinds_->getComputeKind();
   if (!compute_kind) {
+    module_op->emitError(
+        "ConstructThreeStagePipeline: no compute resource kind found in device "
+        "description");
     signalPassFailure();
     return;
   }
