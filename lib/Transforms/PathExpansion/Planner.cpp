@@ -558,23 +558,6 @@ static void assignOriginalStageResources(
   }
 }
 
-/// Find the first unvisited original stage whose stage_resource == resource,
-/// searching only within the given subrange of sorted_stages.
-/// \p subrange is a slice of sorted_stages delimited by [begin_idx, end_idx).
-static StageNode* findUnvisitedStageByResource(
-    llvm::ArrayRef<StageNode*> sorted_stages,
-    const llvm::SmallPtrSet<StageNode*, 8>& visited, ResourceType resource,
-    const PathExpansionPlan* plan, size_t begin_idx, size_t end_idx) {
-  for (size_t idx = begin_idx; idx < end_idx; ++idx) {
-    StageNode* s = sorted_stages[idx];
-    if (visited.count(s)) continue;
-    auto it = plan->stage_info.find(s);
-    if (it == plan->stage_info.end()) continue;
-    if (it->second.stage_resource == resource) return s;
-  }
-  return nullptr;
-}
-
 /// Step 1: Build the expanded stage list by walking the routing-graph path
 /// (from left to right).
 // As each node is visited, examine the original stages to see if this node is
@@ -646,10 +629,17 @@ static llvm::FailureOr<llvm::SmallVector<StageNode*>> buildExpandedStageList(
     return synth;
   };
 
-  // Helper: direction-aware findUnvisited wrapper.
+  // Helper: find the first unvisited stage whose stage_resource == resource
+  // within the direction-aware search window [search_begin, search_end).
   auto findStage = [&](ResourceType resource) -> StageNode* {
-    return findUnvisitedStageByResource(sorted_stages, visited, resource, plan,
-                                        search_begin, search_end);
+    for (size_t idx = search_begin; idx < search_end; ++idx) {
+      StageNode* s = sorted_stages[idx];
+      if (visited.count(s)) continue;
+      auto it = plan->stage_info.find(s);
+      if (it == plan->stage_info.end()) continue;
+      if (it->second.stage_resource == resource) return s;
+    }
+    return nullptr;
   };
 
   auto getPathNode = [&](size_t idx) {
