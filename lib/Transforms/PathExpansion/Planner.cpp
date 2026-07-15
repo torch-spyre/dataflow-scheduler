@@ -777,13 +777,11 @@ static llvm::FailureOr<llvm::SmallVector<StageNode*>> buildExpandedStageList(
 // Step 2: Classify Original Stages and Create Private Resources
 //===----------------------------------------------------------------------===//
 
-/// Step 2: Walk the expanded stage list; for each original stage, determine
-/// its materialization kind and create PrivateResourceSpec objects.
-/// Two sub-passes are used to match the old code's allocation order:
-///   Sub-pass A: buffer specs for transfer stages (kAdaptTransfer)
-///   Sub-pass B: FIFO specs for compute stages (kAdaptFifoKinds)
-/// This ensures all memory buffers appear before FIFOs in ktdf.private,
-/// matching the expected output.
+/// Step 2: Walk the expanded stage list; for each original stage that is
+/// adjacent to at least one intermediate (synthetic) stage, determine its
+/// materialization kind and create PrivateResourceSpec objects:
+///   - Transfer stages (kAdaptTransfer): memref ↔ intermediate buffer
+///   - Compute stages (kAdaptFifoKinds): read_from_fifo / write_to_fifo
 static mlir::LogicalResult classifyOriginalStages(
     llvm::ArrayRef<StageNode*> expanded_stages,
     const scheduler::arch_view::RoutingGraph& arch_graph,
@@ -792,7 +790,6 @@ static mlir::LogicalResult classifyOriginalStages(
   llvm::DenseMap<FifoKey, PrivateResourceSpec*> fifo_specs;
   llvm::DenseMap<FifoKey, size_t> fifo_next_slot;
 
-  // Sub-pass A: buffer specs for transfer stages
   for (size_t i = 0; i < expanded_stages.size(); ++i) {
     StageNode* current_stage = expanded_stages[i];
     if (isIntermediateStage(current_stage)) continue;
@@ -803,15 +800,15 @@ static mlir::LogicalResult classifyOriginalStages(
     StageNode* next_stage =
         (i + 1 < expanded_stages.size()) ? expanded_stages[i + 1] : nullptr;
 
-    auto stage_op =
-        mlir::cast<mlir::ktdf::StageOp>(current_stage->getOperation());
-
     bool prev_is_intermediate = prev_stage && isIntermediateStage(prev_stage);
     bool next_is_intermediate = next_stage && isIntermediateStage(next_stage);
 
     if (!prev_is_intermediate && !next_is_intermediate) continue;
 
-    // --- Transfer stage (kAdaptTransfer): memref ↔ buffer ---
+    auto stage_op =
+        mlir::cast<mlir::ktdf::StageOp>(current_stage->getOperation());
+
+    // --- Transfer stage (kAdaptTransfer): memref ↔ intermediate buffer ---
     stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
       mlir::Type src_type = transfer.getSource().getType();
       mlir::Type dest_type = transfer.getDestination().getType();
@@ -849,8 +846,8 @@ static mlir::LogicalResult classifyOriginalStages(
               intermediate_resource, buffer_shape,
               memref_type.getElementType());
 
-      // Build a minimal EdgeInfo for the factory (source/target are
-      // placeholders since the new EdgeInfo only carries cost)
+      // Use a dummy edge when no direct edge exists between resources
+      // (e.g. when an LS node sits between them in the routing graph).
       scheduler::arch_view::RoutingGraph::NodeId src_node_id =
           arch_graph.getNodeIdForResource(intermediate_is_source
                                               ? intermediate_resource
@@ -860,11 +857,11 @@ static mlir::LogicalResult classifyOriginalStages(
                                               ? stage_info.stage_resource
                                               : intermediate_resource);
       auto edge_opt = arch_graph.getEdgeInfo(src_node_id, dst_node_id);
-      // For new graph, an edge may not exist directly between memory resource
-      // and DDR/L1 (they are separated by LS node). Use a dummy edge.
       scheduler::arch_view::RoutingGraph::EdgeInfo edge{src_node_id,
                                                         dst_node_id, 1};
-      if (edge_opt) edge = *edge_opt;
+      if (edge_opt) {
+        edge = *edge_opt;
+      }
 
       mlir::OpBuilder builder(transfer->getContext());
       TransferMaterializationInfo* transfer_info =
@@ -877,26 +874,6 @@ static mlir::LogicalResult classifyOriginalStages(
 
       return mlir::WalkResult::advance();
     });
-  }
-
-  // Sub-pass B: FIFO specs for compute stages
-  for (size_t i = 0; i < expanded_stages.size(); ++i) {
-    StageNode* current_stage = expanded_stages[i];
-    if (isIntermediateStage(current_stage)) continue;
-
-    StageMaterializationInfo& stage_info = plan->stage_info[current_stage];
-
-    StageNode* prev_stage = (i > 0) ? expanded_stages[i - 1] : nullptr;
-    StageNode* next_stage =
-        (i + 1 < expanded_stages.size()) ? expanded_stages[i + 1] : nullptr;
-
-    auto stage_op =
-        mlir::cast<mlir::ktdf::StageOp>(current_stage->getOperation());
-
-    bool prev_is_intermediate = prev_stage && isIntermediateStage(prev_stage);
-    bool next_is_intermediate = next_stage && isIntermediateStage(next_stage);
-
-    if (!prev_is_intermediate && !next_is_intermediate) continue;
 
     // --- Compute stage (kAdaptFifoKinds): read_from_fifo / write_to_fifo ---
     stage_op.walk([&](mlir::Operation* op) {
@@ -922,7 +899,6 @@ static mlir::LogicalResult classifyOriginalStages(
       //   dest = stage.stage_resource
       // For write (producing to right): src = stage.stage_resource,
       //   dest = adjacent.applicable_unit
-
       ResourceType fifo_src, fifo_dest;
       if (is_read) {
         // Left neighbor (LS-unit stage) → this compute stage
@@ -957,10 +933,7 @@ static mlir::LogicalResult classifyOriginalStages(
       size_t slot_idx = fifo_next_slot[fifo_key]++;
       validateFifoSlotIndex(fifo_slot, slot_idx, fifo_specs[fifo_key]);
 
-      // Build edge info (source/target nodes from adjacent stage resources)
-      ResourceType source_resource = fifo_src;
-      ResourceType dest_resource = fifo_dest;
-      // Use a dummy edge since the graph may not have a direct edge between
+      // Use a dummy edge since the routing graph has no direct edge between
       // stage_resource nodes (they go through LS-unit nodes).
       scheduler::arch_view::RoutingGraph::NodeId src_node_id =
           arch_graph.getNodeIdForResource(stage_info.stage_resource);
@@ -972,9 +945,9 @@ static mlir::LogicalResult classifyOriginalStages(
           is_read ? src_node_id : adj_node_id, 1};
 
       TransferMaterializationInfo* transfer_info =
-          plan->transfer_factory.createFromFifoOp(
-              op, edge, source_resource, dest_resource, fifo_specs[fifo_key],
-              slot_idx, is_read);
+          plan->transfer_factory.createFromFifoOp(op, edge, fifo_src, fifo_dest,
+                                                  fifo_specs[fifo_key],
+                                                  slot_idx, is_read);
 
       stage_info.transfers.push_back(transfer_info);
       stage_info.kind = StageMaterializationInfo::Kind::kAdaptFifoKinds;
@@ -989,7 +962,7 @@ static mlir::LogicalResult classifyOriginalStages(
 
       return mlir::WalkResult::advance();
     });
-  }  // end Sub-pass B
+  }
 
   return mlir::success();
 }
