@@ -367,9 +367,10 @@ static ResourceType firstTransferDestMemSpace(mlir::ktdf::StageOp stage_op) {
 // Main Planning Functions
 //===----------------------------------------------------------------------===//
 
-/// Prepare and validate pipeline for path expansion
-static llvm::FailureOr<llvm::SmallVector<StageNode*>> preparePipelineStages(
-    PipelineTree& tree, PipelineNode* pipeline) {
+/// Topologically sort pipeline stages and verify the result is a linear chain.
+static llvm::FailureOr<llvm::SmallVector<StageNode*>>
+sortAndValidateLinearPipelineStages(PipelineTree& tree,
+                                    PipelineNode* pipeline) {
   llvm::FailureOr<llvm::SmallVector<StageNode*>> sorted_stages_or =
       tree.topologicalSortStages(pipeline);
   if (mlir::failed(sorted_stages_or)) {
@@ -997,15 +998,16 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
            "Intermediate stage should have both neighbors");
 
     ResourceType intermediate_resource = stage_info.stage_resource;
+    auto printResource = [](ResourceType resource) {
+      std::string s;
+      llvm::raw_string_ostream os(s);
+      resource.print(os);
+      return os.str();
+    };
 
     LLVM_DEBUG(llvm::dbgs() << "  Processing intermediate stage "
-                            << current_stage->getStageId() << " (resource: " <<
-               [&]() {
-                 std::string s;
-                 llvm::raw_string_ostream os(s);
-                 intermediate_resource.print(os);
-                 return os.str();
-               }() << ")\n");
+                            << current_stage->getStageId() << " (resource: "
+                            << printResource(intermediate_resource) << ")\n");
 
     stage_info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
 
@@ -1097,22 +1099,10 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
 
       stage_info.transfers.push_back(transfer_info);
 
-      LLVM_DEBUG({
-        llvm::dbgs() << "    Created transfer: " <<
-            [&]() {
-              std::string s;
-              llvm::raw_string_ostream os(s);
-              inferred_source_resource.print(os);
-              return os.str();
-            }() << " -> "
-                     <<
-            [&]() {
-              std::string s;
-              llvm::raw_string_ostream os(s);
-              inferred_dest_resource.print(os);
-              return os.str();
-            }() << "\n";
-      });
+      LLVM_DEBUG(llvm::dbgs()
+                 << "    Created transfer: "
+                 << printResource(inferred_source_resource) << " -> "
+                 << printResource(inferred_dest_resource) << "\n");
     }
   }
 
@@ -1125,12 +1115,13 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
 
 static bool hasAnchorStage(llvm::ArrayRef<StageNode*> sorted_stages) {
   return llvm::any_of(sorted_stages, [](StageNode* stage) {
-    auto op = mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
+    auto op =
+        mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
     return op && op.getApplicableUnits().has_value();
   });
 }
 
-static llvm::SmallVector<ResourceType> buildEndpointPath(
+static llvm::SmallVector<ResourceType> collectOriginalStageResourcePath(
     llvm::ArrayRef<StageNode*> sorted_stages, const PathExpansionPlan* plan) {
   llvm::SmallVector<ResourceType> endpoint_path;
   for (StageNode* stage : sorted_stages) {
@@ -1183,10 +1174,9 @@ static void debugPrintPlanningSummary(
   debugPrintResourceSpecs(llvm::dbgs(), plan->resource_factory);
 }
 
-/// Execute the 3-step path expansion algorithm
-static mlir::LogicalResult executeExpansionSteps(
-    llvm::SmallVector<StageNode*>& expanded_stages, PipelineTree& tree,
-    PipelineNode* pipeline,
+/// Run the 3-step path expansion materialization pipeline.
+static mlir::LogicalResult applyPathExpansion(
+    PipelineTree& tree, PipelineNode* pipeline,
     const scheduler::arch_view::RoutingGraph::Path& full_path,
     const llvm::SmallVector<StageNode*>& sorted_stages,
     const scheduler::arch_view::RoutingGraph& arch_graph,
@@ -1199,7 +1189,7 @@ static mlir::LogicalResult executeExpansionSteps(
   if (mlir::failed(expanded_stages_or)) {
     return mlir::failure();
   }
-  expanded_stages = *expanded_stages_or;
+  llvm::SmallVector<StageNode*> expanded_stages = *expanded_stages_or;
   LLVM_DEBUG(
       debugPrintStageList(llvm::dbgs(), expanded_stages, plan, "After Step 1"));
 
@@ -1220,6 +1210,7 @@ static mlir::LogicalResult executeExpansionSteps(
   }
   LLVM_DEBUG(
       debugPrintStageList(llvm::dbgs(), expanded_stages, plan, "After Step 3"));
+  LLVM_DEBUG(debugPrintPlanningSummary(expanded_stages, plan));
 
   return mlir::success();
 }
@@ -1231,7 +1222,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   plan->changed = false;
 
   llvm::FailureOr<llvm::SmallVector<StageNode*>> sorted_stages_or =
-      preparePipelineStages(tree, pipeline);
+      sortAndValidateLinearPipelineStages(tree, pipeline);
   if (mlir::failed(sorted_stages_or)) {
     return nullptr;
   }
@@ -1245,7 +1236,7 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
 
   assignOriginalStageResources(sorted_stages, plan.get());
   llvm::SmallVector<ResourceType> endpoint_path =
-      buildEndpointPath(sorted_stages, plan.get());
+      collectOriginalStageResourcePath(sorted_stages, plan.get());
   if (endpoint_path.size() < 2) {
     return nullptr;
   }
@@ -1270,15 +1261,10 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   plan->modified_tree = &tree;
 
   int next_stage_id = static_cast<int>(sorted_stages.size());
-  llvm::SmallVector<StageNode*> expanded_stages;
-
-  if (mlir::failed(executeExpansionSteps(expanded_stages, tree, pipeline,
-                                         full_path, sorted_stages, arch_graph,
-                                         plan.get(), next_stage_id))) {
+  if (mlir::failed(applyPathExpansion(tree, pipeline, full_path, sorted_stages,
+                                      arch_graph, plan.get(), next_stage_id))) {
     return nullptr;
   }
-
-  LLVM_DEBUG(debugPrintPlanningSummary(expanded_stages, plan.get()));
 
   return plan;
 }
