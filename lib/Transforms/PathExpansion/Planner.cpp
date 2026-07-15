@@ -574,10 +574,12 @@ static StageNode* findUnvisitedStageByResource(
   return nullptr;
 }
 
-/// Step 1: Build the expanded stage list by walking the routing-graph path.
-/// Sets stage_resource and applicable_unit for every stage (original and
-/// synthetic). Inserts synthetic stages into the pipeline and rebuilds the
-/// linear dependency chain.
+/// Step 1: Build the expanded stage list by walking the routing-graph path
+/// (from left to right).
+// As each node is visited, examine the original stages to see if this node is
+// relevant to any of them (either as an applicable_unit or as a
+// stage_resource). If no corresponding original stage is found, creates
+// synthetic nodes into the pipeline and rebuild the linear dependency chain.
 static llvm::FailureOr<llvm::SmallVector<StageNode*>> buildExpandedStageList(
     PipelineTree& tree, PipelineNode* pipeline,
     const scheduler::arch_view::RoutingGraph::Path& path,
@@ -631,130 +633,127 @@ static llvm::FailureOr<llvm::SmallVector<StageNode*>> buildExpandedStageList(
     last_inserted = stage;
   };
 
+  auto createSyntheticStage = [&](ResourceType stage_resource,
+                                  ResourceType applicable_unit) -> StageNode* {
+    StageNode* synth = tree.createStageNode(nullptr, next_stage_id++);
+    StageMaterializationInfo info;
+    info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
+    info.stage_resource = stage_resource;
+    info.applicable_unit = applicable_unit;
+    plan->stage_info[synth] = info;
+    pipeline->insertChildNode(synth, last_inserted);
+    return synth;
+  };
+
   // Helper: direction-aware findUnvisited wrapper.
   auto findStage = [&](ResourceType resource) -> StageNode* {
     return findUnvisitedStageByResource(sorted_stages, visited, resource, plan,
                                         search_begin, search_end);
   };
 
-  // Walk the path
-  size_t n = path.size();
-  size_t i = 0;
-  while (i < n) {
-    auto node_opt = arch_graph.getNode(path[i]);
+  auto getPathNode = [&](size_t idx) {
+    auto node_opt = arch_graph.getNode(path[idx]);
     assert(node_opt && "node in path must exist in graph");
+    return node_opt;
+  };
+
+  auto getRightNode = [&](size_t idx) {
+    return idx + 1 < path.size() ? arch_graph.getNode(path[idx + 1])
+                                 : decltype(arch_graph.getNode(path[0]))();
+  };
+
+  auto handleMemoryNode =
+      [&](size_t idx,
+          const scheduler::arch_view::RoutingGraph::ResourceNode& node)
+      -> size_t {
+    StageNode* stage = findStage(node.resource);
+    auto right_opt = getRightNode(idx);
+    bool right_is_ls = right_opt && right_opt->kind == RK::LoadStoreUnit;
+
+    if (stage) {
+      visited.insert(stage);
+      if (right_is_ls) {
+        plan->stage_info[stage].applicable_unit = right_opt->resource;
+        insertStage(stage);
+        return idx + 2;
+      }
+      insertStage(stage);
+      return idx + 1;
+    }
+
+    if (right_is_ls) {
+      insertStage(createSyntheticStage(node.resource, right_opt->resource));
+      return idx + 2;
+    }
+
+    return idx + 1;
+  };
+
+  auto handleLoadStoreNode =
+      [&](size_t idx,
+          const scheduler::arch_view::RoutingGraph::ResourceNode& node)
+      -> size_t {
+    StageNode* stage_to_use = nullptr;
+    size_t next_idx = idx + 1;
+    auto right_opt = getRightNode(idx);
+
+    if (right_opt && right_opt->kind == RK::Memory) {
+      StageNode* stage = findStage(right_opt->resource);
+      if (stage) {
+        visited.insert(stage);
+        plan->stage_info[stage].applicable_unit = node.resource;
+        stage_to_use = stage;
+      } else {
+        stage_to_use = createSyntheticStage(right_opt->resource, node.resource);
+      }
+      next_idx = idx + 2;
+    }
+
+    if (!stage_to_use) {
+      stage_to_use = createSyntheticStage(ResourceType(), node.resource);
+    }
+
+    insertStage(stage_to_use);
+    return next_idx;
+  };
+
+  auto handleComputeNode =
+      [&](size_t idx,
+          const scheduler::arch_view::RoutingGraph::ResourceNode& node)
+      -> size_t {
+    assert(next_anchor_cursor < anchor_sorted_indices.size() &&
+           "Compute node in path must have a corresponding original stage");
+    size_t anchor_idx = anchor_sorted_indices[next_anchor_cursor];
+    ++next_anchor_cursor;
+    StageNode* stage = sorted_stages[anchor_idx];
+    assert(!visited.count(stage) &&
+           "Compute stage should not have been visited");
+    visited.insert(stage);
+    plan->stage_info[stage].applicable_unit = node.resource;
+    insertStage(stage);
+    search_begin = anchor_idx + 1;
+    search_end = (next_anchor_cursor < anchor_sorted_indices.size())
+                     ? anchor_sorted_indices[next_anchor_cursor]
+                     : sorted_stages.size();
+    return idx + 1;
+  };
+
+  // Walk the path.
+  const size_t n = path.size();
+  for (size_t i = 0; i < n;) {
+    auto node_opt = getPathNode(i);
     const auto& node = *node_opt;
 
-    if (node.kind == RK::Memory) {
-      // --- Case A: Memory node ---
-      StageNode* S = findStage(node.resource);
-      if (S) {
-        // An original stage claims this memory node
-        visited.insert(S);
-
-        // Peek right: if an LS-unit node follows, set applicable_unit and skip
-        if (i + 1 < n) {
-          auto right_opt = arch_graph.getNode(path[i + 1]);
-          if (right_opt && right_opt->kind == RK::LoadStoreUnit) {
-            plan->stage_info[S].applicable_unit = right_opt->resource;
-            i += 2;  // skip memory node + LS node
-            insertStage(S);
-            continue;
-          }
-        }
-        // No LS node to the right; applicable_unit stays unset for now
-        i += 1;
-        insertStage(S);
-        continue;
-      } else {
-        // No original stage for this memory node — peek right for LS unit
-        if (i + 1 < n) {
-          auto right_opt = arch_graph.getNode(path[i + 1]);
-          if (right_opt && right_opt->kind == RK::LoadStoreUnit) {
-            // Create synthetic stage covering this LS unit
-            StageNode* synth = tree.createStageNode(nullptr, next_stage_id++);
-            StageMaterializationInfo info;
-            info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
-            info.stage_resource = node.resource;
-            info.applicable_unit = right_opt->resource;
-            plan->stage_info[synth] = info;
-            pipeline->insertChildNode(synth, last_inserted);
-            i += 2;  // skip memory node + LS node
-            insertStage(synth);
-            continue;
-          }
-        }
-        // Memory node with no LS right neighbor and no original stage — skip
-        i += 1;
-        continue;
-      }
-    } else if (node.kind == RK::LoadStoreUnit) {
-      // --- Case B: LoadStoreUnit node ---
-      // Reached only when the preceding memory node did NOT consume this node.
-      // Pattern: LS-unit → Memory (store side)
-      StageNode* stage_to_use = nullptr;
-      bool advanced_extra = false;
-
-      if (i + 1 < n) {
-        auto right_opt = arch_graph.getNode(path[i + 1]);
-        if (right_opt && right_opt->kind == RK::Memory) {
-          // Look for original stage at the right memory node
-          StageNode* S = findStage(right_opt->resource);
-          if (S) {
-            visited.insert(S);
-            plan->stage_info[S].applicable_unit = node.resource;
-            stage_to_use = S;
-          } else {
-            // Synthetic store-side stage
-            StageNode* synth = tree.createStageNode(nullptr, next_stage_id++);
-            StageMaterializationInfo info;
-            info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
-            info.stage_resource = right_opt->resource;
-            info.applicable_unit = node.resource;
-            plan->stage_info[synth] = info;
-            pipeline->insertChildNode(synth, last_inserted);
-            stage_to_use = synth;
-          }
-          advanced_extra = true;
-        }
-      }
-
-      if (!stage_to_use) {
-        // No memory neighbor — unusual topology; create synthetic anyway
-        StageNode* synth = tree.createStageNode(nullptr, next_stage_id++);
-        StageMaterializationInfo info;
-        info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
-        info.applicable_unit = node.resource;
-        plan->stage_info[synth] = info;
-        pipeline->insertChildNode(synth, last_inserted);
-        stage_to_use = synth;
-      }
-
-      insertStage(stage_to_use);
-      i += advanced_extra ? 2 : 1;
-      continue;
-    } else {
-      // --- Case C: Compute node ---
-      // The current anchor is anchor_sorted_indices[next_anchor_cursor].
-      // Search exactly that one slot so we pick up the right compute stage.
-      assert(next_anchor_cursor < anchor_sorted_indices.size() &&
-             "Compute node in path must have a corresponding original stage");
-      size_t anchor_idx = anchor_sorted_indices[next_anchor_cursor];
-      ++next_anchor_cursor;
-      StageNode* S = sorted_stages[anchor_idx];
-      assert(!visited.count(S) && "Compute stage should not have been visited");
-      visited.insert(S);
-      plan->stage_info[S].applicable_unit = node.resource;
-      insertStage(S);
-      // Advance the search window past this anchor.
-      // search_end becomes the next anchor's sorted index (or the end of
-      // sorted_stages when all anchors have been processed).
-      search_begin = anchor_idx + 1;
-      search_end = (next_anchor_cursor < anchor_sorted_indices.size())
-                       ? anchor_sorted_indices[next_anchor_cursor]
-                       : sorted_stages.size();
-      i += 1;
-      continue;
+    switch (node.kind) {
+      case RK::Memory:
+        i = handleMemoryNode(i, node);
+        break;
+      case RK::LoadStoreUnit:
+        i = handleLoadStoreNode(i, node);
+        break;
+      case RK::Compute:
+        i = handleComputeNode(i, node);
+        break;
     }
   }
 
