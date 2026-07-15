@@ -1232,22 +1232,13 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   // are available for the endpoint_path loop below.
   assignOriginalStageResources(sorted_stages, plan.get());
 
-  // Prep Step 5: Build the endpoint_path (deduplicated resource sequence).
+  // Prep Step 4: Build the endpoint_path (resource sequence for original
+  // stages).
   llvm::SmallVector<ResourceType> endpoint_path;
-  {
-    // Collect resources for all original stages in order.
-    // assignOriginalStageResources has already populated plan->stage_info at
-    // this point, so read stage_resource directly from there.
-    llvm::SmallVector<ResourceType> all_resources;
-    for (size_t i = 0; i < sorted_stages.size(); ++i) {
-      all_resources.push_back(
-          plan->stage_info[sorted_stages[i]].stage_resource);
-    }
-    // Build the path from first resource to last via each intermediate
-    // (deduplicating adjacent duplicates)
-    for (ResourceType r : all_resources) {
-      if (r && (endpoint_path.empty() || endpoint_path.back() != r))
-        endpoint_path.push_back(r);
+  for (StageNode* stage : sorted_stages) {
+    ResourceType res = plan->stage_info[stage].stage_resource;
+    if (res) {
+      endpoint_path.push_back(res);
     }
   }
 
