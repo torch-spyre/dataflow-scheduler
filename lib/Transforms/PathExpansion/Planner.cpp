@@ -274,24 +274,9 @@ void StageMaterializationInfo::dump() const {
   llvm::dbgs() << "\n";
 }
 
-/// Extract anchor resource attribute from stage's applicable units
-static ResourceType extractAnchorResource(mlir::ktdf::StageOp stage_op) {
-  auto applicable_units = stage_op.getApplicableUnits();
-  if (!applicable_units) {
-    return nullptr;
-  }
-
-  assert(applicable_units->size() == 1 &&
-         "path expansion currently does not handle nested pipelines with "
-         "multi-unit stages");
-
-  return applicable_units->getValue()[0];
-}
-
 //===----------------------------------------------------------------------===//
 // Stage DAG Validation Functions
 //===----------------------------------------------------------------------===//
-
 mlir::LogicalResult validateLinearChain(
     llvm::ArrayRef<StageNode*> sorted_stages) {
   if (sorted_stages.empty()) {
@@ -342,25 +327,6 @@ mlir::LogicalResult validateLinearChain(
 
   return mlir::success();
 }
-
-//===----------------------------------------------------------------------===//
-// Stage Analysis Functions
-//===----------------------------------------------------------------------===//
-
-llvm::FailureOr<llvm::SmallVector<ResourceType>> extractAnchorResources(
-    llvm::ArrayRef<StageNode*> sorted_stages) {
-  llvm::SmallVector<ResourceType> anchors;
-  anchors.reserve(sorted_stages.size());
-
-  for (StageNode* stage : sorted_stages) {
-    auto stage_op = mlir::dyn_cast<mlir::ktdf::StageOp>(stage->getOperation());
-    if (!stage_op) return mlir::failure();
-    anchors.push_back(extractAnchorResource(stage_op));
-  }
-
-  return anchors;
-}
-
 /// Helper to determine a stage's resource (for original stages only).
 /// For compute stages (anchor_resource present): uses anchor_resource.
 /// For transfer stages: uses the MemRefType memory space from the first
@@ -460,7 +426,8 @@ buildFullShortestPath(llvm::ArrayRef<ResourceType> original_resource_path,
 /// disambiguates which side is the external endpoint.
 ///
 /// Rules (applied in order, first match wins):
-///  1. Anchor resource present (compute stage): use anchor_resource.
+///  1. Anchor stage (applicable_unit present in input IR): stage_resource ==
+///     that applicable-unit resource.
 ///  2. First stage in chain (no left neighbor): use source memref memory-space.
 ///  3. Last stage in chain (no right neighbor): use dest memref memory-space.
 ///  4. Intermediate stage: examine already-resolved neighbor resources —
@@ -474,8 +441,7 @@ buildFullShortestPath(llvm::ArrayRef<ResourceType> original_resource_path,
 /// Pass 1 resolves rules 1–3.  Pass 2 resolves rule 4 for any remaining
 /// stages, iterating until stable (handles chains of intermediate stages).
 static void assignOriginalStageResources(
-    llvm::ArrayRef<StageNode*> sorted_stages,
-    llvm::ArrayRef<ResourceType> anchor_resources, PathExpansionPlan* plan) {
+    llvm::ArrayRef<StageNode*> sorted_stages, PathExpansionPlan* plan) {
   size_t n = sorted_stages.size();
 
   // Initialise all entries with kPreserveOriginal and null stage_resource.
@@ -490,15 +456,18 @@ static void assignOriginalStageResources(
     StageNode* stage = sorted_stages[i];
     StageMaterializationInfo& info = plan->stage_info[stage];
 
-    // Rule 1: anchor resource (compute stage).
-    if (anchor_resources[i]) {
-      info.stage_resource = anchor_resources[i];
-      continue;
-    }
-
     auto stage_op =
         mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
     if (!stage_op) continue;
+
+    // Rule 1: anchor stage — applicable_unit already known from input IR.
+    if (auto units = stage_op.getApplicableUnits()) {
+      assert(units->size() == 1 &&
+             "path expansion currently does not handle nested pipelines with "
+             "multi-unit stages");
+      info.stage_resource = units->getValue()[0];
+      continue;
+    }
 
     // Rule 2: first stage — use source memref.
     if (i == 0) {
@@ -1237,18 +1206,14 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   }
   llvm::SmallVector<StageNode*> sorted_stages = *sorted_stages_or;
 
-  // Prep Step 2: Extract per-stage anchor resources
-  llvm::FailureOr<llvm::SmallVector<ResourceType>> anchors_or =
-      extractAnchorResources(sorted_stages);
-  if (mlir::failed(anchors_or)) {
-    return nullptr;
-  }
-  llvm::SmallVector<ResourceType> anchors = *anchors_or;
-
-  // Prep Step 3: Require at least one anchor stage (compute stage with a known
-  // applicable_unit). Without one there is no compute resource to route
-  // from/to.
-  if (llvm::none_of(anchors, [](ResourceType r) { return r != nullptr; })) {
+  // Prep Step 2: Require at least one anchor stage (a stage whose
+  // applicable_unit is already specified in the input IR). Without one there
+  // is no compute resource to route from/to.
+  if (llvm::none_of(sorted_stages, [](StageNode* s) {
+        auto op =
+            mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(s->getOperation());
+        return op && op.getApplicableUnits().has_value();
+      })) {
     return nullptr;
   }
 
@@ -1262,10 +1227,10 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
     llvm::dbgs() << "\n\n";
   });
 
-  // Prep Step 4: Assign stage_resource to every original stage.
+  // Prep Step 3: Assign stage_resource to every original stage.
   // This must happen before building endpoint_path so that the resource values
   // are available for the endpoint_path loop below.
-  assignOriginalStageResources(sorted_stages, anchors, plan.get());
+  assignOriginalStageResources(sorted_stages, plan.get());
 
   // Prep Step 5: Build the endpoint_path (deduplicated resource sequence).
   llvm::SmallVector<ResourceType> endpoint_path;

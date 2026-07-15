@@ -240,11 +240,6 @@ mlir::LogicalResult validateLinearChain(
 // Planning Functions
 //===----------------------------------------------------------------------===//
 
-/// Extract anchor resources from sorted stages (one entry per stage, null if
-/// the stage has no applicable units). Pure analysis; does not modify the tree.
-llvm::FailureOr<llvm::SmallVector<ResourceType>> extractAnchorResources(
-    llvm::ArrayRef<StageNode*> sorted_stages);
-
 /// Main planning entry point
 /// Analyzes the pipeline, compares with architecture graph, and if needed:
 /// 1. Updates the PipelineTree in-place (modifying stage DAG)
