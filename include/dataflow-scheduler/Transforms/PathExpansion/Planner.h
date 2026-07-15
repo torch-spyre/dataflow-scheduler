@@ -58,8 +58,6 @@ struct StageSummary {
   StageNode* node = nullptr;
   // Anchor resource from applicable units (can be null if no applicable units)
   ResourceType anchor_resource;
-  llvm::SmallVector<ResourceType> input_endpoints;
-  llvm::SmallVector<ResourceType> output_endpoints;
   bool is_transfer_only = false;
   bool is_compute_containing = false;
 };
@@ -121,10 +119,14 @@ struct PrivateResourceAllocation {
 
 /// Information needed to materialize a transfer operation
 struct TransferMaterializationInfo {
-  mlir::Operation* template_op =
-      nullptr;  // Template to derive from (can be null for synthetic)
-  scheduler::arch_view::RoutingGraph::EdgeInfo
-      hop;  // Architecture hop this implements
+  // Template to derive from (can be null for synthetic)
+  mlir::Operation* template_op = nullptr;
+
+  // Original architecture hop being expanded
+  scheduler::arch_view::RoutingGraph::EdgeInfo hop;
+
+  // Logical endpoints of this transfer segment. When intermediate buffers split
+  // a hop, these differ from getNode(hop.source/target)->resource.
   ResourceType source_resource;
   ResourceType dest_resource;
 
@@ -251,7 +253,7 @@ mlir::LogicalResult validateLinearChain(
 // Planning Functions
 //===----------------------------------------------------------------------===//
 
-/// Analyze stages and infer their endpoints and properties
+/// Analyze stages and extract their anchor resources
 /// This is a pure analysis step that doesn't modify the tree
 /// Takes sorted stages to ensure path inference order matches DAG order
 llvm::FailureOr<llvm::SmallVector<StageSummary>> analyzeStages(
