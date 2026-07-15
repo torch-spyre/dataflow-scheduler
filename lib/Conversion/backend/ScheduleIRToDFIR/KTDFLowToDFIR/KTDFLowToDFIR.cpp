@@ -138,13 +138,15 @@ struct KTDFLowToDFIRPass
       // run arith folding into query maps after logical mem view is built to
       // cleanup any extraneous ops.
       if (mlir::failed(scheduler::collapseArithOverQueryMaps(func))) {
+        func.emitError("failed to collapse arith ops over query maps");
         return signalPassFailure();
       }
 
       // Run operation lowerings after program units have been created
-      LDBG(1) << "Running operation lowerings for " << func.getName() << "";
       if (mlir::failed(runOperationLowerings(func, schedulerExtContext(),
                                              components, resource_kinds))) {
+        func.emitError("failed to run operation lowerings for ")
+            << func.getName();
         return signalPassFailure();
       }
 

@@ -207,7 +207,7 @@ struct KTDFToKTDFLoweringPass
       }
 
       if (wired_queries == 0) {
-        LDBG(1) << "  No queries wired to stages";
+        func.emitError("no queries wired to stages");
         return signalPassFailure();
       }
 
@@ -216,6 +216,7 @@ struct KTDFToKTDFLoweringPass
       // 7) and signal insertion (Step 9).
       mlir::ktdf::StageDependencyDAG global_dag;
       if (mlir::failed(mlir::ktdf::buildGlobalStageDAG(func, global_dag))) {
+        func.emitError("failed to build global stage DAG");
         return signalPassFailure();
       }
 
@@ -224,13 +225,12 @@ struct KTDFToKTDFLoweringPass
       std::map<std::pair<mlir::Operation*, mlir::Operation*>,
                llvm::SmallVector<scheduler::ResourceType, 2>>
           conflicts;
-      LDBG(1) << "Computing scratchpad conflicts";
       if (mlir::failed(computeScratchpadConflicts(stage_to_units, global_dag,
                                                   resource_kinds, conflicts))) {
-        LDBG(1) << "failed";
+        func.emitError("failed to compute scratchpad conflicts");
         return signalPassFailure();
       }
-      LDBG(1) << "complete: " << conflicts.size() << " conflicts found";
+      LDBG(1) << "Number of scratchpad conflicts found: " << conflicts.size();
 
       // Step 8: Insert signal operations for all conflicting global DAG edges,
       // before any pipeline transformation mutates the IR.
@@ -281,6 +281,7 @@ struct KTDFToKTDFLoweringPass
           llvm::SmallVector<mlir::ktdf::StageOp, 8> sorted_stages;
           if (mlir::failed(mlir::ktdf::topologicalSortStages(
                   pipeline_stages, dag, sorted_stages))) {
+            pipeline.emitError("topological sort of stages failed");
             return signalPassFailure();
           }
 

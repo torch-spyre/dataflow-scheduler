@@ -311,6 +311,8 @@ struct AddressAssignmentPass
         processAllocations(allocs, tracker, &getContext());
 
     if (failed > 0) {
+      module->emitError("AddressAssignment: failed to assign addresses for ")
+          << failed << " allocation(s)";
       signalPassFailure();
     }
   }

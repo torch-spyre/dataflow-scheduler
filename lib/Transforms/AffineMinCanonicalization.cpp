@@ -240,6 +240,8 @@ struct AffineMinCanonicalizationPass
     // Apply patterns greedily
     if (mlir::failed(
             mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {
+      getOperation()->emitError(
+          "affine-min canonicalization: pattern application failed");
       signalPassFailure();
       return;
     }
