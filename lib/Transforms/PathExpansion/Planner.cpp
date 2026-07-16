@@ -25,6 +25,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/Debug.h"
@@ -126,24 +127,14 @@ static void debugPrintResourceSpecs(llvm::raw_ostream& os,
 void PrivateResourceSpec::print(llvm::raw_ostream& os) const {
   switch (kind) {
     case Kind::kMemoryBuffer:
-      os << "MemoryBuffer(resource=" << [&]() {
-        std::string s;
-        llvm::raw_string_ostream os(s);
-        (memory_resource).print(os);
-        return os.str();
-      }() << ", shape=[";
-      for (size_t i = 0; i < shape.size(); ++i) {
-        os << shape[i];
-        if (i + 1 < shape.size()) os << "x";
-      }
+      os << "MemoryBuffer(resource=" << memory_resource << ", shape=[";
+      llvm::interleave(shape, os, [&](int64_t d) { os << d; }, "x");
       os << "], element_type=" << element_type << ")";
       break;
     case Kind::kFifo:
       os << "Fifo(src=" << fifo_src << ", dest=" << fifo_dest << ", slots=[";
-      for (size_t i = 0; i < elements_per_slot.size(); ++i) {
-        os << elements_per_slot[i];
-        if (i + 1 < elements_per_slot.size()) os << ", ";
-      }
+      llvm::interleave(
+          elements_per_slot, os, [&](int64_t e) { os << e; }, ", ");
       os << "], element_type=" << element_type << ")";
       break;
     case Kind::kUnknown:
@@ -158,19 +149,7 @@ void PrivateResourceSpec::dump() const {
 }
 
 void TransferMaterializationInfo::print(llvm::raw_ostream& os) const {
-  os << "Transfer(" <<
-      [&]() {
-        std::string s;
-        llvm::raw_string_ostream os(s);
-        (source_resource).print(os);
-        return os.str();
-      }()
-     << " -> " << [&]() {
-          std::string s;
-          llvm::raw_string_ostream os(s);
-          (dest_resource).print(os);
-          return os.str();
-        }();
+  os << "Transfer(" << source_resource << " -> " << dest_resource;
 
   if (source_private_resource) {
     os << ", priv_source=";
@@ -198,19 +177,7 @@ void TransferMaterializationInfo::dump() const {
 }
 
 void TransferMaterializationInfo::printDebug(llvm::raw_ostream& os) const {
-  os <<
-      [&]() {
-        std::string s;
-        llvm::raw_string_ostream os(s);
-        (source_resource).print(os);
-        return os.str();
-      }()
-     << " -> " << [&]() {
-          std::string s;
-          llvm::raw_string_ostream os(s);
-          (dest_resource).print(os);
-          return os.str();
-        }();
+  os << source_resource << " -> " << dest_resource;
 
   if (source_private_resource) {
     os << " (source: ";
@@ -279,40 +246,28 @@ void StageMaterializationInfo::dump() const {
 //===----------------------------------------------------------------------===//
 mlir::LogicalResult validateLinearChain(
     llvm::ArrayRef<StageNode*> sorted_stages) {
-  if (sorted_stages.empty()) {
-    return mlir::success();
-  }
+  if (sorted_stages.empty()) return mlir::success();
 
-  llvm::DenseMap<StageNode*, int> dependent_count;
-  for (StageNode* stage : sorted_stages) {
-    dependent_count[stage] = 0;
-  }
+  // Single pass: count predecessors, detect fan-in > 1, tally sources/sinks.
+  llvm::DenseMap<StageNode*, int> predecessor_count;
+  int source_count = 0;
+  int sink_count = 0;
 
   for (StageNode* stage : sorted_stages) {
     const llvm::SmallVector<StageNode*>& deps = stage->getDependencies();
 
     if (deps.size() > 1) {
       LDBG(1) << "Stage " << stage->getStageId()
-              << " has multiple outgoing dependencies (branching)";
+              << " has multiple incoming dependencies (branching)";
       return mlir::failure();
     }
 
-    for (StageNode* dep : deps) {
-      dependent_count[dep]++;
-    }
-  }
+    for (StageNode* dep : deps) predecessor_count[dep]++;
 
-  int source_count = 0;
-  int sink_count = 0;
+    if (predecessor_count[stage] == 0) source_count++;
+    if (deps.empty()) sink_count++;
 
-  for (StageNode* stage : sorted_stages) {
-    int incoming = dependent_count[stage];
-    const llvm::SmallVector<StageNode*>& outgoing = stage->getDependencies();
-
-    if (incoming == 0) source_count++;
-    if (outgoing.empty()) sink_count++;
-
-    if (incoming > 1) {
+    if (predecessor_count[stage] > 1) {
       LDBG(1) << "Stage " << stage->getStageId()
               << " has multiple incoming dependencies (merging)";
       return mlir::failure();
@@ -327,10 +282,6 @@ mlir::LogicalResult validateLinearChain(
 
   return mlir::success();
 }
-/// Helper to determine a stage's resource (for original stages only).
-/// For compute stages (anchor_resource present): uses anchor_resource.
-/// For transfer stages: uses the MemRefType memory space from the first
-/// data_transfer op.
 /// Return the memory-space attribute from val's type if it is a MemRefType
 /// with a memory space, otherwise return nullptr.
 static ResourceType memrefMemorySpace(mlir::Value val) {
@@ -339,28 +290,19 @@ static ResourceType memrefMemorySpace(mlir::Value val) {
   return nullptr;
 }
 
-/// Return the memory-space of the first data_transfer's source memref in
-/// stage_op, or nullptr if none found.
-static ResourceType firstTransferSourceMemSpace(mlir::ktdf::StageOp stage_op) {
-  ResourceType result;
+/// Return the {source, dest} memref memory-spaces from the first
+/// data_transfer op in stage_op.  Either element may be nullptr if that side
+/// is not a memref (e.g. a FIFO).  Both are found in a single walk.
+static std::pair<ResourceType, ResourceType> firstTransferMemSpaces(
+    mlir::ktdf::StageOp stage_op) {
+  ResourceType src, dst;
   stage_op.walk([&](mlir::ktdf::DataTransferOp transfer_op) {
-    if (result) return mlir::WalkResult::interrupt();
-    result = memrefMemorySpace(transfer_op.getSource());
-    return result ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
+    if (!src) src = memrefMemorySpace(transfer_op.getSource());
+    if (!dst) dst = memrefMemorySpace(transfer_op.getDestination());
+    return (src && dst) ? mlir::WalkResult::interrupt()
+                        : mlir::WalkResult::advance();
   });
-  return result;
-}
-
-/// Return the memory-space of the first data_transfer's destination memref in
-/// stage_op, or nullptr if none found.
-static ResourceType firstTransferDestMemSpace(mlir::ktdf::StageOp stage_op) {
-  ResourceType result;
-  stage_op.walk([&](mlir::ktdf::DataTransferOp transfer_op) {
-    if (result) return mlir::WalkResult::interrupt();
-    result = memrefMemorySpace(transfer_op.getDestination());
-    return result ? mlir::WalkResult::interrupt() : mlir::WalkResult::advance();
-  });
-  return result;
+  return {src, dst};
 }
 
 //===----------------------------------------------------------------------===//
@@ -407,12 +349,13 @@ buildFullShortestPath(llvm::ArrayRef<ResourceType> original_resource_path,
         arch_graph.findShortestPath(src, dst);
     if (!seg) return std::nullopt;
 
-    for (size_t j = 0; j < seg->size(); ++j) {
-      // Skip the junction node already present as the tail of the previous seg.
-      if (j == 0 && !full_path.empty() && full_path.back() == (*seg)[j])
-        continue;
-      full_path.push_back((*seg)[j]);
-    }
+    // Skip the first node of seg if it duplicates the tail of the path built
+    // so far (i.e. the junction node shared between consecutive segments).
+    size_t start = (!full_path.empty() && !seg->empty() &&
+                    full_path.back() == seg->front())
+                       ? 1
+                       : 0;
+    full_path.append(seg->begin() + start, seg->end());
   }
 
   return full_path;
@@ -431,7 +374,9 @@ buildFullShortestPath(llvm::ArrayRef<ResourceType> original_resource_path,
 ///     that applicable-unit resource.
 ///  2. First stage in chain (no left neighbor): use source memref memory-space.
 ///  3. Last stage in chain (no right neighbor): use dest memref memory-space.
-///  4. Intermediate stage: examine already-resolved neighbor resources —
+///  4. Intermediate stage with exactly one memref side: the memref side is
+///     unambiguously the stage resource — no neighbor context needed.
+///  5. Intermediate stage: examine already-resolved neighbor resources —
 ///       a. If left neighbor's stage_resource matches this stage's transfer
 ///          source memref → use this stage's transfer dest memref memory-space.
 ///       b. Else if right neighbor's stage_resource matches this stage's
@@ -439,20 +384,15 @@ buildFullShortestPath(llvm::ArrayRef<ResourceType> original_resource_path,
 ///          memory-space.
 ///       c. Otherwise assert (unresolvable without further passes).
 ///
-/// Pass 1 resolves rules 1–3.  Pass 2 resolves rule 4 for any remaining
+/// Pass 1 resolves rules 1–4.  Pass 2 resolves rule 5 for any remaining
 /// stages, iterating until stable (handles chains of intermediate stages).
 static void assignOriginalStageResources(
     llvm::ArrayRef<StageNode*> sorted_stages, PathExpansionPlan* plan) {
   size_t n = sorted_stages.size();
 
-  // Initialise all entries with kPreserveOriginal and null stage_resource.
-  for (size_t i = 0; i < n; ++i) {
-    StageMaterializationInfo info;
-    info.kind = StageMaterializationInfo::Kind::kPreserveOriginal;
-    plan->stage_info[sorted_stages[i]] = info;
-  }
-
-  // Pass 1: resolve rules 1, 2, 3.
+  // Pass 1: resolve rules 1, 2, 3, 4.
+  // Note: stage_info entries are default-constructed on first access (via
+  // operator[])
   for (size_t i = 0; i < n; ++i) {
     StageNode* stage = sorted_stages[i];
     StageMaterializationInfo& info = plan->stage_info[stage];
@@ -470,41 +410,39 @@ static void assignOriginalStageResources(
       continue;
     }
 
+    auto [src_ms, dst_ms] = firstTransferMemSpaces(stage_op);
+
     // Rule 2: first stage — use source memref.
     if (i == 0) {
-      ResourceType r = firstTransferSourceMemSpace(stage_op);
-      assert(r && "First stage must have a memref source on its data_transfer");
-      info.stage_resource = r;
+      assert(src_ms &&
+             "First stage must have a memref source on its data_transfer");
+      info.stage_resource = src_ms;
       continue;
     }
 
     // Rule 3: last stage — use dest memref.
     if (i == n - 1) {
-      ResourceType r = firstTransferDestMemSpace(stage_op);
-      assert(r && "Last stage must have a memref dest on its data_transfer");
-      info.stage_resource = r;
+      assert(dst_ms &&
+             "Last stage must have a memref dest on its data_transfer");
+      info.stage_resource = dst_ms;
       continue;
     }
 
-    // Rule 3.5: exactly one side of the transfer is a memref (the other side
+    // Rule 4: exactly one side of the transfer is a memref (the other side
     // is a FIFO or similar non-memref).  The memref side is unambiguously the
     // stage resource — no neighbor context needed.
-    {
-      ResourceType src_ms = firstTransferSourceMemSpace(stage_op);
-      ResourceType dst_ms = firstTransferDestMemSpace(stage_op);
-      if (src_ms && !dst_ms) {
-        info.stage_resource = src_ms;
-        continue;
-      }
-      if (dst_ms && !src_ms) {
-        info.stage_resource = dst_ms;
-        continue;
-      }
+    if (src_ms && !dst_ms) {
+      info.stage_resource = src_ms;
+      continue;
     }
-    // Rule 4 will be handled in pass 2.
+    if (dst_ms && !src_ms) {
+      info.stage_resource = dst_ms;
+      continue;
+    }
+    // Rule 5 will be handled in pass 2.
   }
 
-  // Pass 2: resolve rule 4 iteratively until stable.
+  // Pass 2: resolve rule 5 iteratively until stable.
   // Each iteration resolves at least one previously-unresolved intermediate
   // stage (using a neighbor resolved in the previous iteration).
   bool changed = true;
@@ -519,15 +457,14 @@ static void assignOriginalStageResources(
           mlir::dyn_cast_or_null<mlir::ktdf::StageOp>(stage->getOperation());
       if (!stage_op) continue;
 
-      ResourceType src_ms = firstTransferSourceMemSpace(stage_op);
-      ResourceType dst_ms = firstTransferDestMemSpace(stage_op);
+      auto [src_ms, dst_ms] = firstTransferMemSpaces(stage_op);
 
       ResourceType left_resource =
           plan->stage_info[sorted_stages[i - 1]].stage_resource;
       ResourceType right_resource =
           plan->stage_info[sorted_stages[i + 1]].stage_resource;
 
-      // Rule 4a: left neighbor's resource matches our transfer source
+      // Rule 5a: left neighbor's resource matches our transfer source
       //          → our endpoint is the destination side.
       if (left_resource && src_ms && left_resource == src_ms) {
         assert(dst_ms &&
@@ -538,7 +475,7 @@ static void assignOriginalStageResources(
         continue;
       }
 
-      // Rule 4b: right neighbor's resource matches our transfer destination
+      // Rule 5b: right neighbor's resource matches our transfer destination
       //          → our endpoint is the source side.
       if (right_resource && dst_ms && right_resource == dst_ms) {
         assert(src_ms &&
@@ -560,10 +497,10 @@ static void assignOriginalStageResources(
 
 /// Step 1: Build the expanded stage list by walking the routing-graph path
 /// (from left to right).
-// As each node is visited, examine the original stages to see if this node is
-// relevant to any of them (either as an applicable_unit or as a
-// stage_resource). If no corresponding original stage is found, creates
-// synthetic nodes into the pipeline and rebuild the linear dependency chain.
+/// As each node is visited, examine the original stages to see if this node is
+/// relevant to any of them (either as an applicable_unit or as a
+/// stage_resource). If no corresponding original stage is found, creates
+/// synthetic nodes into the pipeline and rebuild the linear dependency chain.
 static llvm::FailureOr<llvm::SmallVector<StageNode*>> buildExpandedStageList(
     PipelineTree& tree, PipelineNode* pipeline,
     const scheduler::arch_view::RoutingGraph::Path& path,
@@ -810,9 +747,9 @@ static mlir::LogicalResult classifyOriginalStages(
       if (src_is_memref == dest_is_memref) return mlir::WalkResult::advance();
 
       bool intermediate_is_source = prev_is_intermediate;
-      ResourceType intermediate_resource =
-          intermediate_is_source ? plan->stage_info[prev_stage].stage_resource
-                                 : plan->stage_info[next_stage].stage_resource;
+      StageMaterializationInfo& neighbor_info =
+          plan->stage_info[intermediate_is_source ? prev_stage : next_stage];
+      ResourceType intermediate_resource = neighbor_info.stage_resource;
 
       // Buffer shape from the memref tile sizes
       mlir::MemRefType memref_type =
@@ -889,20 +826,20 @@ static mlir::LogicalResult classifyOriginalStages(
       //   dest = stage.stage_resource
       // For write (producing to right): src = stage.stage_resource,
       //   dest = adjacent.applicable_unit
-      ResourceType fifo_src, fifo_dest;
-      if (is_read) {
-        // Left neighbor (LS-unit stage) → this compute stage
-        auto adj_it = plan->stage_info.find(adjacent_stage);
-        assert(adj_it != plan->stage_info.end());
-        fifo_src = adj_it->second.applicable_unit.value_or(nullptr);
-        fifo_dest = stage_info.stage_resource;
-      } else {
-        // This compute stage → right neighbor (LS-unit stage)
-        auto adj_it = plan->stage_info.find(adjacent_stage);
-        assert(adj_it != plan->stage_info.end());
-        fifo_src = stage_info.stage_resource;
-        fifo_dest = adj_it->second.applicable_unit.value_or(nullptr);
-      }
+      auto adj_it = plan->stage_info.find(adjacent_stage);
+      assert(adj_it != plan->stage_info.end());
+      StageMaterializationInfo& adj_info = adj_it->second;
+
+      // For read (consuming from left): src = adjacent.applicable_unit,
+      //   dest = stage.stage_resource
+      // For write (producing to right): src = stage.stage_resource,
+      //   dest = adjacent.applicable_unit
+      ResourceType fifo_src = is_read
+                                  ? adj_info.applicable_unit.value_or(nullptr)
+                                  : stage_info.stage_resource;
+      ResourceType fifo_dest = is_read
+                                   ? stage_info.stage_resource
+                                   : adj_info.applicable_unit.value_or(nullptr);
       assert(fifo_src && fifo_dest &&
              "Expected valid FIFO endpoint attributes");
 
@@ -928,8 +865,7 @@ static mlir::LogicalResult classifyOriginalStages(
       scheduler::arch_view::RoutingGraph::NodeId src_node_id =
           arch_graph.getNodeIdForResource(stage_info.stage_resource);
       scheduler::arch_view::RoutingGraph::NodeId adj_node_id =
-          arch_graph.getNodeIdForResource(
-              plan->stage_info[adjacent_stage].stage_resource);
+          arch_graph.getNodeIdForResource(adj_info.stage_resource);
       scheduler::arch_view::RoutingGraph::EdgeInfo edge{
           is_read ? adj_node_id : src_node_id,
           is_read ? src_node_id : adj_node_id, 1};
@@ -988,21 +924,17 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
            "Intermediate stage should have both neighbors");
 
     ResourceType intermediate_resource = stage_info.stage_resource;
-    auto printResource = [](ResourceType resource) {
-      std::string s;
-      llvm::raw_string_ostream os(s);
-      resource.print(os);
-      return os.str();
-    };
 
     LLVM_DEBUG(llvm::dbgs() << "  Processing intermediate stage "
                             << current_stage->getStageId() << " (resource: "
-                            << printResource(intermediate_resource) << ")\n");
+                            << intermediate_resource << ")\n");
 
     stage_info.kind = StageMaterializationInfo::Kind::kSyntheticTransfer;
 
-    if (plan->stage_info.count(prev_stage) == 0) continue;
-    StageMaterializationInfo& prev_info = plan->stage_info[prev_stage];
+    auto prev_it = plan->stage_info.find(prev_stage);
+    if (prev_it == plan->stage_info.end()) continue;
+    StageMaterializationInfo& prev_info = prev_it->second;
+    StageMaterializationInfo& next_info = plan->stage_info[next_stage];
 
     // Adjacent buffer transfers record the memory resource (stage_resource) as
     // their endpoint. Adjacent FIFO transfers record the LS unit
@@ -1012,11 +944,9 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       return r == intermediate_resource || (ls_unit && r == ls_unit);
     };
 
-    // Read source/dest resources directly from adjacent stage stage_resource
-    ResourceType inferred_source_resource =
-        plan->stage_info[prev_stage].stage_resource;
-    ResourceType inferred_dest_resource =
-        plan->stage_info[next_stage].stage_resource;
+    // Read source/dest resources directly from adjacent stage stage_resource.
+    ResourceType inferred_source_resource = prev_info.stage_resource;
+    ResourceType inferred_dest_resource = next_info.stage_resource;
 
     llvm::SmallPtrSet<const TransferMaterializationInfo*, 4>
         visited_next_transfer;
@@ -1033,8 +963,6 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       llvm::SmallVector<mlir::Value> dest_indices_from_next;
       llvm::SmallVector<mlir::OpFoldResult> dest_sizes_from_next;
       mlir::AffineMap dest_map_from_next;
-      assert(plan->stage_info.count(next_stage));
-      StageMaterializationInfo& next_info = plan->stage_info[next_stage];
       for (const TransferMaterializationInfo* next_transfer :
            next_info.transfers) {
         if (visited_next_transfer.contains(next_transfer)) continue;
@@ -1090,9 +1018,8 @@ static mlir::LogicalResult populateIntermediateStageTransfers(
       stage_info.transfers.push_back(transfer_info);
 
       LLVM_DEBUG(llvm::dbgs()
-                 << "    Created transfer: "
-                 << printResource(inferred_source_resource) << " -> "
-                 << printResource(inferred_dest_resource) << "\n");
+                 << "    Created transfer: " << inferred_source_resource
+                 << " -> " << inferred_dest_resource << "\n");
     }
   }
 
@@ -1248,7 +1175,6 @@ std::unique_ptr<PathExpansionPlan> planPathExpansion(
   }
 
   plan->changed = true;
-  plan->modified_tree = &tree;
 
   int next_stage_id = static_cast<int>(sorted_stages.size());
   if (mlir::failed(applyPathExpansion(tree, pipeline, full_path, sorted_stages,

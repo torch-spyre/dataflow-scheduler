@@ -93,13 +93,11 @@ struct PrivateResourceSpec {
 /// Represents an allocated private resource with its SSA value(s)
 /// This is created during materialization and tracked by the factory
 struct PrivateResourceAllocation {
-  const PrivateResourceSpec* spec;  // Pointer to the spec that created this
-
   // For memory buffers: single SSA value
   // For FIFOs: one SSA value per slot
   llvm::SmallVector<mlir::Value> ssa_values;
 
-  PrivateResourceAllocation(const PrivateResourceSpec* s) : spec(s) {}
+  PrivateResourceAllocation(const PrivateResourceSpec*) {}
 };
 
 // Factory classes are declared in PlannerFactories.hpp
@@ -185,12 +183,8 @@ struct StageMaterializationInfo {
 //===----------------------------------------------------------------------===//
 
 /// Result of path expansion planning
-/// Contains the modified PipelineTree and minimal side information
+/// Contains minimal side information needed by the materializer
 struct PathExpansionPlan {
-  // The modified PipelineTree is the primary output
-  // It contains the final stage DAG with dependencies
-  PipelineTree* modified_tree;
-
   // Side information for materialization (indexed by StageNode*)
   llvm::DenseMap<StageNode*, StageMaterializationInfo> stage_info;
 
@@ -198,7 +192,9 @@ struct PathExpansionPlan {
   // and tracks their allocations during materialization
   PrivateResourceFactory resource_factory;
 
-  // Transfer info factory that owns all TransferMaterializationInfo objects
+  // Owns all TransferMaterializationInfo objects; consumers access these
+  // objects via stage_info[].transfers pointers, not through this factory
+  // directly.
   TransferInfoFactory transfer_factory;
 
   // Whether any changes were made
