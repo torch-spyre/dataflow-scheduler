@@ -50,6 +50,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Transforms/Utils/PipelineTreeLegalizer.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/DebugLog.h"
 #include "llvm/Support/raw_ostream.h"
@@ -248,8 +249,7 @@ void StageCoarseningPass::identifyTransformCandidates(
 
         // Parent of outermost loop becomes tree root
         Operation* loop_nest_parent =
-            loop_nest.empty() ? pipeline.getOperation()->getParentOp()
-                              : loop_nest.front().getOperation()->getParentOp();
+            loop_nest.front().getOperation()->getParentOp();
 
         candidates.push_back({loop_nest, pipeline, loop_nest_parent});
 
@@ -635,18 +635,7 @@ void StageCoarseningPass::CorrectStageDependencies(
                   << new_source->getStageId() << "";
 
           // Add dependency to new source (if not already present)
-          const llvm::SmallVector<scheduler::StageNode*>& new_source_deps =
-              new_source->getDependencies();
-
-          bool already_has_dep = false;
-          for (scheduler::StageNode* existing_dep : new_source_deps) {
-            if (existing_dep == sink_stage) {
-              already_has_dep = true;
-              break;
-            }
-          }
-
-          if (!already_has_dep) {
+          if (!llvm::is_contained(new_source->getDependencies(), sink_stage)) {
             new_source->addDependency(sink_stage);
           }
 
