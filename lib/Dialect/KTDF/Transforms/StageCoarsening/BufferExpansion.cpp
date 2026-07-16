@@ -675,25 +675,25 @@ void mlir::ktdf::PerformBufferExpansionAnalysis(
 // Helper Functions
 //===----------------------------------------------------------------------===//
 
-bool mlir::ktdf::isValueDependentOn(Value value, Value target) {
-  if (value == target) {
-    return true;
-  }
+/// Internal recursive helper that carries a visited set to avoid
+/// re-traversing shared sub-graphs (e.g. common index sub-expressions).
+static bool isValueDependentOnImpl(Value value, Value target,
+                                   llvm::DenseSet<Value>& visited) {
+  if (value == target) return true;
+  if (!visited.insert(value).second) return false;
 
-  // Check if value is defined by an operation
   Operation* defining_op = value.getDefiningOp();
-  if (!defining_op) {
-    return false;
-  }
+  if (!defining_op) return false;
 
-  // Recursively check operands
   for (Value operand : defining_op->getOperands()) {
-    if (isValueDependentOn(operand, target)) {
-      return true;
-    }
+    if (isValueDependentOnImpl(operand, target, visited)) return true;
   }
-
   return false;
+}
+
+bool mlir::ktdf::isValueDependentOn(Value value, Value target) {
+  llvm::DenseSet<Value> visited;
+  return isValueDependentOnImpl(value, target, visited);
 }
 
 // Made with Bob
