@@ -255,9 +255,8 @@ static mlir::LogicalResult collectSites(
     mlir::ktdf::PipelineOp pipeline,
     llvm::SmallVector<BroadcastLegalizationSite>& sites,
     arch_view::ResourceKinds& resource_kinds) {
-  mlir::LogicalResult result = mlir::success();
-
-  pipeline.walk([&](mlir::linalg::GenericOp generic_op) {
+  const auto walk_result = pipeline.walk([&](mlir::linalg::GenericOp
+                                                 generic_op) {
     auto stage = generic_op->getParentOfType<mlir::ktdf::StageOp>();
     if (!stage) return mlir::WalkResult::advance();
     auto compute_kind = getResourceKind(stage);
@@ -331,7 +330,6 @@ static mlir::LogicalResult collectSites(
               << "transfer unit does not support sub-vector reads; "
                  "cannot legalize scalar broadcast operand "
               << i;
-          result = mlir::failure();
           return mlir::WalkResult::interrupt();
         }
       }
@@ -341,7 +339,6 @@ static mlir::LogicalResult collectSites(
         generic_op.emitError() << "transfer unit does not support splat; "
                                   "cannot legalize scalar broadcast operand "
                                << i;
-        result = mlir::failure();
         return mlir::WalkResult::interrupt();
       }
 
@@ -358,7 +355,7 @@ static mlir::LogicalResult collectSites(
     return mlir::WalkResult::advance();
   });
 
-  return result;
+  return mlir::success(!walk_result.wasInterrupted());
 }
 
 /// Widen the last dimension of the memref alloc backing `private_result`
