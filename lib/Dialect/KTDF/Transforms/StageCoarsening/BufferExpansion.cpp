@@ -592,12 +592,13 @@ mlir::ktdf::analyzeLoopDependencies(llvm::ArrayRef<Value> candidate_buffers,
 void mlir::ktdf::calculateExpansionInfo(
     const llvm::MapVector<Value, llvm::SmallVector<Value>>& buffer_to_loop_ivs,
     llvm::ArrayRef<scf::ForOp> loop_nest,
-    llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos) {
+    llvm::SmallVectorImpl<std::unique_ptr<BufferExpansionInfo>>&
+        expansion_infos) {
   for (const auto& entry : buffer_to_loop_ivs) {
     Value buffer = entry.first;
     const llvm::SmallVector<Value>& dependent_ivs = entry.second;
 
-    BufferExpansionInfo* info = new BufferExpansionInfo();
+    auto info = std::make_unique<BufferExpansionInfo>();
     info->buffer = buffer;
 
     // Order the dependent IVs according to the loop nest order
@@ -634,9 +635,7 @@ void mlir::ktdf::calculateExpansionInfo(
                "ktdf::DataTransferOp.");
       }
 
-      expansion_infos.push_back(info);
-    } else {
-      delete info;
+      expansion_infos.push_back(std::move(info));
     }
   }
 
@@ -654,7 +653,8 @@ void mlir::ktdf::calculateExpansionInfo(
 void mlir::ktdf::PerformBufferExpansionAnalysis(
     llvm::ArrayRef<scf::ForOp> loop_nest, PipelineOp pipeline,
     const StageGroupingAnalysis& grouping,
-    llvm::SmallVectorImpl<BufferExpansionInfo*>& expansion_infos) {
+    llvm::SmallVectorImpl<std::unique_ptr<BufferExpansionInfo>>&
+        expansion_infos) {
   LDBG(1) << "  Performing buffer expansion analysis...";
 
   // Step 1: Identify common memrefs across stage groups
