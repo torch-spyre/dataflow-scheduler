@@ -46,9 +46,8 @@ using namespace mlir::ktdf;
 StageGroupingAnalysis::StageGroupingAnalysis(
     PipelineOp pipeline, const scheduler::arch_view::MemoryTree& memory_tree)
     : memory_tree_(memory_tree) {
-  llvm::SmallVector<StageOp> stages;
-  collectStages(stages, pipeline);
-  init(stages);
+  auto stages_range = pipeline.getStages();
+  init(llvm::SmallVector<StageOp>(stages_range.begin(), stages_range.end()));
 }
 
 StageGroupingAnalysis::StageGroupingAnalysis(
@@ -145,21 +144,6 @@ void StageGroupingAnalysis::print(llvm::raw_ostream& os) const {
 void StageGroupingAnalysis::dump() const {
   llvm::dbgs() << "Stage Grouping Analysis Results:\n";
   print(llvm::dbgs());
-}
-
-void StageGroupingAnalysis::collectStages(llvm::SmallVector<StageOp>& stages,
-                                          PipelineOp pipeline) {
-  // Walk the pipeline body and collect all stage operations
-  // getBody() returns a Region&, we need to get its first block
-  Region& region = pipeline.getBodyRegion();
-  if (!region.empty()) {
-    Block& body = region.front();
-    for (auto& op : body.getOperations()) {
-      if (auto stage = dyn_cast<StageOp>(&op)) {
-        stages.push_back(stage);
-      }
-    }
-  }
 }
 
 bool StageGroupingAnalysis::shouldGroupTogether(StageOp stage1,
