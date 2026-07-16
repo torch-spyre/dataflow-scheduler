@@ -164,6 +164,8 @@ mlir::LogicalResult processOneBufferPhasePair(
     return mlir::failure();
   }
 
+  // TODO: Handle case where buffer_phase_op has multiple users
+  // (or check against it)
   auto select_op = mlir::dyn_cast<mlir::ktdf::SelectMemrefOp>(
       *buffer_phase_op.getResult().getUsers().begin());
   if (!select_op) {
@@ -258,8 +260,9 @@ mlir::LogicalResult processOneBufferPhasePair(
   });
 
   if (!cloned_buffer_phase || !cloned_select) {
-    llvm::errs()
-        << "ERROR: Could not find cloned buffer_phase or select_memref\n";
+    cloned_outermost.emitError(
+        "could not find cloned buffer_phase or select_memref after loop "
+        "cloning");
     return mlir::failure();
   }
 

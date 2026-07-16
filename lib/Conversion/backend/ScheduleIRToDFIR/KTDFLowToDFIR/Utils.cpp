@@ -215,8 +215,8 @@ mlir::LogicalResult scheduler::replaceComputeTileIdWithCoreQuery(
   return mlir::success();
 }
 
-scheduler::DataTransferType scheduler::getDataTransferType(bool src_is_fifo,
-                                                           bool dst_is_fifo) {
+llvm::FailureOr<scheduler::DataTransferType> scheduler::getDataTransferType(
+    bool src_is_fifo, bool dst_is_fifo) {
   // Case 1: Both source and destination are memrefs (memory to memory)
   if (!src_is_fifo && !dst_is_fifo) {
     return scheduler::DataTransferType::kLoadAndStore;
@@ -233,6 +233,5 @@ scheduler::DataTransferType scheduler::getDataTransferType(bool src_is_fifo,
   }
 
   // Both source and destination are FIFO slots - unsupported
-  llvm::report_fatal_error(
-      "Unsupported data transfer: FIFO to FIFO transfers are not allowed");
+  return llvm::failure();
 }

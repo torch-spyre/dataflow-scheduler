@@ -26,6 +26,7 @@
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/LogicalResult.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Operation.h"
@@ -77,9 +78,9 @@ mlir::LogicalResult replaceComputeTileIdWithCoreQuery(
 /// @param src_is_fifo True if source is a FIFO slot, false if memref
 /// @param dst_is_fifo True if destination is a FIFO slot, false if memref
 /// @return The data transfer type (LoadAndStore, LoadAndSend, or
-/// ReceiveAndStore)
-scheduler::DataTransferType getDataTransferType(bool src_is_fifo,
-                                                bool dst_is_fifo);
+/// ReceiveAndStore), or failure if both sides are FIFOs (unsupported).
+llvm::FailureOr<scheduler::DataTransferType> getDataTransferType(
+    bool src_is_fifo, bool dst_is_fifo);
 
 }  // namespace scheduler
 

@@ -114,7 +114,13 @@ struct LowerDataTransferPattern
 
     // Extract FIFO types if applicable
     // Determine transfer type based on source and destination
-    auto transfer_type = getDataTransferType(src_is_fifo, dst_is_fifo);
+    auto transfer_type_or = getDataTransferType(src_is_fifo, dst_is_fifo);
+    if (mlir::failed(transfer_type_or)) {
+      data_transfer_op.emitError(
+          "Unsupported data transfer: FIFO to FIFO transfers are not allowed");
+      return mlir::failure();
+    }
+    auto transfer_type = *transfer_type_or;
 
     // Get source and destination indices
     auto src_indices = data_transfer_op.getSourceIndices();
