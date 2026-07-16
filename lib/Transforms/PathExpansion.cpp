@@ -109,7 +109,8 @@ void PathExpansionPass::runOnOperation() {
       });
   for (mlir::ktdf::PipelineOp cand : candidates) {
     if (mlir::failed(processPipeline(cand, routing_graph))) {
-      LDBG(1) << "Unable to process pipeline ";
+      signalPassFailure();
+      return;
     }
   }
 }
@@ -123,6 +124,7 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   PipelineTree tree;
   mlir::Operation* parent = pipeline_op->getParentOp();
   if (!parent) {
+    pipeline_op->emitError("path-expansion: pipeline has no parent operation");
     return mlir::failure();
   }
 
@@ -135,7 +137,7 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   // Plan path expansion
   auto plan = planPathExpansion(tree, pipeline_node, routing_graph);
   if (!plan) {
-    LDBG(1) << "  Planning failed";
+    pipeline_op->emitError("path-expansion: failed to plan path expansion");
     return mlir::failure();
   }
 
@@ -160,7 +162,8 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
   mlir::Operation* new_pipeline_op = materializer.materialize(*pipeline_node);
 
   if (!new_pipeline_op) {
-    LDBG(1) << "  Materialization failed";
+    pipeline_op->emitError(
+        "path-expansion: failed to materialize expanded pipeline");
     return mlir::failure();
   }
 
@@ -168,11 +171,14 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
 
   auto new_pipeline = mlir::dyn_cast<mlir::ktdf::PipelineOp>(new_pipeline_op);
   if (!new_pipeline) {
+    new_pipeline_op->emitError(
+        "path-expansion: materialized operation is not a pipeline");
     return mlir::failure();
   }
 
   if (mlir::failed(cleanupPrivateOpsInPipeline(new_pipeline))) {
-    LDBG(1) << "  Private cleanup failed";
+    new_pipeline->emitError(
+        "path-expansion: failed to clean up private ops in expanded pipeline");
     return mlir::failure();
   }
 
