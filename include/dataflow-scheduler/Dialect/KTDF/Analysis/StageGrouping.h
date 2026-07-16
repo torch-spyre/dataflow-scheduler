@@ -97,9 +97,6 @@ class StageGroupingAnalysis {
  private:
   void init(ArrayRef<StageOp> stages);
 
-  /// Collect all stages from the pipeline
-  void collectStages(SmallVector<StageOp>& stages, PipelineOp pipeline);
-
   /// Determine if two stages should be grouped together
   bool shouldGroupTogether(StageOp stage1, StageOp stage2);
 
