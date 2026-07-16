@@ -533,23 +533,26 @@ void StageCoarseningPass::CorrectStageDependencies(
     TransformCandidate& candidate, scheduler::PipelineTree& tree) {
   LDBG(1) << "Correcting stage dependencies...";
 
-  // Step 1: Build pipeline-to-depth map and collect all stages
+  // Step 1: Build pipeline-to-depth map and collect all stages.
+  // Recursive DFS passes depth down so siblings always get the same value.
   llvm::DenseMap<const scheduler::PipelineNode*, unsigned> pipeline_to_depth;
   llvm::SmallVector<scheduler::StageNode*> all_stages;
-  unsigned pipeline_depth = 0;
 
-  scheduler::PipelineTreeNode::walk<scheduler::PipelineTreeNode::kPreOrder>(
-      tree.getRoot(), [&](scheduler::OperationTreeNode* node) {
+  std::function<void(scheduler::OperationTreeNode*, unsigned)> buildDepthMap =
+      [&](scheduler::OperationTreeNode* node, unsigned depth) {
         auto* pnode = static_cast<scheduler::PipelineTreeNode*>(node);
         if (pnode->isPipelineNode()) {
           pipeline_to_depth[static_cast<const scheduler::PipelineNode*>(
-              pnode)] = pipeline_depth;
-          pipeline_depth++;
+              pnode)] = depth;
+          ++depth;
         } else if (pnode->isStageNode()) {
           all_stages.push_back(static_cast<scheduler::StageNode*>(pnode));
         }
-        return node;
-      });
+        for (auto* child = node->getFirstChild(); child;
+             child = child->getNextSibling())
+          buildDepthMap(child, depth);
+      };
+  buildDepthMap(tree.getRoot(), 0);
 
   // Helper lambda to find a stage at the same level as the target pipeline by
   // walking up from start_stage
