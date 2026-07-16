@@ -532,13 +532,16 @@ mlir::ktdf::StageOp PathExpansionMaterializer::materializeStageNode(
 
       case StageMaterializationInfo::Kind::kAdaptFifoKinds:
         assert(template_op);
-        adaptStageBodyFifoKinds(mlir::cast<mlir::ktdf::StageOp>(template_op),
-                                info);
+        adaptStageBodyWithTransfers(
+            mlir::cast<mlir::ktdf::StageOp>(template_op), info,
+            /*handle_fifo_ops=*/true);
         break;
 
       case StageMaterializationInfo::Kind::kAdaptTransfer:
         assert(template_op);
-        adaptTransferStage(mlir::cast<mlir::ktdf::StageOp>(template_op), info);
+        adaptStageBodyWithTransfers(
+            mlir::cast<mlir::ktdf::StageOp>(template_op), info,
+            /*handle_fifo_ops=*/false);
         break;
 
       case StageMaterializationInfo::Kind::kSyntheticTransfer:
@@ -673,18 +676,6 @@ void PathExpansionMaterializer::adaptStageBodyWithTransfers(
   }
 }
 
-void PathExpansionMaterializer::adaptStageBodyFifoKinds(
-    mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info) {
-  // Adapt stage body with FIFO operations handling enabled
-  adaptStageBodyWithTransfers(orig_stage, info, /*handle_fifo_ops=*/true);
-}
-
-void PathExpansionMaterializer::adaptTransferStage(
-    mlir::ktdf::StageOp orig_stage, const StageMaterializationInfo& info) {
-  // Adapt transfer stage without FIFO operations handling
-  adaptStageBodyWithTransfers(orig_stage, info, /*handle_fifo_ops=*/false);
-}
-
 void PathExpansionMaterializer::synthesizeTransferStage(
     const StageMaterializationInfo& info) {
   // Synthesize new data transfer operations based on transfer info
@@ -693,57 +684,28 @@ void PathExpansionMaterializer::synthesizeTransferStage(
                              ? transfer_info->template_op->getLoc()
                              : builder_.getUnknownLoc();
 
-    // Get source - must be a private resource for synthetic transfers
     assert(transfer_info->source_private_resource &&
            "Synthetic transfer must have source private resource");
-    const PrivateResourceAllocation* source_alloc =
-        resource_factory_.getAllocation(transfer_info->source_private_resource);
-    assert(source_alloc && "Private resource should have been allocated");
-    assert(transfer_info->source_slot_index < source_alloc->ssa_values.size() &&
-           "Slot index out of bounds");
-    mlir::Value source =
-        source_alloc->ssa_values[transfer_info->source_slot_index];
-
-    // Get destination - must be a private resource for synthetic transfers
     assert(transfer_info->dest_private_resource &&
            "Synthetic transfer must have dest private resource");
-    const PrivateResourceAllocation* dest_alloc =
-        resource_factory_.getAllocation(transfer_info->dest_private_resource);
-    assert(dest_alloc && "Private resource should have been allocated");
-    assert(transfer_info->dest_slot_index < dest_alloc->ssa_values.size() &&
-           "Slot index out of bounds");
-    mlir::Value destination =
-        dest_alloc->ssa_values[transfer_info->dest_slot_index];
 
-    // Get indices and sizes from transfer_info (captured by planner from
-    // neighboring transfers)
-    llvm::SmallVector<mlir::Value> source_indices;
-    llvm::SmallVector<mlir::OpFoldResult> source_sizes;
-    llvm::SmallVector<mlir::Value> dest_indices;
-    llvm::SmallVector<mlir::OpFoldResult> dest_sizes;
+    mlir::Value source =
+        getPrivateResourceValue(transfer_info->source_private_resource,
+                                transfer_info->source_slot_index);
+    mlir::Value destination = getPrivateResourceValue(
+        transfer_info->dest_private_resource, transfer_info->dest_slot_index);
 
-    for (mlir::Value idx : transfer_info->source_indices) {
-      source_indices.push_back(materializeValue(idx));
-    }
-    for (mlir::OpFoldResult size : transfer_info->source_sizes) {
-      source_sizes.push_back(materializeOpFoldResult(size));
-    }
-    for (mlir::Value idx : transfer_info->dest_indices) {
-      dest_indices.push_back(materializeValue(idx));
-    }
-    for (mlir::OpFoldResult size : transfer_info->dest_sizes) {
-      dest_sizes.push_back(materializeOpFoldResult(size));
-    }
+    auto params = materializeTransferParams(*transfer_info);
 
-    mlir::AffineMap source_map =
-        canonicalizeMapAndIndices(transfer_info->source_map, source_indices);
+    mlir::AffineMap source_map = canonicalizeMapAndIndices(
+        transfer_info->source_map, params.source_indices);
     mlir::AffineMap dest_map =
-        canonicalizeMapAndIndices(transfer_info->dest_map, dest_indices);
+        canonicalizeMapAndIndices(transfer_info->dest_map, params.dest_indices);
 
-    // Create the transfer operation
     mlir::ktdf::DataTransferOp::create(
-        builder_, loc, source, source_map, source_indices, source_sizes,
-        destination, dest_map, dest_indices, dest_sizes);
+        builder_, loc, source, source_map, params.source_indices,
+        params.source_sizes, destination, dest_map, params.dest_indices,
+        params.dest_sizes);
   }
 }
 

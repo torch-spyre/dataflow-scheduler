@@ -248,7 +248,10 @@ mlir::LogicalResult validateLinearChain(
     llvm::ArrayRef<StageNode*> sorted_stages) {
   if (sorted_stages.empty()) return mlir::success();
 
-  // Single pass: count predecessors, detect fan-in > 1, tally sources/sinks.
+  // Walk in topological order (sources first).
+  // getDependencies() returns outgoing edges (successors), so iterating deps
+  // for each stage and incrementing predecessor_count[dep] correctly builds
+  // the in-degree map by the time each stage is visited.
   llvm::DenseMap<StageNode*, int> predecessor_count;
   int source_count = 0;
   int sink_count = 0;
@@ -256,17 +259,22 @@ mlir::LogicalResult validateLinearChain(
   for (StageNode* stage : sorted_stages) {
     const llvm::SmallVector<StageNode*>& deps = stage->getDependencies();
 
+    // fan-out check: a linear chain has at most one successor per stage.
     if (deps.size() > 1) {
       LDBG(1) << "Stage " << stage->getStageId()
-              << " has multiple incoming dependencies (branching)";
+              << " has multiple outgoing dependencies (branching)";
       return mlir::failure();
     }
 
+    // Propagate predecessor count to successors before reading our own count.
     for (StageNode* dep : deps) predecessor_count[dep]++;
 
+    // By this point all predecessors of `stage` have been visited (topological
+    // order), so predecessor_count[stage] is fully populated.
     if (predecessor_count[stage] == 0) source_count++;
     if (deps.empty()) sink_count++;
 
+    // fan-in check: a linear chain has at most one predecessor per stage.
     if (predecessor_count[stage] > 1) {
       LDBG(1) << "Stage " << stage->getStageId()
               << " has multiple incoming dependencies (merging)";
