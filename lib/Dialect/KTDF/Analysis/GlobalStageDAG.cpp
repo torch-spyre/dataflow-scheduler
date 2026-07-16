@@ -22,10 +22,10 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/GlobalStageDAG.h"
 
+#include <llvm/ADT/DenseMap.h>
 #include <llvm/Support/Debug.h>
 #include <llvm/Support/DebugLog.h>
 
-#include <algorithm>
 #include <functional>
 #include <map>
 #include <queue>
@@ -49,22 +49,21 @@ auto mlir::ktdf::analyzeStageDependencies(ArrayRef<StageOp> stages,
     dag.successors[stage.getOperation()] = {};
   }
 
-  llvm::SmallVector<std::pair<Value, Operation*>, 8> token_producer_pairs;
+  // Build a Value → producer map so each depends_in lookup is O(1).
+  llvm::DenseMap<Value, Operation*> token_producer_map;
   for (auto stage : stages) {
     for (auto operand : stage.getDependsOut()) {
-      token_producer_pairs.push_back({operand, stage.getOperation()});
+      token_producer_map[operand] = stage.getOperation();
     }
   }
 
   for (auto stage : stages) {
     for (auto input_token : stage.getDependsIn()) {
-      for (const auto& token_pair : token_producer_pairs) {
-        if (token_pair.first == input_token) {
-          Operation* producer = token_pair.second;
-          dag.predecessors[stage.getOperation()].push_back(producer);
-          dag.successors[producer].push_back(stage.getOperation());
-          break;
-        }
+      auto it = token_producer_map.find(input_token);
+      if (it != token_producer_map.end()) {
+        Operation* producer = it->second;
+        dag.predecessors[stage.getOperation()].push_back(producer);
+        dag.successors[producer].push_back(stage.getOperation());
       }
     }
   }
@@ -133,10 +132,7 @@ auto mlir::ktdf::topologicalSortStages(ArrayRef<StageOp> stages,
     Operation* current = queue.front();
     queue.pop();
 
-    auto it = std::find_if(stages.begin(), stages.end(), [current](StageOp s) {
-      return s.getOperation() == current;
-    });
-    if (it != stages.end()) sorted_stages.push_back(*it);
+    if (auto stage = dyn_cast<StageOp>(current)) sorted_stages.push_back(stage);
 
     auto succ_it = dag.successors.find(current);
     if (succ_it != dag.successors.end()) {
