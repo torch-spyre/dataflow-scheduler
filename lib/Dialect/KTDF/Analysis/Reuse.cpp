@@ -31,17 +31,7 @@ namespace {
 /// (transitively: at any depth, including nested regions).
 bool definedInsideRegion(Value v, Region& region) {
   Operation* def = v.getDefiningOp();
-  if (!def) {
-    return false;
-  }
-  Operation* ancestor = def;
-  while (ancestor) {
-    if (ancestor->getParentRegion() == &region) {
-      return true;
-    }
-    ancestor = ancestor->getParentOp();
-  }
-  return false;
+  return def && region.isAncestor(def->getParentRegion());
 }
 
 /// Walk `scope.loops` innermost-to-outermost. For each loop, check all
