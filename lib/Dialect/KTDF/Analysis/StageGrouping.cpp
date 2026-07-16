@@ -94,8 +94,8 @@ void StageGroupingAnalysis::init(llvm::ArrayRef<StageOp> stages) {
       unsigned stage_idx = *mi;
       group.addStage(stages[stage_idx]);
 
-      auto mutable_stage = const_cast<StageOp&>(stages[stage_idx]);
-      stage_to_group_[mutable_stage.getOperation()] = group_id;
+      StageOp stage = stages[stage_idx];
+      stage_to_group_[stage.getOperation()] = group_id;
     }
 
     groups_.push_back(group);
