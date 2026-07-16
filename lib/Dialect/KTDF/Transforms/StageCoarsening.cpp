@@ -36,6 +36,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <memory>
+
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
 #include "dataflow-scheduler/Analysis/PipelineTree.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
@@ -95,8 +97,10 @@ struct StageCoarseningPass
   void identifyTransformCandidates(
       ModuleOp module_op, llvm::SmallVector<TransformCandidate>& candidates);
 
-  /// Apply the transformation algorithm to a candidate
-  void applyTransformation(TransformCandidate& candidate);
+  /// Apply the transformation algorithm to a candidate.
+  /// Returns failure() if the transformation could not be applied; the caller
+  /// is responsible for calling signalPassFailure().
+  LogicalResult applyTransformation(TransformCandidate& candidate);
 
   //===--------------------------------------------------------------------===//
   // Distribute and Sink Loops into Pipeline
@@ -105,7 +109,8 @@ struct StageCoarseningPass
   void DistributeAndSinkIntoPipeline(
       TransformCandidate& candidate, scheduler::PipelineTree& tree,
       const ktdf::StageGroupingAnalysis& grouping,
-      llvm::SmallVectorImpl<ktdf::BufferExpansionInfo*>& expansion_infos);
+      llvm::SmallVectorImpl<std::unique_ptr<ktdf::BufferExpansionInfo>>&
+          expansion_infos);
 
   /// Perform buffer expansion analysis and record expansion information
 
@@ -135,8 +140,10 @@ struct StageCoarseningPass
   // Step 3: Generate Transformed IR from PipelineTree
   //===--------------------------------------------------------------------===//
 
-  /// Generate the transformed IR from the manipulated PipelineTree
-  void GenerateTransformedIR(
+  /// Generate the transformed IR from the manipulated PipelineTree.
+  /// Returns failure() if IR generation failed; the caller is responsible for
+  /// calling signalPassFailure().
+  LogicalResult GenerateTransformedIR(
       TransformCandidate& candidate, scheduler::PipelineTree& tree,
       llvm::ArrayRef<const ktdf::BufferExpansionInfo*> expansion_infos);
 };
@@ -162,9 +169,13 @@ void StageCoarseningPass::runOnOperation() {
 
   LDBG(1) << "Found " << candidates.size() << " transform candidate(s)\n";
 
-  // Apply transformation to each candidate
+  // Apply transformation to each candidate. Stop and signal failure on the
+  // first error — continuing would operate on inconsistent IR.
   for (TransformCandidate& candidate : candidates) {
-    applyTransformation(candidate);
+    if (failed(applyTransformation(candidate))) {
+      signalPassFailure();
+      return;
+    }
   }
 
   LDBG(1) << "=== Stage Coarsening Pass Complete ===\n";
@@ -254,7 +265,8 @@ void StageCoarseningPass::identifyTransformCandidates(
   });
 }
 
-void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
+LogicalResult StageCoarseningPass::applyTransformation(
+    TransformCandidate& candidate) {
   LDBG(1) << "--- Applying Transformation in steps ---";
   LDBG(1) << "Loop nest depth: " << candidate.loop_nest_.size();
 
@@ -262,11 +274,10 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
   auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
   auto* const device = device_manager.getOrImportDevice();
   if (!device) {
-    candidate.pipeline_->emitError(
+    return candidate.pipeline_->emitError(
         "Unable to import device specification for stage grouping. This could "
         "happen if the device spec file is empty or contains multiple "
         "devices");
-    return signalPassFailure();
   }
 
   auto& memory_tree = getChildAnalysis<scheduler::arch_view::MemoryTree>(
@@ -287,9 +298,12 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
   ktdf::StageGroupingAnalysis grouping(candidate.pipeline_, memory_tree);
   LLVM_DEBUG(grouping.print(llvm::dbgs()));
 
-  // Step 2a: Distribute and sink loops into pipeline
+  // Step 2a: Distribute and sink loops into pipeline.
+  // unique_ptr elements guarantee all BufferExpansionInfo objects are freed on
+  // every exit path.
   LDBG(1) << "\n--- Step 2a: Distribute and Sink into Pipeline ---";
-  llvm::SmallVector<ktdf::BufferExpansionInfo*> buffer_expansion_infos;
+  llvm::SmallVector<std::unique_ptr<ktdf::BufferExpansionInfo>>
+      buffer_expansion_infos;
   DistributeAndSinkIntoPipeline(candidate, tree, grouping,
                                 buffer_expansion_infos);
   LLVM_DEBUG({
@@ -326,19 +340,22 @@ void StageCoarseningPass::applyTransformation(TransformCandidate& candidate) {
     llvm::dbgs() << "\n";
   });
 
-  // Step 3: Generate transformed IR from the manipulated tree
-  GenerateTransformedIR(candidate, tree, buffer_expansion_infos);
+  // Step 3: Generate transformed IR from the manipulated tree.
+  // Collect raw const pointers for the read-only ArrayRef interface;
+  // unique_ptrs in buffer_expansion_infos retain ownership and handle cleanup.
+  llvm::SmallVector<const ktdf::BufferExpansionInfo*> raw_infos;
+  raw_infos.reserve(buffer_expansion_infos.size());
+  for (const auto& info : buffer_expansion_infos)
+    raw_infos.push_back(info.get());
 
-  // Clean up allocated expansion infos
-  for (ktdf::BufferExpansionInfo* info : buffer_expansion_infos) {
-    delete info;
-  }
+  return GenerateTransformedIR(candidate, tree, raw_infos);
 }
 
 void StageCoarseningPass::DistributeAndSinkIntoPipeline(
     TransformCandidate& candidate, scheduler::PipelineTree& tree,
     const ktdf::StageGroupingAnalysis& grouping,
-    llvm::SmallVectorImpl<ktdf::BufferExpansionInfo*>& expansion_infos) {
+    llvm::SmallVectorImpl<std::unique_ptr<ktdf::BufferExpansionInfo>>&
+        expansion_infos) {
   LDBG(1) << "Distributing loops into pipeline...";
 
   // Validate candidate
@@ -647,7 +664,7 @@ void StageCoarseningPass::CorrectStageDependencies(
 // Step 3: Generate Transformed IR from PipelineTree
 //===----------------------------------------------------------------------===//
 
-void StageCoarseningPass::GenerateTransformedIR(
+LogicalResult StageCoarseningPass::GenerateTransformedIR(
     TransformCandidate& candidate, scheduler::PipelineTree& tree,
     llvm::ArrayRef<const ktdf::BufferExpansionInfo*> expansion_infos) {
   LDBG(1) << "\n--- Step 3: Generate Transformed IR ---";
@@ -691,12 +708,14 @@ void StageCoarseningPass::GenerateTransformedIR(
 
   auto new_outer_pipeline_op = dyn_cast<ktdf::PipelineOp>(new_outer_pipeline);
   if (!new_outer_pipeline_op) {
-    return;
+    return new_outer_pipeline->emitError(
+        "materialized op is not a ktdf.pipeline");
   }
 
   LDBG(1) << "\n--- Cleaning Up Private Ops ---";
   if (failed(scheduler::cleanupPrivateOpsInPipeline(new_outer_pipeline_op))) {
-    return;
+    return new_outer_pipeline_op->emitError(
+        "failed to clean up private ops in pipeline after stage coarsening");
   }
 
   LDBG_OS(1, [&](llvm::raw_ostream& os) {
@@ -715,6 +734,7 @@ void StageCoarseningPass::GenerateTransformedIR(
   });
 
   LDBG(1) << "  IR generation complete.";
+  return success();
 }
 
 }  // namespace

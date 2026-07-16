@@ -27,6 +27,8 @@
 #ifndef DATAFLOW_SCHEDULER_DIALECT_KTDF_TRANSFORMS_STAGECOARSENING_BUFFEREXPANSION_H_
 #define DATAFLOW_SCHEDULER_DIALECT_KTDF_TRANSFORMS_STAGECOARSENING_BUFFEREXPANSION_H_
 
+#include <memory>
+
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/StageCoarsening/Materializer.h"
 #include "llvm/ADT/ArrayRef.h"
@@ -106,7 +108,7 @@ class StageCoarseningBufferCloner : public BufferCloner {
 void PerformBufferExpansionAnalysis(
     ArrayRef<scf::ForOp> loop_nest, ktdf::PipelineOp pipeline,
     const ktdf::StageGroupingAnalysis& grouping,
-    SmallVectorImpl<BufferExpansionInfo*>& expansion_infos);
+    SmallVectorImpl<std::unique_ptr<BufferExpansionInfo>>& expansion_infos);
 
 //===----------------------------------------------------------------------===//
 // Helper Functions
@@ -137,7 +139,7 @@ llvm::MapVector<Value, llvm::SmallVector<Value>> analyzeLoopDependencies(
 void calculateExpansionInfo(
     const llvm::MapVector<Value, SmallVector<Value>>& buffer_to_loop_ivs,
     ArrayRef<scf::ForOp> loop_nest,
-    SmallVectorImpl<BufferExpansionInfo*>& expansion_infos);
+    SmallVectorImpl<std::unique_ptr<BufferExpansionInfo>>& expansion_infos);
 
 /// Check if a value depends on a target value through its defining operation
 /// and operands (recursively)
