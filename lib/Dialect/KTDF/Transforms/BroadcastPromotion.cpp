@@ -72,16 +72,22 @@ memref::AllocOp findUnderlyingAlloc(Value dest) {
 /// `insert_before_op`. Returns the cloned alloc's SSA result value.
 /// Handles the case where `orig_dest` is a result of ktdf.private by
 /// finding the underlying alloc inside the private body.
-Value cloneDestAllocAbove(Value orig_dest, Operation* insert_before_op) {
+/// Returns failure and emits an error on `insert_before_op` if no alloc
+/// can be found.
+FailureOr<Value> cloneDestAllocAbove(Value orig_dest,
+                                     Operation* insert_before_op) {
   memref::AllocOp alloc = findUnderlyingAlloc(orig_dest);
-  assert(alloc && "destination must trace back to a memref.alloc");
+  if (!alloc)
+    return insert_before_op->emitError(
+        "broadcast promotion: destination does not trace back to a "
+        "memref.alloc");
   OpBuilder builder(insert_before_op);
   Operation* new_alloc = builder.clone(*alloc.getOperation());
   return new_alloc->getResult(0);
 }
 
 /// Perform one broadcast hoist for `c`.
-void performHoist(const ktdf::reuse::Candidate& c) {
+LogicalResult performHoist(const ktdf::reuse::Candidate& c) {
   ktdf::DataTransferOp transfer = c.transfer;
   ktdf::StageOp donor_stage = c.donor_stage;
   scf::ForOp target_loop = c.target_loop;
@@ -90,7 +96,10 @@ void performHoist(const ktdf::reuse::Candidate& c) {
   LDBG(1) << " hoisting " << *transfer.getOperation() << "\n";
 
   // 1. Fresh destination alloc immediately before target_loop.
-  Value new_dest = cloneDestAllocAbove(orig_dest, target_loop.getOperation());
+  FailureOr<Value> new_dest_or =
+      cloneDestAllocAbove(orig_dest, target_loop.getOperation());
+  if (failed(new_dest_or)) return failure();
+  Value new_dest = *new_dest_or;
 
   // 2. Sibling pipeline + stage immediately after the new alloc, still
   //    before target_loop.
@@ -130,24 +139,27 @@ void performHoist(const ktdf::reuse::Candidate& c) {
   // verifier). This is a dialect-level printer/parser asymmetry, not
   // a pass bug. Round-trip tests that pipe pass output through
   // scheduler again will hit it. Tracking as a known limitation.
+  return success();
 }
 
-/// Walk pipelines in post-order; return true iff a hoist was performed.
-bool tryHoistOneBroadcast(ModuleOp module) {
-  bool did_hoist = false;
+/// Walk pipelines in post-order; sets `did_hoist` to true iff a hoist was
+/// performed. Returns failure if the hoist itself failed.
+LogicalResult tryHoistOneBroadcast(ModuleOp module, bool& did_hoist) {
+  did_hoist = false;
+  LogicalResult result = success();
   module.walk<WalkOrder::PostOrder>(
       [&](ktdf::PipelineOp pipeline) -> WalkResult {
-        if (did_hoist) {
-          return WalkResult::interrupt();
-        }
         if (auto c = ktdf::reuse::findFirstCandidate(pipeline)) {
-          performHoist(*c);
+          if (failed(performHoist(*c))) {
+            result = failure();
+            return WalkResult::interrupt();
+          }
           did_hoist = true;
           return WalkResult::interrupt();
         }
         return WalkResult::advance();
       });
-  return did_hoist;
+  return result;
 }
 
 struct BroadcastPromotionPass
@@ -160,7 +172,8 @@ struct BroadcastPromotionPass
     ModuleOp module = getOperation();
     bool changed = true;
     while (changed) {
-      changed = tryHoistOneBroadcast(module);
+      if (failed(tryHoistOneBroadcast(module, changed)))
+        return signalPassFailure();
     }
   }
 };
