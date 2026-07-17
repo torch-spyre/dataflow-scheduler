@@ -78,21 +78,6 @@ struct LowerReadFromFifoPattern
       return mlir::failure();
     }
 
-    // Extract source component type from FIFO slot (read from source)
-    // The source is the producer side, so we use the src attribute
-    mlir::Attribute src_attr = fifo_slot_type.getSrc();
-    std::optional<scheduler::ResourceType> component_type_opt;
-
-    // The resource is the source's type name as a StringAttr.
-    if (auto str_attr = mlir::dyn_cast<mlir::StringAttr>(src_attr)) {
-      component_type_opt = mlir::StringAttr::get(str_attr.getContext(),
-                                                 str_attr.getValue().upper());
-    }
-    if (!component_type_opt.has_value()) {
-      read_op.emitError("unsupported read_from_fifo transfer");
-      return mlir::failure();
-    }
-
     // Find the enclosing program_unit
     auto program_unit =
         read_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
@@ -101,18 +86,14 @@ struct LowerReadFromFifoPattern
       return mlir::failure();
     }
 
-    // Get target component units
-    auto it = components_.find(*component_type_opt);
-    if (it == components_.end()) {
-      read_op.emitError("no units found for source component type");
+    // Resolve the source unit from the FIFO src attribute
+    auto queried_unit_result = resolveUnitFromFifoAttr(
+        fifo_slot_type.getSrc(), components_, rewriter, program_unit,
+        read_op.getLoc(), read_op.getOperation());
+    if (mlir::failed(queried_unit_result)) {
       return mlir::failure();
     }
-    const auto& target_units = it->second;
-
-    // Create query_map to map from current program_unit operands to target
-    // units
-    mlir::Value queried_unit = createQueryMapForComponent(
-        rewriter, program_unit, target_units, read_op.getLoc());
+    mlir::Value queried_unit = *queried_unit_result;
 
     // Create dataflow.receive operation
     auto receive_op = mlir::dataflow::ReceiveOp::create(
@@ -153,21 +134,6 @@ struct LowerWriteToFifoPattern
       return mlir::failure();
     }
 
-    // Extract destination component type from FIFO slot (write to destination)
-    // The destination is the consumer side, so we use the dest attribute
-    mlir::Attribute dest_attr = fifo_slot_type.getDest();
-    std::optional<scheduler::ResourceType> component_type_opt;
-
-    // The resource is the destination's type name as a StringAttr.
-    if (auto str_attr = mlir::dyn_cast<mlir::StringAttr>(dest_attr)) {
-      component_type_opt = mlir::StringAttr::get(str_attr.getContext(),
-                                                 str_attr.getValue().upper());
-    }
-    if (!component_type_opt.has_value()) {
-      write_op.emitError("unsupported write_to_fifo transfer");
-      return mlir::failure();
-    }
-
     // Find the enclosing program_unit
     auto program_unit =
         write_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
@@ -176,18 +142,14 @@ struct LowerWriteToFifoPattern
       return mlir::failure();
     }
 
-    // Get target component units
-    auto it = components_.find(*component_type_opt);
-    if (it == components_.end()) {
-      write_op.emitError("no units found for destination component type");
+    // Resolve the destination unit from the FIFO dest attribute
+    auto queried_unit_result = resolveUnitFromFifoAttr(
+        fifo_slot_type.getDest(), components_, rewriter, program_unit,
+        write_op.getLoc(), write_op.getOperation());
+    if (mlir::failed(queried_unit_result)) {
       return mlir::failure();
     }
-    const auto& target_units = it->second;
-
-    // Create query_map to map from current program_unit operands to target
-    // units
-    mlir::Value queried_unit = createQueryMapForComponent(
-        rewriter, program_unit, target_units, write_op.getLoc());
+    mlir::Value queried_unit = *queried_unit_result;
 
     // Create dataflow.send operation
     mlir::dataflow::SendOp::create(rewriter, write_op.getLoc(), queried_unit,
