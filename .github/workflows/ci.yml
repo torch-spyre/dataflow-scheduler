@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       artifact-repo:
-        description: "GitHub repo (owner/repo) to fetch the LLVM artifact from. Defaults to the parent repo (torch-spyre/dataflow-scheduler)."
+        description: "GitHub repo (owner/repo) to fetch the LLVM artifact from. Defaults to torch-spyre/ktir-mlir-frontend."
         required: false
         type: string
 
@@ -33,17 +33,8 @@ jobs:
 
       - name: Resolve artifact repo
         id: config
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [ -n "${{ inputs.artifact-repo }}" ]; then
-            ARTIFACT_REPO="${{ inputs.artifact-repo }}"
-          else
-            ARTIFACT_REPO=$(curl -sf \
-              -H "Authorization: Bearer $GH_TOKEN" \
-              "https://api.github.com/repos/${{ github.repository }}" \
-              | jq -r '.parent.full_name // .full_name')
-          fi
+          ARTIFACT_REPO="${{ inputs.artifact-repo || 'torch-spyre/ktir-mlir-frontend' }}"
           echo "artifact-repo=${ARTIFACT_REPO}" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
