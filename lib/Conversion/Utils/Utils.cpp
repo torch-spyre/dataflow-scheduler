@@ -51,47 +51,13 @@ auto getUnitResourceType(mlir::Value unit_value)
 }
 
 std::string getUnitTypeFromQueryMap(mlir::Value query_map) {
-  // Get the query_map operation
-  auto query_op = query_map.getDefiningOp<mlir::uniform::QueryMapOp>();
-  if (!query_op) {
+  auto resource_type = getUnitResourceType(query_map);
+  if (!resource_type) {
     query_map.getDefiningOp()->emitError(
-        "expected query_map to be defined by uniform.query_map operation");
+        "failed to determine unit resource type from query_map");
     return "";
   }
-
-  // Get the def_immutable_mapping
-  auto def_map_op =
-      query_op.getMap().getDefiningOp<mlir::uniform::DefImmutableMappingOp>();
-  if (!def_map_op) {
-    query_op->emitError(
-        "expected query_map's map to be defined by "
-        "uniform.def_immutable_mapping operation");
-    return "";
-  }
-
-  // Get the first value from the mapping (first result unit)
-  auto values = def_map_op.getValues();
-  if (values.empty()) {
-    def_map_op->emitError(
-        "expected def_immutable_mapping to have at least one value");
-    return "";
-  }
-
-  mlir::Value first_unit = values[0];
-
-  // Get the dataflow.get_unit operation
-  auto get_unit = mlir::dyn_cast_or_null<mlir::dataflow::GetUnitOp>(
-      first_unit.getDefiningOp());
-  if (!get_unit) {
-    first_unit.getDefiningOp()->emitError(
-        "expected first unit value to be defined by dataflow.get_unit "
-        "operation");
-    return "";
-  }
-
-  // Extract the type using getType().upper()
-  std::string type_str = get_unit.getType().upper();
-  return type_str;
+  return mlir::cast<mlir::StringAttr>(*resource_type).strref().str();
 }
 
 }  // namespace scheduler
