@@ -367,7 +367,7 @@ struct LowerSignalPattern
     }
 
     // Create all sync_send operations (from current unit to other units)
-    bool wait_immediately_for_async_transfer = 1;
+    bool wait_immediately_for_async_transfer = true;
     for (mlir::Value other_query_map : other_query_maps) {
       mlir::dataflow::SyncSendOp::create(
           rewriter, signal_op.getLoc(), other_query_map, /*dbgName=*/nullptr,
