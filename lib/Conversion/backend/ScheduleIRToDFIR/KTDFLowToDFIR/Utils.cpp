@@ -29,7 +29,9 @@
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/PatternMatch.h"
 
 using namespace scheduler;
 
@@ -213,6 +215,31 @@ mlir::LogicalResult scheduler::replaceComputeTileIdWithCoreQuery(
   }
 
   return mlir::success();
+}
+
+llvm::FailureOr<mlir::Value> scheduler::resolveUnitFromFifoAttr(
+    mlir::Attribute fifo_attr, const ResourceToUnits& components,
+    mlir::PatternRewriter& rewriter, mlir::dataflow::ProgramUnitOp program_unit,
+    mlir::Location loc, mlir::Operation* op_for_errors) {
+  // Step 1: cast the raw attribute to a StringAttr and upper-case it.
+  auto str_attr = mlir::dyn_cast<mlir::StringAttr>(fifo_attr);
+  if (!str_attr) {
+    op_for_errors->emitError("unsupported FIFO endpoint attribute type");
+    return mlir::failure();
+  }
+  scheduler::ResourceType component_type =
+      mlir::StringAttr::get(str_attr.getContext(), str_attr.getValue().upper());
+
+  // Step 2: look up the resource type in the components map.
+  auto it = components.find(component_type);
+  if (it == components.end()) {
+    op_for_errors->emitError()
+        << "no units found for FIFO component type: " << component_type;
+    return mlir::failure();
+  }
+
+  // Step 3: build and return the query_map for that component.
+  return createQueryMapForComponent(rewriter, program_unit, it->second, loc);
 }
 
 llvm::FailureOr<scheduler::DataTransferType> scheduler::getDataTransferType(

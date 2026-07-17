@@ -22,11 +22,13 @@
 #include <optional>
 
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/LogicalResult.h"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/Operation.h"
@@ -73,6 +75,21 @@ mlir::LogicalResult replaceComputeTileIdWithCoreQuery(
     mlir::dataflow::ProgramUnitOp program_unit,
     llvm::DenseMap<int64_t, mlir::Value>& core_id_consts,
     mlir::OpBuilder& const_builder);
+
+/// Resolve a FIFO endpoint attribute to the corresponding unit query-map Value.
+///
+/// Given a raw `mlir::Attribute` taken from either FifoSlotType::getSrc() or
+/// FifoSlotType::getDest(), this helper:
+///   1. Casts it to StringAttr and upper-cases the value to a ResourceType.
+///   2. Looks that type up in `components`.
+///   3. Calls createQueryMapForComponent to build the uniform.query_map.
+///
+/// On any failure the error is emitted on `op_for_errors` and the function
+/// returns failure.
+llvm::FailureOr<mlir::Value> resolveUnitFromFifoAttr(
+    mlir::Attribute fifo_attr, const ResourceToUnits& components,
+    mlir::PatternRewriter& rewriter, mlir::dataflow::ProgramUnitOp program_unit,
+    mlir::Location loc, mlir::Operation* op_for_errors);
 
 /// Determine the data transfer type based on source and destination types.
 /// @param src_is_fifo True if source is a FIFO slot, false if memref

@@ -24,7 +24,6 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/Support/Debug.h"
 #include "mlir/IR/IntegerSet.h"
 #include "mlir/IR/PatternMatch.h"
 #include "mlir/Support/LogicalResult.h"
@@ -350,22 +349,6 @@ struct LowerDataTransferPattern
                              src_total_elements, vector_type.getNumElements());
     }
 
-    // Get destination component type from FIFO slot
-    // The destination is the consumer side, so we use the dest attribute
-    mlir::Attribute dest_attr = dst_fifo_slot_type.getDest();
-    std::optional<scheduler::ResourceType> dest_component_opt;
-
-    // The resource is the destination's type name as a StringAttr.
-    if (auto str_attr = mlir::dyn_cast<mlir::StringAttr>(dest_attr)) {
-      dest_component_opt = mlir::StringAttr::get(str_attr.getContext(),
-                                                 str_attr.getValue().upper());
-    }
-
-    if (!dest_component_opt.has_value()) {
-      data_transfer_op.emitError("unsupported data_transfer to FIFO");
-      return mlir::failure();
-    }
-
     // Find the enclosing program_unit
     auto program_unit =
         data_transfer_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
@@ -374,28 +357,14 @@ struct LowerDataTransferPattern
       return mlir::failure();
     }
 
-    // Get target component units
-    LLVM_DEBUG(llvm::dbgs()
-               << "Looking for resource: " << *dest_component_opt << "\n");
-    LLVM_DEBUG({
-      llvm::dbgs() << "Available resources in map:\n";
-      for (const auto& pair : components_) {
-        llvm::dbgs() << "  - " << pair.first << " (" << pair.second.size()
-                     << " units)\n";
-      }
-    });
-    auto it = components_.find(*dest_component_opt);
-    if (it == components_.end()) {
-      data_transfer_op.emitError()
-          << "no units found for destination component type: "
-          << *dest_component_opt;
+    // Resolve the destination unit from the FIFO dest attribute
+    auto dest_unit_result = resolveUnitFromFifoAttr(
+        dst_fifo_slot_type.getDest(), components_, rewriter, program_unit,
+        data_transfer_op.getLoc(), data_transfer_op.getOperation());
+    if (mlir::failed(dest_unit_result)) {
       return mlir::failure();
     }
-    const auto& target_units = it->second;
-
-    // Create query_map to get the destination unit
-    mlir::Value dest_unit = createQueryMapForComponent(
-        rewriter, program_unit, target_units, data_transfer_op.getLoc());
+    mlir::Value dest_unit = *dest_unit_result;
 
     // Create dataflow.send operation
     mlir::dataflow::SendOp::create(rewriter, data_transfer_op.getLoc(),
@@ -422,22 +391,6 @@ struct LowerDataTransferPattern
     auto store_order = mlir::AffineMap::getMultiDimIdentityMap(
         num_dims, rewriter.getContext());
 
-    // Get source component type from FIFO slot
-    // The source is the producer side, so we use the src attribute
-    mlir::Attribute src_attr = src_fifo_slot_type.getSrc();
-    std::optional<scheduler::ResourceType> src_component_opt;
-
-    // The resource is the source's type name as a StringAttr.
-    if (auto str_attr = mlir::dyn_cast<mlir::StringAttr>(src_attr)) {
-      src_component_opt = mlir::StringAttr::get(str_attr.getContext(),
-                                                str_attr.getValue().upper());
-    }
-
-    if (!src_component_opt.has_value()) {
-      data_transfer_op.emitError("unsupported data_transfer from FIFO");
-      return mlir::failure();
-    }
-
     // Find the enclosing program_unit
     auto program_unit =
         data_transfer_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
@@ -446,17 +399,14 @@ struct LowerDataTransferPattern
       return mlir::failure();
     }
 
-    // Get target component units
-    auto it = components_.find(*src_component_opt);
-    if (it == components_.end()) {
-      data_transfer_op.emitError("no units found for source component type");
+    // Resolve the source unit from the FIFO src attribute
+    auto src_unit_result = resolveUnitFromFifoAttr(
+        src_fifo_slot_type.getSrc(), components_, rewriter, program_unit,
+        data_transfer_op.getLoc(), data_transfer_op.getOperation());
+    if (mlir::failed(src_unit_result)) {
       return mlir::failure();
     }
-    const auto& target_units = it->second;
-
-    // Create query_map to get the source unit
-    mlir::Value src_unit = createQueryMapForComponent(
-        rewriter, program_unit, target_units, data_transfer_op.getLoc());
+    mlir::Value src_unit = *src_unit_result;
 
     // Create dataflow.receive operation
     auto receive_op = mlir::dataflow::ReceiveOp::create(
