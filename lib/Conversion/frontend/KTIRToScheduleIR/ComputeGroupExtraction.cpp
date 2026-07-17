@@ -276,12 +276,13 @@ void ComputeGroupExtractionPass::buildAccessTileEqClasses(
 // Helper function to recursively collect iter args from operand dependencies
 static void collectArgsUsed(mlir::Value val,
                             llvm::DenseSet<mlir::Operation*>& visited,
-                            llvm::SmallVectorImpl<mlir::Value>& args) {
+                            llvm::SmallVectorImpl<mlir::Value>& args,
+                            llvm::DenseSet<mlir::Value>& args_visited) {
   // If this is a block argument (e.g., iter arg from scf.for), add it to the
   // list of arguments to pass to the extracted function
   if (mlir::isa<mlir::BlockArgument>(val)) {
     // Avoid duplicates
-    if (llvm::find(args, val) == args.end()) {
+    if (args_visited.insert(val).second) {
       args.push_back(val);
     }
     return;
@@ -295,21 +296,21 @@ static void collectArgsUsed(mlir::Value val,
 
   // Recursively collect from operands
   for (mlir::Value operand : op->getOperands()) {
-    collectArgsUsed(operand, visited, args);
+    collectArgsUsed(operand, visited, args, args_visited);
   }
 }
 
 // Helper function to recursively materialize dependencies
 static void materializeDependency(mlir::Value val, mlir::IRMapping& mapper,
                                   mlir::OpBuilder& builder) {
-  // If we already cloned this ancestor, we're done
-  if (mapper.contains(val)) return;
-
   // If this is a block argument, it should already be mapped
   if (mlir::isa<mlir::BlockArgument>(val)) {
     assert(mapper.contains(val) && "Block argument should be mapped");
     return;
   }
+
+  // If we already cloned this ancestor, we're done
+  if (mapper.contains(val)) return;
 
   mlir::Operation* op = val.getDefiningOp();
 
@@ -352,9 +353,10 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   // Collect args (block arguments) needed by the extracted function
   llvm::SmallVector<mlir::Value> args;
   llvm::DenseSet<mlir::Operation*> visited;
+  llvm::DenseSet<mlir::Value> args_visited;
   for (mlir::Operation* op : ops_to_move) {
     for (mlir::Value operand : op->getOperands()) {
-      collectArgsUsed(operand, visited, args);
+      collectArgsUsed(operand, visited, args, args_visited);
     }
   }
 
