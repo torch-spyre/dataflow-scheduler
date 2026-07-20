@@ -94,8 +94,8 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
   LDBG(1) << "Step 3: Compute scratchpad conflicts";
 
   for (const auto& [producer_op, successors] : dag.successors) {
-    auto producer_stage = mlir::dyn_cast<mlir::ktdf::StageOp>(producer_op);
-    assert(producer_stage && "producer op has to be a stage operation");
+    assert(llvm::isa<mlir::ktdf::StageOp>(producer_op) &&
+           "producer op has to be a stage operation");
 
     auto producer_it = stage_to_units.mapping.find(producer_op);
     assert(producer_it != stage_to_units.mapping.end() &&
@@ -104,8 +104,8 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
     const auto& producer_units = producer_it->second;
 
     for (auto consumer_op : successors) {
-      auto consumer_stage = mlir::dyn_cast<mlir::ktdf::StageOp>(consumer_op);
-      assert(consumer_stage && "consumer op has to be a stage operation");
+      assert(llvm::isa<mlir::ktdf::StageOp>(consumer_op) &&
+             "consumer op has to be a stage operation");
 
       auto consumer_it = stage_to_units.mapping.find(consumer_op);
       assert(consumer_it != stage_to_units.mapping.end() &&
