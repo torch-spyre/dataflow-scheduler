@@ -71,6 +71,9 @@ jobs:
       - name: Install lit
         run: pip install lit
 
+      - name: Install Python requirements
+        run: pip install -r python/requirements.txt
+
       - name: Configure
         run: |
           cmake -S . -B build -G Ninja \
@@ -79,7 +82,8 @@ jobs:
             -DCMAKE_C_COMPILER=${{ matrix.config.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.config.cxx }} \
             -DMLIR_DIR=${{ env.MLIR_DIR }} \
-            -DLLVM_EXTERNAL_LIT=$(which lit)
+            -DLLVM_EXTERNAL_LIT=$(which lit) \
+            -DDataflowScheduler_ENABLE_PYTHON_BINDINGS=ON
 
       - name: Build
         run: cmake --build build
