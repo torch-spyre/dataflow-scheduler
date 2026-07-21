@@ -31,6 +31,10 @@ if(MLIR_PYTHON_STUBGEN_ENABLED)
   )
 endif()
 
+# NOTE: The MLIRPythonSupport module, which is compiled here implicitly, may 
+#       contain errors that we can't do anything about.
+add_compile_options(-Wno-error)
+
 add_mlir_python_common_capi_library(DataflowSchedulerPythonCAPI
   INSTALL_COMPONENT DataflowSchedulerPythonModules
   INSTALL_DESTINATION "${MLIR_BINDINGS_PYTHON_INSTALL_PREFIX}/_mlir_libs"
