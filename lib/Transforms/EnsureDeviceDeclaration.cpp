@@ -16,9 +16,16 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <filesystem>
+
+#include "Ktdp/KtdpDialect.hpp"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "llvm/Support/SourceMgr.h"
+#include "mlir/Parser/Parser.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Support/FileUtilities.h"
 
 namespace scheduler {
 #define GEN_PASS_DEF_ENSUREDEVICEDECLARATIONPASS
@@ -29,11 +36,86 @@ using namespace scheduler;
 
 namespace {
 
+auto getDeviceName(const std::filesystem::path& path)
+    -> mlir::FailureOr<std::string> {
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::ktdf_arch::KTDFArchDialect>();
+  // Device specs may reference #ktdp.spyre_memory_space<...> in memory `kind`
+  // attributes, so the ktdp dialect must be available when parsing the file.
+  registry.insert<mlir::ktdp::KtdpDialect>();
+  mlir::MLIRContext context(registry);
+
+  std::string error_message;
+  auto maybe_file = mlir::openInputFile(path.native(), &error_message);
+  if (!maybe_file) {
+    return mlir::emitError(mlir::UnknownLoc::get(&context),
+                           "unable to import device: ")
+           << error_message;
+  }
+
+  auto source_mgr = std::make_shared<llvm::SourceMgr>();
+  source_mgr->AddNewSourceBuffer(std::move(maybe_file), {});
+  mlir::SourceMgrDiagnosticHandler import_handler(*source_mgr, &context);
+
+  mlir::ParserConfig config(&context, true);
+  auto module = mlir::parseSourceFile<mlir::ModuleOp>(*source_mgr, config);
+  if (!module) {
+    // Diagnostic was already emitted.
+    return mlir::failure();
+  }
+
+  auto devices = module->getOps<mlir::ktdf_arch::DeviceOp>();
+  if (devices.empty()) {
+    return mlir::emitError(module->getLoc(), "no device in import file");
+  }
+  if (std::next(devices.begin()) != devices.end()) {
+    return mlir::emitError(module->getLoc(), "multiple devices in import file");
+  }
+
+  return (*devices.begin()).getName().str();
+}
+
+mlir::LogicalResult injectDevice(mlir::ModuleOp module,
+                                 std::string device_filename,
+                                 std::string device_name) {
+  auto devices = module.getOps<mlir::ktdf_arch::DeviceOp>();
+  if (!devices.empty()) {
+    return mlir::success();
+  }
+  if (device_filename.empty()) {
+    return mlir::emitError(module.getLoc())
+           << "no 'ktdf_arch.device' is present in the module and no device "
+              "file name is provided to ensure-device-declaration pass";
+  }
+
+  const std::filesystem::path filename(device_filename.c_str());
+  const auto import_path = std::filesystem::absolute(filename);
+  if (device_name.empty()) {
+    auto maybe_device_name = getDeviceName(import_path);
+    if (mlir::failed(maybe_device_name)) {
+      return mlir::failure();
+    }
+    device_name = maybe_device_name.value();
+  }
+  mlir::OpBuilder builder(module.getBody(), module.getBody()->begin());
+  mlir::ktdf_arch::DeviceOp::create(builder, builder.getUnknownLoc(),
+                                    device_name, import_path.native());
+  return mlir::success();
+}
+
 struct EnsureDeviceDeclarationPass
     : public impl::EnsureDeviceDeclarationPassBase<
           EnsureDeviceDeclarationPass> {
   using EnsureDeviceDeclarationPassBase::EnsureDeviceDeclarationPassBase;
-  void runOnOperation() override {}
+  void runOnOperation() override {
+    if (mlir::failed(
+            injectDevice(getOperation(), deviceFileName, deviceName))) {
+      signalPassFailure();
+      return;
+    }
+    auto& device_manager = getAnalysis<mlir::ktdf_arch::DeviceManager>();
+    std::ignore = device_manager.getOrImportDevice();
+  }
 };
 
 }  // namespace
