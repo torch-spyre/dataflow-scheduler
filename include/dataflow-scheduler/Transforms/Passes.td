@@ -336,6 +336,9 @@ def EnsureDeviceDeclarationPass
            /*default=*/"",
            "Name of the device definition. If unspecified, the only device in the file is chosen">
   ]; 
+  let dependentDialects = [
+    "mlir::ktdf_arch::KTDFArchDialect"
+  ];
 }
 
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD
