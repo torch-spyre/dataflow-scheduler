@@ -319,4 +319,23 @@ def ScalarBroadcastLegalizationPass
   let constructor = "::scheduler::createScalarBroadcastLegalizationPass()";
 }
 
+def EnsureDeviceDeclarationPass
+    : Pass<"ensure-device-declaration", "mlir::ModuleOp"> {
+  let summary = "Ensure that there is a ktdf_arch.device declaration";
+  let description = [{
+    Detect if there is a ktdf_arch.device declaration. 
+    If not, insert a device declaration based on the option given to this pass.
+    And also, ensure ktdf_arch::DeviceManager is instantiated.
+  }];
+  let constructor = "::scheduler::createEnsureDeviceDeclarationPass()";
+  let options = [
+    Option<"deviceFileName", "device-filename", "std::string",
+           /*default=*/"",
+           "Path to the file containing the architecture description">,
+    Option<"deviceName", "device-name", "std::string",
+           /*default=*/"",
+           "Name of the device definition. If unspecified, the only device in the file is chosen">
+  ]; 
+}
+
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD

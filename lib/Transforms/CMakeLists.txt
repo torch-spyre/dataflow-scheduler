@@ -5,10 +5,11 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     PathExpansion/Planner.cpp
     PathExpansion/PlannerFactories.cpp
     AddressAssignment.cpp
-    NormalizeSCFForLoops.cpp
     AffineMinCanonicalization.cpp
     DoubleBuffering.cpp
+    EnsureDeviceDeclaration.cpp
     NormalizeGridTo1D.cpp
+    NormalizeSCFForLoops.cpp
     ParallelizeLoopsAcrossInstances.cpp
     PathExpansion.cpp
     ScalarBroadcastLegalization.cpp

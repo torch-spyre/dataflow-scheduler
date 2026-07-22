@@ -57,10 +57,14 @@ std::unique_ptr<mlir::Pass> createAddressAssignmentPass();
 std::unique_ptr<mlir::Pass> createAddressAssignmentPass(
     const SchedulerExtContext& scheduler_ctx);
 std::unique_ptr<mlir::Pass> createScalarBroadcastLegalizationPass();
+std::unique_ptr<mlir::Pass> createEnsureDeviceDeclarationPass();
 
 #define GEN_PASS_DECL
 #define GEN_PASS_REGISTRATION
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
+
+std::unique_ptr<mlir::Pass> createEnsureDeviceDeclarationPass(
+    EnsureDeviceDeclarationPassOptions options);
 
 }  // namespace scheduler
 
