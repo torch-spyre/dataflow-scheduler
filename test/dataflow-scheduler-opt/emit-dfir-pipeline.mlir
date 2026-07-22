@@ -1,0 +1,46 @@
+// Checks that the `kEmitDFIR` pipeline registered by dataflow-scheduler-opt
+// schedules every pass from `scheduler::buildKTDPToDFIRPipeline` (plus the
+// leading `ensure-device-declaration` pass), in order.
+//
+// `--dump-pass-pipeline` prints the fully constructed pass manager, which lets
+// us assert the passes are invoked without running the full pipeline on real
+// KTIR input. The pipeline still starts to run afterwards and fails on the
+// empty module (no device), so `-verify-diagnostics` consumes that error.
+//
+// RUN: dataflow-scheduler-opt -kEmitDFIR --dump-pass-pipeline %s \
+// RUN:   -verify-diagnostics 2>&1 | FileCheck %s
+
+// The passes must appear in the exact order established by
+// buildKTDPToDFIRPipeline. CHECK directives match in order, and CHECK-NOT
+// between the first and last entry would catch reordering.
+
+// CHECK:      Pass Manager with 24 passes
+// CHECK-NEXT: builtin.module(
+// CHECK-NEXT:   ensure-device-declaration
+// CHECK-NEXT:   ktir-legality-check
+// CHECK-NEXT:   compute-group-extraction
+// CHECK-NEXT:   construct-three-stage-pipeline
+// CHECK-NEXT:   path-expansion
+// CHECK-NEXT:   scalar-broadcast-legalization
+// CHECK-NEXT:   normalize-scf-for-loops
+// CHECK-NEXT:   canonicalize
+// CHECK-NEXT:   tile-scf-for-loops
+// CHECK-NEXT:   canonicalize
+// CHECK-NEXT:   loop-invariant-code-motion
+// CHECK-NEXT:   stage-coarsening
+// CHECK-NEXT:   broadcast-promotion
+// CHECK-NEXT:   double-buffering
+// CHECK-NEXT:   parallelize-loops-across-instances
+// CHECK-NEXT:   tile-size-selection
+// CHECK-NEXT:   canonicalize
+// CHECK-NEXT:   affine-min-canonicalization
+// CHECK-NEXT:   subsume-linearize-index
+// CHECK-NEXT:   address-assignment
+// CHECK-NEXT:   normalize-grid-to-1d
+// CHECK-NEXT:   ktdf-to-ktdflowering
+// CHECK-NEXT:   ktdflowering-to-dfir
+// CHECK-NEXT:   emit-split-dfir
+
+// expected-error @below {{no 'ktdf_arch.device' is present in the module and no device file name is provided to ensure-device-declaration pass}}
+module {
+}
