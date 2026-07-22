@@ -37,19 +37,6 @@ jobs:
           ARTIFACT_REPO="${{ inputs.artifact-repo || 'torch-spyre/ktir-mlir-frontend' }}"
           echo "artifact-repo=${ARTIFACT_REPO}" >> $GITHUB_OUTPUT
 
-      - name: Install dependencies
-        run: |
-          # clang-21 from LLVM apt (matches project's recommended clang >= 21.0.0)
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
-            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          sudo add-apt-repository \
-            "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main"
-
-          # gcc-13 from toolchain PPA
-          sudo add-apt-repository ppa:ubuntu-toolchain-r/test
-          sudo apt-get update -q
-          sudo apt-get install -y ninja-build clang-21 clang-format-21 gcc-13 g++-13 python3
-
       - name: Read LLVM hash
         id: llvm
         run: |
@@ -68,6 +55,35 @@ jobs:
             --repo ${{ steps.config.outputs.artifact-repo }})
           echo "MLIR_DIR=$MLIR_DIR" >> $GITHUB_ENV
 
+      - name: Read LLVM major version
+        id: llvm-version
+        run: |
+          LLVM_CONFIG="${{ env.MLIR_DIR }}/../llvm/LLVMConfig.cmake"
+          MAJOR=$(grep -m1 'set(LLVM_VERSION_MAJOR' "$LLVM_CONFIG" | grep -oP '\d+')
+          echo "major=${MAJOR}" >> $GITHUB_OUTPUT
+
+      - name: Install dependencies
+        run: |
+          LLVM_MAJOR="${{ steps.llvm-version.outputs.major }}"
+
+          # clang-format-${LLVM_MAJOR} from the LLVM apt repository
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+            | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          sudo add-apt-repository \
+            "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-${LLVM_MAJOR} main"
+
+          # clang-21 from the LLVM apt repository
+          sudo add-apt-repository \
+            "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main"
+
+          # gcc-13 from toolchain PPA
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+          sudo apt-get update -q
+          sudo apt-get install -y ninja-build clang-21 gcc-13 g++-13 python3
+          sudo apt-get install -y clang-format-${LLVM_MAJOR}
+
+          echo "CLANG_FORMAT=clang-format-${LLVM_MAJOR}" >> $GITHUB_ENV
+
       - name: Install lit
         run: pip install lit
 
@@ -82,6 +98,7 @@ jobs:
             -DCMAKE_C_COMPILER=${{ matrix.config.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.config.cxx }} \
             -DMLIR_DIR=${{ env.MLIR_DIR }} \
+            -DCLANG_FORMAT=${{ env.CLANG_FORMAT }} \
             -DLLVM_EXTERNAL_LIT=$(which lit) \
             -DDataflowScheduler_ENABLE_PYTHON_BINDINGS=ON
 
@@ -89,4 +106,4 @@ jobs:
         run: cmake --build build
 
       - name: Test
-        run: cmake --build build --target check-dataflow-scheduler
+        run: cmake --build build --target check-dataflow-scheduler check-dataflow-scheduler-format
