@@ -19,9 +19,8 @@
 // Routing Graph
 //
 // This file defines a reusable architecture-routing analysis abstraction used
-// by path expansion. The graph models legal resource-to-resource routing hops
-// and stores hop-local transfer semantics such as transfer units and FIFO
-// kinds.
+// by path expansion. The graph models legal resource-to-resource routing hops.
+// Load/store units are represented as first-class nodes (LoadStoreUnit kind).
 //
 //===----------------------------------------------------------------------===//
 
@@ -58,6 +57,7 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
     enum class ResourceKind {
       Memory,
       Compute,
+      LoadStoreUnit,
     };
 
     NodeId id;
@@ -71,7 +71,6 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
   struct EdgeInfo {
     NodeId source;
     NodeId target;
-    ResourceType transfer_unit;  // nullptr for edges without transfer units
     unsigned cost = 1;
   };
 
@@ -84,8 +83,7 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
                         mlir::AnalysisManager& analyses);
 
   NodeId addNode(ResourceType resource, ResourceNode::ResourceKind kind);
-  void addEdge(NodeId source, NodeId target, ResourceType transfer_unit,
-               unsigned cost = 1);
+  void addEdge(NodeId source, NodeId target, unsigned cost = 1);
 
   bool hasNode(NodeId node_id) const;
   std::optional<ResourceNode> getNode(NodeId node_id) const;
@@ -122,9 +120,6 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
   void dump() const;
 
   static llvm::StringRef stringifyResourceKind(ResourceNode::ResourceKind kind);
-
-  /// Infer resource kind from attribute type
-  static ResourceNode::ResourceKind inferResourceKind(ResourceType resource);
 
  private:
   void initialize();

@@ -50,21 +50,6 @@
 namespace scheduler {
 
 //===----------------------------------------------------------------------===//
-// Lightweight Analysis Structures
-//===----------------------------------------------------------------------===//
-
-/// Summary of a stage's inferred properties (used during analysis only)
-struct StageSummary {
-  StageNode* node = nullptr;
-  // Anchor resource from applicable units (can be null if no applicable units)
-  ResourceType anchor_resource;
-  llvm::SmallVector<ResourceType> input_endpoints;
-  llvm::SmallVector<ResourceType> output_endpoints;
-  bool is_transfer_only = false;
-  bool is_compute_containing = false;
-};
-
-//===----------------------------------------------------------------------===//
 // Materialization Side Information
 //===----------------------------------------------------------------------===//
 
@@ -108,23 +93,25 @@ struct PrivateResourceSpec {
 /// Represents an allocated private resource with its SSA value(s)
 /// This is created during materialization and tracked by the factory
 struct PrivateResourceAllocation {
-  const PrivateResourceSpec* spec;  // Pointer to the spec that created this
-
   // For memory buffers: single SSA value
   // For FIFOs: one SSA value per slot
   llvm::SmallVector<mlir::Value> ssa_values;
 
-  PrivateResourceAllocation(const PrivateResourceSpec* s) : spec(s) {}
+  PrivateResourceAllocation(const PrivateResourceSpec*) {}
 };
 
 // Factory classes are declared in PlannerFactories.hpp
 
 /// Information needed to materialize a transfer operation
 struct TransferMaterializationInfo {
-  mlir::Operation* template_op =
-      nullptr;  // Template to derive from (can be null for synthetic)
-  scheduler::arch_view::RoutingGraph::EdgeInfo
-      hop;  // Architecture hop this implements
+  // Template to derive from (can be null for synthetic)
+  mlir::Operation* template_op = nullptr;
+
+  // Original architecture hop being expanded
+  scheduler::arch_view::RoutingGraph::EdgeInfo hop;
+
+  // Logical endpoints of this transfer segment. When intermediate buffers split
+  // a hop, these differ from getNode(hop.source/target)->resource.
   ResourceType source_resource;
   ResourceType dest_resource;
 
@@ -171,7 +158,7 @@ struct StageMaterializationInfo {
                       // (needed for transfer stages that are intermdiate-stage
                       // facing)
     kSyntheticTransfer,  // Generate new transfer stage (usually for
-                         // intermediate memory stages ie L1)
+                         // intermediate memory ie L1)
   };
 
   Kind kind = Kind::kPreserveOriginal;
@@ -196,12 +183,8 @@ struct StageMaterializationInfo {
 //===----------------------------------------------------------------------===//
 
 /// Result of path expansion planning
-/// Contains the modified PipelineTree and minimal side information
+/// Contains minimal side information needed by the materializer
 struct PathExpansionPlan {
-  // The modified PipelineTree is the primary output
-  // It contains the final stage DAG with dependencies
-  PipelineTree* modified_tree;
-
   // Side information for materialization (indexed by StageNode*)
   llvm::DenseMap<StageNode*, StageMaterializationInfo> stage_info;
 
@@ -209,7 +192,9 @@ struct PathExpansionPlan {
   // and tracks their allocations during materialization
   PrivateResourceFactory resource_factory;
 
-  // Transfer info factory that owns all TransferMaterializationInfo objects
+  // Owns all TransferMaterializationInfo objects; consumers access these
+  // objects via stage_info[].transfers pointers, not through this factory
+  // directly.
   TransferInfoFactory transfer_factory;
 
   // Whether any changes were made
@@ -250,17 +235,6 @@ mlir::LogicalResult validateLinearChain(
 //===----------------------------------------------------------------------===//
 // Planning Functions
 //===----------------------------------------------------------------------===//
-
-/// Analyze stages and infer their endpoints and properties
-/// This is a pure analysis step that doesn't modify the tree
-/// Takes sorted stages to ensure path inference order matches DAG order
-llvm::FailureOr<llvm::SmallVector<StageSummary>> analyzeStages(
-    llvm::ArrayRef<StageNode*> sorted_stages);
-
-/// Infer the original resource path from stage summaries
-/// Returns the sequence of resources implied by the current stages
-llvm::FailureOr<llvm::SmallVector<ResourceType>> inferOriginalPath(
-    llvm::ArrayRef<StageSummary> summaries);
 
 /// Main planning entry point
 /// Analyzes the pipeline, compares with architecture graph, and if needed:

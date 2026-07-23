@@ -143,15 +143,6 @@ class PathExpansionMaterializer {
   bool tryAdaptWriteToFifoOp(mlir::ktdf::WriteToFifoOp write_op,
                              const TransferMaterializationInfo* transfer_info);
 
-  /// Helper to adapt stage body with new FIFO kinds (for kAdaptFifoKinds)
-  void adaptStageBodyFifoKinds(mlir::ktdf::StageOp orig_stage,
-                               const StageMaterializationInfo& info);
-
-  /// Helper to adapt transfer stage with new source/dest resources (for
-  /// kAdaptTransfer)
-  void adaptTransferStage(mlir::ktdf::StageOp orig_stage,
-                          const StageMaterializationInfo& info);
-
   /// Helper to synthesize a new transfer stage (for kSyntheticTransfer)
   void synthesizeTransferStage(const StageMaterializationInfo& info);
 
