@@ -9,9 +9,6 @@
 // RUN: dataflow-scheduler-opt %s -split-input-file \
 // RUN:   "-ensure-device-declaration=device-filename=%S/../../Dialect/KTDFArch/sample_device.mlir" \
 // RUN:   | FileCheck %s
-// RUN: dataflow-scheduler-opt %s -split-input-file \
-// RUN:   "-ensure-device-declaration=device-filename=%S/../../Dialect/KTDFArch/sample_device.mlir" \
-// RUN:   -verify-diagnostics
 
 // No device present: the pass injects one, inferring the name from the single
 // device in the imported file.

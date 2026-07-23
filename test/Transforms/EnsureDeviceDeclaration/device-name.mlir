@@ -2,10 +2,10 @@
 // `ktdf_arch.device` declaration.
 //
 // RUN: dataflow-scheduler-opt %s \
-// RUN:   "-ensure-device-declaration=device-filename=%S/../../Dialect/KTDFArch/sample_device.mlir device-name=sample_device" \
+// RUN:   "-ensure-device-declaration=device-filename=%S/Inputs/multiple-devices.mlir device-name=second" \
 // RUN:   | FileCheck %s
 
 // CHECK-LABEL: module
-// CHECK: ktdf_arch.device @sample_device import("{{.*}}sample_device.mlir")
+// CHECK: ktdf_arch.device @second import("{{.*}}multiple-devices.mlir")
 module {
 }
