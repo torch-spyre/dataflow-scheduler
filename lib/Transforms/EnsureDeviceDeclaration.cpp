@@ -18,7 +18,6 @@
 
 #include <filesystem>
 
-#include "Ktdp/KtdpDialect.hpp"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
