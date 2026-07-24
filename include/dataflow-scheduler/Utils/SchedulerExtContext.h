@@ -22,12 +22,6 @@
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/BuiltinOps.h>
 
-#include <cstdint>
-#include <set>
-#include <string>
-
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
-
 namespace scheduler {
 
 // Type alias for resource representation
