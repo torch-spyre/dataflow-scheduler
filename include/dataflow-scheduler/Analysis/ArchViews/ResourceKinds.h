@@ -35,9 +35,12 @@ class ResourceKinds : public mlir::ktdf_arch::DeviceView {
   explicit ResourceKinds(mlir::ktdf_arch::DeviceOp declaration,
                          mlir::AnalysisManager& analyses);
 
-  [[nodiscard]] auto getResource(mlir::Attribute kind) const
-      -> mlir::ktdf_arch::Resource {
-    return exemplars_.lookup(kind);
+  template <class ResourceType = mlir::ktdf_arch::Resource>
+  [[nodiscard]] auto getResource(mlir::Attribute kind) const -> ResourceType {
+    if (auto entry = exemplars_.lookup(kind); entry) {
+      return mlir::dyn_cast<ResourceType>(entry.getOperation());
+    }
+    return nullptr;
   }
 
   template <class PropertyAttr>

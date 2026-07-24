@@ -34,7 +34,7 @@
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Links.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
@@ -114,17 +114,17 @@ auto getHop(const arch_view::ResourceKinds& resource_kinds,
   if (!source_kind || !target_kind) {
     return llvm::failure();
   }
-  auto source = resource_kinds.getResource(source_kind);
-  auto target = resource_kinds.getResource(target_kind);
+  auto source = resource_kinds.getResource<mlir::ktdf_arch::Node>(source_kind);
+  auto target = resource_kinds.getResource<mlir::ktdf_arch::Node>(target_kind);
   if (!source || !target) {
     return llvm::failure();
   }
 
   // Find the load_store unit, if any.
-  mlir::ktdf_arch::Resource load_store;
+  mlir::ktdf_arch::Node load_store;
   if (auto stage = transfer->getParentOfType<mlir::ktdf::StageOp>(); stage) {
     if (const auto kind = getResourceKind(stage); kind) {
-      load_store = resource_kinds.getResource(kind);
+      load_store = resource_kinds.getResource<mlir::ktdf_arch::Node>(kind);
     }
   }
 

@@ -31,6 +31,7 @@
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Support/LogicalResult.h>
+#include <mlir/Support/LLVM.h>
 
 #include "Ktdp/KtdpAttrs.hpp"
 #include "Ktdp/KtdpOps.hpp"
@@ -39,7 +40,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Links.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Utils/CustomLinalgTiling.h"
@@ -649,8 +650,8 @@ void ConstructThreeStagePipelinePass::createPipeline(
   // Create ktdf.pipeline operation at the start of the loop body.
   mlir::OpBuilder builder(innermost_loop.getBodyRegion());
 
-  auto compute =
-      resource_kinds_->getResource(resource_kinds_->getComputeKind());
+  auto compute = resource_kinds_->getResource<mlir::ktdf_arch::Node>(
+      resource_kinds_->getComputeKind());
   auto incoming = mlir::ktdf_arch::getLink(
       mlir::ktdf_arch::LinkDirection::Incoming, compute);
   auto outgoing = mlir::ktdf_arch::getLink(
@@ -847,7 +848,8 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
     signalPassFailure();
     return;
   }
-  auto compute = resource_kinds_->getResource(compute_kind);
+  auto compute =
+      resource_kinds_->getResource<mlir::ktdf_arch::Node>(compute_kind);
   auto incoming = mlir::ktdf_arch::getLink(
       mlir::ktdf_arch::LinkDirection::Incoming, compute);
   auto outgoing = mlir::ktdf_arch::getLink(

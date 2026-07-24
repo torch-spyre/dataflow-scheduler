@@ -24,11 +24,9 @@
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/Block.h>
 
-#include <set>
-
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/Utils/Utils.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Links.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/Support/DebugLog.h"
@@ -39,12 +37,12 @@ using namespace scheduler;
 
 namespace {
 
-void getResourceAccesses(mlir::ktdf_arch::Resource resource,
-                         llvm::SmallDenseSet<mlir::Attribute>& read_kinds,
-                         llvm::SmallDenseSet<mlir::Attribute>& write_kinds) {
+void getNodeAccesses(mlir::ktdf_arch::Node node,
+                     llvm::SmallDenseSet<mlir::Attribute>& read_kinds,
+                     llvm::SmallDenseSet<mlir::Attribute>& write_kinds) {
   const auto visit = [](mlir::Value value,
                         llvm::SmallDenseSet<mlir::Attribute>& result) {
-    auto resource = mlir::ktdf_arch::getResource(value);
+    auto resource = mlir::ktdf_arch::getNode(value);
     if (!resource || !resource.getKind()) {
       return;
     }
@@ -57,7 +55,7 @@ void getResourceAccesses(mlir::ktdf_arch::Resource resource,
   };
 
   mlir::ktdf_arch::visitLinks(
-      resource,
+      node,
       [&](mlir::ktdf_arch::Link link,
           mlir::ktdf_arch::LinkDirection direction) -> bool {
         if (!mlir::ktdf_arch::isIncoming(direction)) {
@@ -70,7 +68,7 @@ void getResourceAccesses(mlir::ktdf_arch::Resource resource,
       });
 
   mlir::ktdf_arch::visitLinks(
-      resource,
+      node,
       [&](mlir::ktdf_arch::Link link,
           mlir::ktdf_arch::LinkDirection direction) -> bool {
         if (!mlir::ktdf_arch::isOutgoing(direction)) {
@@ -120,14 +118,15 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
             scheduler::getUnitResourceType(producer_unit_val);
         if (!producer_comp_opt.has_value()) continue;
         scheduler::ResourceType producer_comp = producer_comp_opt.value();
-        auto producer = resource_kinds.getResource(producer_comp);
+        auto producer =
+            resource_kinds.getResource<mlir::ktdf_arch::Node>(producer_comp);
         if (!producer) {
           return llvm::failure();
         }
 
         llvm::SmallDenseSet<mlir::Attribute> producer_writes;
         llvm::SmallDenseSet<mlir::Attribute> producer_reads_unused;
-        getResourceAccesses(producer, producer_reads_unused, producer_writes);
+        getNodeAccesses(producer, producer_reads_unused, producer_writes);
 
         for (auto consumer_unit_val : consumer_units) {
           auto consumer_comp_opt =
@@ -136,14 +135,15 @@ mlir::LogicalResult scheduler::computeScratchpadConflicts(
                  "Consumer unit should have a component");
 
           scheduler::ResourceType consumer_comp = consumer_comp_opt.value();
-          auto consumer = resource_kinds.getResource(consumer_comp);
+          auto consumer =
+              resource_kinds.getResource<mlir::ktdf_arch::Node>(consumer_comp);
           if (!consumer) {
             return llvm::failure();
           }
 
           llvm::SmallDenseSet<mlir::Attribute> consumer_reads;
           llvm::SmallDenseSet<mlir::Attribute> consumer_writes_unused;
-          getResourceAccesses(consumer, consumer_reads, consumer_writes_unused);
+          getNodeAccesses(consumer, consumer_reads, consumer_writes_unused);
 
           bool has_conflict = false;
           for (const auto& written : producer_writes) {
