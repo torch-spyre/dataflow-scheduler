@@ -56,7 +56,7 @@ void scheduler::buildKTDPToDFIRPipeline(
   // selection pass would now take parallel instances into account while
   // determining tile sizes.
   pm.addPass(createParallelizeLoopsAcrossInstancesPass(scheduler_ctx));
-  pm.addPass(mlir::ktdf::createTileSizeSelectionPass());
+  pm.addPass(mlir::ktdf::createTileSizeSelectionPass(scheduler_ctx));
   pm.addPass(mlir::createCanonicalizerPass());
   pm.addPass(createAffineMinCanonicalizationPass());
   pm.addPass(mlir::ktdf::createSubsumeLinearizeIndexPass());

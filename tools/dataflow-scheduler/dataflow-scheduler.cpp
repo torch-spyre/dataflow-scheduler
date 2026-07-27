@@ -20,6 +20,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <cstdlib>
+#include <memory>
 #include <mlir/IR/Dialect.h>
 #include <mlir/IR/MLIRContext.h>
 #include <mlir/Pass/Pass.h>
@@ -30,6 +32,9 @@
 #include "dataflow-scheduler/RegisterEverything.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 
+// Static storage for the scheduler context to ensure it outlives pass execution
+static std::unique_ptr<scheduler::SchedulerExtContext> g_scheduler_context;
+
 void registerPassPipelinesForScheduler() {
   static llvm::cl::opt<std::string> splitDFIROutputDir(
       "split-dfir-output-dir",
@@ -37,11 +42,33 @@ void registerPassPipelinesForScheduler() {
                      "-kEmitDFIR (default: same directory as input file)"),
       llvm::cl::init(""));
 
+  static llvm::cl::opt<std::string> anthropicApiKey(
+      "anthropic-api-key",
+      llvm::cl::desc("Anthropic API key for agent-driven tile size selection"),
+      llvm::cl::init(""));
+
   mlir::PassPipelineRegistration<>(
       "kEmitDFIR", "Emit DataflowIR", [&](mlir::OpPassManager& pm) {
-        scheduler::buildKTDPToDFIRPipeline(
-            pm, scheduler::SchedulerExtContext::dummyContext(),
-            splitDFIROutputDir);
+        // Try to get API key from environment or CLI flag
+        std::string api_key = anthropicApiKey;
+        if (api_key.empty()) {
+          const char* env_key = std::getenv("ANTHROPIC_API_KEY");
+          if (env_key) {
+            api_key = env_key;
+          }
+        }
+
+        if (!api_key.empty()) {
+          g_scheduler_context =
+              std::make_unique<scheduler::AgentDrivenSchedulerContext>(api_key);
+        } else {
+          g_scheduler_context = std::make_unique<scheduler::DummySchedulerExtContext>();
+          llvm::errs() << "Warning: No Anthropic API key provided. "
+                          "Set ANTHROPIC_API_KEY environment variable or use "
+                          "--anthropic-api-key flag.\n";
+        }
+
+        scheduler::buildKTDPToDFIRPipeline(pm, *g_scheduler_context, splitDFIROutputDir);
       });
 }
 
