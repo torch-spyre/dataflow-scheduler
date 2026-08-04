@@ -26,6 +26,7 @@
 #include <mlir/Pass/PassManager.h>
 
 #include "dataflow-scheduler-main.h"
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h"
 #include "dataflow-scheduler/Pipeline.h"
 #include "dataflow-scheduler/RegisterEverything.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
@@ -40,8 +41,8 @@ void registerPassPipelinesForScheduler() {
   mlir::PassPipelineRegistration<>(
       "kEmitDFIR", "Emit DataflowIR", [&](mlir::OpPassManager& pm) {
         scheduler::buildKTDPToDFIRPipeline(
-            pm, scheduler::SchedulerExtContext::dummyContext(),
-            splitDFIROutputDir);
+            pm, scheduler::SchedulerExtContext::dummyContext());
+        pm.addPass(scheduler::createSplitDFIROutputPass(splitDFIROutputDir));
       });
 }
 

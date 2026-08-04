@@ -1,6 +1,7 @@
 // Checks that the `kEmitDFIR` pipeline registered by dataflow-scheduler-opt
 // schedules every pass from `scheduler::buildKTDPToDFIRPipeline` (plus the
-// leading `ensure-device-declaration` pass), in order.
+// leading `ensure-device-declaration` pass and the trailing `emit-split-dfir`
+// pass, both added by the pipeline registration itself), in order.
 //
 // `--dump-pass-pipeline` prints the fully constructed pass manager, which lets
 // us assert the passes are invoked without running the full pipeline on real

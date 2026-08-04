@@ -29,6 +29,7 @@
 #include <mlir/Pass/PassRegistry.h>
 #include <mlir/Tools/mlir-opt/MlirOptMain.h>
 
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h"
 #include "dataflow-scheduler/Pipeline.h"
 #include "dataflow-scheduler/RegisterEverything.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
@@ -52,10 +53,10 @@ void registerPassPipelinesForScheduler() {
         scheduler::EnsureDeviceDeclarationPassOptions options;
         options.deviceFileName = schedulerDeviceFilename.getValue();
         pm.addPass(scheduler::createEnsureDeviceDeclarationPass(options));
-        
+
         scheduler::buildKTDPToDFIRPipeline(
-            pm, scheduler::SchedulerExtContext::dummyContext(),
-            splitDFIROutputDir);
+            pm, scheduler::SchedulerExtContext::dummyContext());
+        pm.addPass(scheduler::createSplitDFIROutputPass(splitDFIROutputDir));
       });
 }
 

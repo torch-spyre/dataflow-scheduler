@@ -23,8 +23,6 @@
 #ifndef DATAFLOW_SCHEDULER_PIPELINE_H_
 #define DATAFLOW_SCHEDULER_PIPELINE_H_
 
-#include <llvm/ADT/StringRef.h>
-
 namespace mlir {
 
 class OpPassManager;
@@ -36,10 +34,12 @@ namespace scheduler {
 struct SchedulerExtContext;
 
 /// Builds the KTDP to DFIR pipeline with the given pass manager.
+///
+/// Note: this does not emit the DFIR output. Callers that want the resulting
+/// DFIR written out should append `createSplitDFIROutputPass()` themselves.
 void buildKTDPToDFIRPipeline(
     mlir::OpPassManager& pm,
-    const scheduler::SchedulerExtContext& scheduler_ctx,
-    llvm::StringRef split_output_dir);
+    const scheduler::SchedulerExtContext& scheduler_ctx);
 
 }  // namespace scheduler
 

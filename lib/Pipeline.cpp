@@ -34,8 +34,7 @@
 using namespace scheduler;
 
 void scheduler::buildKTDPToDFIRPipeline(
-    mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx,
-    llvm::StringRef split_output_dir) {
+    mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
   pm.addPass(createKTIRLegalityCheckPass());
   pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
@@ -66,5 +65,4 @@ void scheduler::buildKTDPToDFIRPipeline(
   pm.addPass(createNormalizeGridTo1DPass());
   pm.addPass(createKTDFToKTDFLoweringPass(scheduler_ctx));
   pm.addPass(createKTDFLowToDFIRPass());
-  pm.addPass(createSplitDFIROutputPass(split_output_dir));
 }
