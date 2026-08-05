@@ -54,6 +54,18 @@ scheduler::getEnclosingProgramUnitResourceType(mlir::Operation* op) {
   return std::nullopt;
 }
 
+std::optional<int64_t> scheduler::getVectorLanes(
+    mlir::Type elem_type, arch_view::ResourceKinds& resource_kinds) {
+  const auto compute_kind = resource_kinds.getComputeKind();
+  if (!compute_kind) {
+    return std::nullopt;
+  }
+  return std::max(
+      resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(compute_kind)
+          .getLanes(elem_type),
+      int64_t(1));
+}
+
 mlir::VectorType scheduler::getFlattenedVectorType(
     mlir::Type type, arch_view::ResourceKinds& resource_kinds) {
   // FIXME: Get this info from somewhere else.
@@ -65,16 +77,12 @@ mlir::VectorType scheduler::getFlattenedVectorType(
     }
 
     auto elem_type = tensor_type.getElementType();
-    const auto compute_kind = resource_kinds.getComputeKind();
-    if (!compute_kind) {
+    const auto max_vector_length = getVectorLanes(elem_type, resource_kinds);
+    if (!max_vector_length) {
       return nullptr;
     }
-    const auto max_vector_length = std::max(
-        resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(compute_kind)
-            .getLanes(elem_type),
-        int64_t(1));
 
-    assert(total_elements <= max_vector_length &&
+    assert(total_elements <= *max_vector_length &&
            "Flattened tensor size exceeds maximum vector length");
 
     return mlir::VectorType::get({total_elements}, elem_type);

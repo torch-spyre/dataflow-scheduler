@@ -9,251 +9,256 @@
 
 
 
+
 // CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1, d2, d3) -> (d0 * 4096 + d1 * 4096 + d2 * 64 + d3)>
 // CHECK: #[[$ATTR_1:.+]] = affine_map<(d0, d1, d2, d3) -> (d0, d1, d2, d3)>
 // CHECK: #[[$ATTR_2:.+]] = affine_map<(d0) -> (0, 0, 0, 0)>
 // CHECK: #[[$ATTR_3:.+]] = affine_map<(d0) -> (d0)>
 // CHECK: #[[$ATTR_4:.+]] = affine_map<(d0, d1, d2, d3, d4) -> (d0 * 4096 + d1 * 4096 + d2 * 4096 + d3 * 64 + d4)>
 // CHECK: #[[$ATTR_5:.+]] = affine_map<(d0, d1, d2, d3, d4) -> (d0, d1, d2, d3, d4)>
-// CHECK: #[[$ATTR_6:.+]] = affine_map<(d0) -> (0, 0, 0, 0, 0)>
-// CHECK: #[[$ATTR_7:.+]] = affine_set<(d0, d1, d2, d3) : (d0 == 0, d1 == 0, d2 == 0, d3 >= 0, -d3 + 63 >= 0)>
-// CHECK: #[[$ATTR_8:.+]] = affine_set<(d0) : (d0 == 0)>
-// CHECK: #[[$ATTR_9:.+]] = affine_set<(d0, d1, d2, d3, d4) : (d0 >= 0, -d0 + 11 >= 0, d1 == 0, d2 == 0, d3 >= 0, -d3 + 63 >= 0, d4 >= 0, -d4 + 63 >= 0)>
-// CHECK:   module {
-// CHECK:     module {
-// CHECK:     func.func @test() attributes {grid = [2]} {
-// CHECK-NEXT:       call @"local-schedule-0"() : () -> ()
-// CHECK-NEXT:       return
-// CHECK-NEXT:     }
-// CHECK-NEXT:     func.func private @"local-schedule-0"()
-// CHECK-NEXT:   }
+// CHECK: #[[$ATTR_6:.+]] = affine_map<(d0, d1) -> (d0, 0, 0, d1, 0)>
+// CHECK: #[[$ATTR_7:.+]] = affine_map<(d0, d1) -> (d0, d1)>
+// CHECK: #[[$ATTR_8:.+]] = affine_set<(d0, d1, d2, d3) : (d0 == 0, d1 == 0, d2 == 0, d3 >= 0, -d3 + 63 >= 0)>
+// CHECK: #[[$ATTR_9:.+]] = affine_set<(d0) : (d0 == 0)>
+// CHECK: #[[$ATTR_10:.+]] = affine_set<(d0, d1, d2, d3, d4) : (d0 == 0, d1 == 0, d2 == 0, d3 == 0, d4 >= 0, -d4 + 63 >= 0)>
+// CHECK: #[[$ATTR_11:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 + 63 >= 0)>
+// CHECK:         module {
+// CHECK:           ktdf_arch.device @sample_device import("../../../../Dialect/KTDFArch/sample_device.mlir")
 
-// CHECK:     module {
-// CHECK:     func.func private @"local-schedule-0"() attributes {grid = [2]} {
-// CHECK-NEXT:       %[[CONSTANT_0:.*]] = arith.constant 196736 : index
-// CHECK-NEXT:       %[[CONSTANT_1:.*]] = arith.constant 128 : index
-// CHECK-NEXT:       %[[CONSTANT_2:.*]] = arith.constant 113216 : index
-// CHECK-NEXT:       %[[CONSTANT_3:.*]] = arith.constant 64000 : index
-// CHECK-NEXT:       %[[CONSTANT_4:.*]] = arith.constant 64 : index
-// CHECK-NEXT:       %[[CONSTANT_5:.*]] = arith.constant 12 : index
-// CHECK-NEXT:       %[[CONSTANT_6:.*]] = arith.constant 1 : index
-// CHECK-NEXT:       %[[CONSTANT_7:.*]] = arith.constant 0 : index
-// CHECK-NEXT:       %[[GET_UNIT_0:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_1:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_2:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-L1LU", type = "L1LU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_3:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-L1LU", type = "L1LU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_4:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-SFU", type = "SFU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_5:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-SFU", type = "SFU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_6:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-L1SU", type = "L1SU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_7:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-L1SU", type = "L1SU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_8:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-MNISU", type = "MNISU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_9:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-MNISU", type = "MNISU"} : index
-// CHECK-NEXT:       %[[GET_UNIT_10:.*]] = dataflow.get_unit {name = "ddr", type = "ddr"} : index
-// CHECK-NEXT:       %[[GET_UNIT_11:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-l1", type = "l1"} : index
-// CHECK-NEXT:       %[[GET_UNIT_12:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-l1", type = "l1"} : index
-// CHECK-NEXT:       dataflow.program_unit iter_arg : %[[VAL_0:.*]] -> (%[[GET_UNIT_0]], %[[GET_UNIT_1]]) : {
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_1:.*]] -> (%[[GET_UNIT_0]], %[[GET_UNIT_1]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_0:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_0]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_1]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_0:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_0]], key:%[[VAL_1]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_0:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_1:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_0]], %[[CONSTANT_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_2:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_3:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_0]]{{\[}}%[[VAL_2]], %[[CONSTANT_7]], %[[VAL_3]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_1]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_4:.*]]:vector<64xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_7]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_7]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_5:.*]] -> (%[[GET_UNIT_2]], %[[GET_UNIT_3]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_6:.*]] -> (%[[GET_UNIT_4]], %[[GET_UNIT_5]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_7:.*]] -> (%[[GET_UNIT_6]], %[[GET_UNIT_7]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_8:.*]] -> (%[[GET_UNIT_8]], %[[GET_UNIT_9]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_1:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_8]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_9]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_1:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_1]], key:%[[VAL_8]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_2:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_3:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_1]], %[[CONSTANT_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_9:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_10:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_3]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_2]]{{\[}}%[[VAL_9]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_10]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_11:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:       }
-// CHECK-NEXT:       dataflow.program_unit iter_arg : %[[VAL_12:.*]] -> (%[[GET_UNIT_2]], %[[GET_UNIT_3]]) : {
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_13:.*]] -> (%[[GET_UNIT_0]], %[[GET_UNIT_1]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_2:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_0]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_1]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_2:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_2]], key:%[[VAL_13]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_4:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_5:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_2]], %[[CONSTANT_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_14:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_15:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_4]]{{\[}}%[[VAL_14]], %[[CONSTANT_7]], %[[VAL_15]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_5]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_16:.*]]:vector<64xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_7]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_7]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_17:.*]] -> (%[[GET_UNIT_2]], %[[GET_UNIT_3]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_18:.*]] -> (%[[GET_UNIT_4]], %[[GET_UNIT_5]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_19:.*]] -> (%[[GET_UNIT_6]], %[[GET_UNIT_7]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_20:.*]] -> (%[[GET_UNIT_8]], %[[GET_UNIT_9]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_3:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_8]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_9]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_3:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_3]], key:%[[VAL_20]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_6:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_7:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_3]], %[[CONSTANT_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_21:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_22:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_7]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_6]]{{\[}}%[[VAL_21]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_22]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_23:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:       }
-// CHECK-NEXT:       dataflow.program_unit iter_arg : %[[VAL_24:.*]] -> (%[[GET_UNIT_4]], %[[GET_UNIT_5]]) : {
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_25:.*]] -> (%[[GET_UNIT_0]], %[[GET_UNIT_1]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_4:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_0]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_1]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_4:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_4]], key:%[[VAL_25]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_8:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_9:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_4]], %[[CONSTANT_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_26:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_27:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_8]]{{\[}}%[[VAL_26]], %[[CONSTANT_7]], %[[VAL_27]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_9]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_28:.*]]:vector<64xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_7]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_7]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_29:.*]] -> (%[[GET_UNIT_2]], %[[GET_UNIT_3]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_30:.*]] -> (%[[GET_UNIT_4]], %[[GET_UNIT_5]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_31:.*]] -> (%[[GET_UNIT_6]], %[[GET_UNIT_7]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_32:.*]] -> (%[[GET_UNIT_8]], %[[GET_UNIT_9]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_5:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_8]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_9]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_5:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_5]], key:%[[VAL_32]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_10:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_11:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_5]], %[[CONSTANT_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_33:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_34:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_11]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_10]]{{\[}}%[[VAL_33]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_34]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_35:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:       }
-// CHECK-NEXT:       dataflow.program_unit iter_arg : %[[VAL_36:.*]] -> (%[[GET_UNIT_6]], %[[GET_UNIT_7]]) : {
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_37:.*]] -> (%[[GET_UNIT_0]], %[[GET_UNIT_1]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_6:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_0]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_1]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_6:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_6]], key:%[[VAL_37]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_12:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_13:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_6]], %[[CONSTANT_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_38:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_39:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_12]]{{\[}}%[[VAL_38]], %[[CONSTANT_7]], %[[VAL_39]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_13]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_40:.*]]:vector<64xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_7]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_7]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_41:.*]] -> (%[[GET_UNIT_2]], %[[GET_UNIT_3]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_42:.*]] -> (%[[GET_UNIT_4]], %[[GET_UNIT_5]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_43:.*]] -> (%[[GET_UNIT_6]], %[[GET_UNIT_7]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_44:.*]] -> (%[[GET_UNIT_8]], %[[GET_UNIT_9]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_7:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_8]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_9]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_7:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_7]], key:%[[VAL_44]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_14:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_15:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_7]], %[[CONSTANT_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_45:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_46:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_15]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_14]]{{\[}}%[[VAL_45]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_46]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_47:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:       }
-// CHECK-NEXT:       dataflow.program_unit iter_arg : %[[VAL_48:.*]] -> (%[[GET_UNIT_8]], %[[GET_UNIT_9]]) : {
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_49:.*]] -> (%[[GET_UNIT_0]], %[[GET_UNIT_1]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_8:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_0]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_1]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_8:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_8]], key:%[[VAL_49]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_16:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_17:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_8]], %[[CONSTANT_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_50:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_51:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_16]]{{\[}}%[[VAL_50]], %[[CONSTANT_7]], %[[VAL_51]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_17]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_52:.*]]:vector<64xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_7]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_7]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_53:.*]] -> (%[[GET_UNIT_2]], %[[GET_UNIT_3]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_54:.*]] -> (%[[GET_UNIT_4]], %[[GET_UNIT_5]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_55:.*]] -> (%[[GET_UNIT_6]], %[[GET_UNIT_7]]) : {
-// CHECK-NEXT:         }
-// CHECK-NEXT:         dataflow.program_unit iter_arg : %[[VAL_56:.*]] -> (%[[GET_UNIT_8]], %[[GET_UNIT_9]]) : {
-// CHECK-NEXT:           %[[DEF_IMMUTABLE_MAPPING_9:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_8]] -> %[[GET_UNIT_11]]], {{\[}}%[[GET_UNIT_9]] -> %[[GET_UNIT_12]]]):index
-// CHECK-NEXT:           %[[QUERY_MAP_9:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_9]], key:%[[VAL_56]]) : index
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_18:.*]] = dataflow.get_logical_memory_view %[[GET_UNIT_10]], %[[CONSTANT_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           %[[GET_LOGICAL_MEMORY_VIEW_19:.*]] = dataflow.get_logical_memory_view %[[QUERY_MAP_9]], %[[CONSTANT_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:           scf.for %[[VAL_57:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_5]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:             scf.for %[[VAL_58:.*]] = %[[CONSTANT_7]] to %[[CONSTANT_4]] step %[[CONSTANT_6]] {
-// CHECK-NEXT:               agen.composite_load_and_store src:%[[GET_LOGICAL_MEMORY_VIEW_19]]{{\[}}%[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[CONSTANT_7]]] dst:%[[GET_LOGICAL_MEMORY_VIEW_18]]{{\[}}%[[VAL_57]], %[[CONSTANT_7]], %[[CONSTANT_7]], %[[VAL_58]], %[[CONSTANT_7]]]
-// CHECK-NEXT:                time_symbols(), load_iv(%[[VAL_59:.*]]:vector<49152xf16>)
-// CHECK-NEXT:                {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_9]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_9]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_8]]}
-// CHECK-NEXT:               {
-// CHECK-NEXT:                 agen.yield
-// CHECK-NEXT:               } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
-// CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
-// CHECK-NEXT:         }
-// CHECK-NEXT:       }
-// CHECK-NEXT:       return
-// CHECK-NEXT:     }
-// CHECK-NEXT:   }
+// CHECK:           module {
+// CHECK:             func.func @test() attributes {grid = [2]} {
+// CHECK:               call @"local-schedule-0"() : () -> ()
+// CHECK:               return
+// CHECK:             }
+// CHECK:             func.func private @"local-schedule-0"()
+// CHECK:           }
+
+// CHECK:           module {
+// CHECK:             func.func private @"local-schedule-0"() attributes {grid = [2]} {
+// CHECK:             %[[VAL_0:.*]] = arith.constant 196736 : index
+// CHECK:             %[[VAL_1:.*]] = arith.constant 128 : index
+// CHECK:             %[[VAL_2:.*]] = arith.constant 113216 : index
+// CHECK:             %[[VAL_3:.*]] = arith.constant 64000 : index
+// CHECK:             %[[VAL_4:.*]] = arith.constant 64 : index
+// CHECK:             %[[VAL_5:.*]] = arith.constant 12 : index
+// CHECK:             %[[VAL_6:.*]] = arith.constant 1 : index
+// CHECK:             %[[VAL_7:.*]] = arith.constant 0 : index
+// CHECK:             %[[VAL_8:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
+// CHECK:             %[[VAL_9:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
+// CHECK:             %[[VAL_10:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-L1LU", type = "L1LU"} : index
+// CHECK:             %[[VAL_11:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-L1LU", type = "L1LU"} : index
+// CHECK:             %[[VAL_12:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-SFU", type = "SFU"} : index
+// CHECK:             %[[VAL_13:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-SFU", type = "SFU"} : index
+// CHECK:             %[[VAL_14:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-L1SU", type = "L1SU"} : index
+// CHECK:             %[[VAL_15:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-L1SU", type = "L1SU"} : index
+// CHECK:             %[[VAL_16:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-MNISU", type = "MNISU"} : index
+// CHECK:             %[[VAL_17:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-MNISU", type = "MNISU"} : index
+// CHECK:             %[[VAL_18:.*]] = dataflow.get_unit {name = "ddr", type = "ddr"} : index
+// CHECK:             %[[VAL_19:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-l1", type = "l1"} : index
+// CHECK:             %[[VAL_20:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-l1", type = "l1"} : index
+// CHECK:             dataflow.program_unit iter_arg : %[[VAL_21:.*]] -> (%[[VAL_8]], %[[VAL_9]]) : {
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_22:.*]] -> (%[[VAL_8]], %[[VAL_9]]) : {
+// CHECK:                 %[[VAL_23:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_8]] -> %[[VAL_19]]], {{\[}}%[[VAL_9]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_24:.*]] = uniform.query_map(map:%[[VAL_23]], key:%[[VAL_22]]) : index
+// CHECK:                 %[[VAL_25:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 %[[VAL_26:.*]] = dataflow.get_logical_memory_view %[[VAL_24]], %[[VAL_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_27:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_28:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_25]]{{\[}}%[[VAL_27]], %[[VAL_7]], %[[VAL_28]], %[[VAL_7]]] dst:%[[VAL_26]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_29:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_8]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_8]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_9]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_30:.*]] -> (%[[VAL_10]], %[[VAL_11]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_31:.*]] -> (%[[VAL_12]], %[[VAL_13]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_32:.*]] -> (%[[VAL_14]], %[[VAL_15]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_33:.*]] -> (%[[VAL_16]], %[[VAL_17]]) : {
+// CHECK:                 %[[VAL_34:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_16]] -> %[[VAL_19]]], {{\[}}%[[VAL_17]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_35:.*]] = uniform.query_map(map:%[[VAL_34]], key:%[[VAL_33]]) : index
+// CHECK:                 %[[VAL_36:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 %[[VAL_37:.*]] = dataflow.get_logical_memory_view %[[VAL_35]], %[[VAL_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_38:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_39:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_37]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]] dst:%[[VAL_36]]{{\[}}%[[VAL_38]], %[[VAL_7]], %[[VAL_7]], %[[VAL_39]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_40:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_10]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_10]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_7]], time_set = #[[$ATTR_11]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:             }
+// CHECK:             dataflow.program_unit iter_arg : %[[VAL_41:.*]] -> (%[[VAL_10]], %[[VAL_11]]) : {
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_42:.*]] -> (%[[VAL_8]], %[[VAL_9]]) : {
+// CHECK:                 %[[VAL_43:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_8]] -> %[[VAL_19]]], {{\[}}%[[VAL_9]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_44:.*]] = uniform.query_map(map:%[[VAL_43]], key:%[[VAL_42]]) : index
+// CHECK:                 %[[VAL_45:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 %[[VAL_46:.*]] = dataflow.get_logical_memory_view %[[VAL_44]], %[[VAL_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_47:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_48:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_45]]{{\[}}%[[VAL_47]], %[[VAL_7]], %[[VAL_48]], %[[VAL_7]]] dst:%[[VAL_46]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_49:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_8]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_8]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_9]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_50:.*]] -> (%[[VAL_10]], %[[VAL_11]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_51:.*]] -> (%[[VAL_12]], %[[VAL_13]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_52:.*]] -> (%[[VAL_14]], %[[VAL_15]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_53:.*]] -> (%[[VAL_16]], %[[VAL_17]]) : {
+// CHECK:                 %[[VAL_54:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_16]] -> %[[VAL_19]]], {{\[}}%[[VAL_17]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_55:.*]] = uniform.query_map(map:%[[VAL_54]], key:%[[VAL_53]]) : index
+// CHECK:                 %[[VAL_56:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 %[[VAL_57:.*]] = dataflow.get_logical_memory_view %[[VAL_55]], %[[VAL_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_58:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_59:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_57]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]] dst:%[[VAL_56]]{{\[}}%[[VAL_58]], %[[VAL_7]], %[[VAL_7]], %[[VAL_59]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_60:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_10]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_10]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_7]], time_set = #[[$ATTR_11]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:             }
+// CHECK:             dataflow.program_unit iter_arg : %[[VAL_61:.*]] -> (%[[VAL_12]], %[[VAL_13]]) : {
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_62:.*]] -> (%[[VAL_8]], %[[VAL_9]]) : {
+// CHECK:                 %[[VAL_63:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_8]] -> %[[VAL_19]]], {{\[}}%[[VAL_9]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_64:.*]] = uniform.query_map(map:%[[VAL_63]], key:%[[VAL_62]]) : index
+// CHECK:                 %[[VAL_65:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 %[[VAL_66:.*]] = dataflow.get_logical_memory_view %[[VAL_64]], %[[VAL_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_67:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_68:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_65]]{{\[}}%[[VAL_67]], %[[VAL_7]], %[[VAL_68]], %[[VAL_7]]] dst:%[[VAL_66]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_69:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_8]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_8]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_9]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_70:.*]] -> (%[[VAL_10]], %[[VAL_11]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_71:.*]] -> (%[[VAL_12]], %[[VAL_13]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_72:.*]] -> (%[[VAL_14]], %[[VAL_15]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_73:.*]] -> (%[[VAL_16]], %[[VAL_17]]) : {
+// CHECK:                 %[[VAL_74:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_16]] -> %[[VAL_19]]], {{\[}}%[[VAL_17]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_75:.*]] = uniform.query_map(map:%[[VAL_74]], key:%[[VAL_73]]) : index
+// CHECK:                 %[[VAL_76:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 %[[VAL_77:.*]] = dataflow.get_logical_memory_view %[[VAL_75]], %[[VAL_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_78:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_79:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_77]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]] dst:%[[VAL_76]]{{\[}}%[[VAL_78]], %[[VAL_7]], %[[VAL_7]], %[[VAL_79]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_80:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_10]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_10]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_7]], time_set = #[[$ATTR_11]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:             }
+// CHECK:             dataflow.program_unit iter_arg : %[[VAL_81:.*]] -> (%[[VAL_14]], %[[VAL_15]]) : {
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_82:.*]] -> (%[[VAL_8]], %[[VAL_9]]) : {
+// CHECK:                 %[[VAL_83:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_8]] -> %[[VAL_19]]], {{\[}}%[[VAL_9]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_84:.*]] = uniform.query_map(map:%[[VAL_83]], key:%[[VAL_82]]) : index
+// CHECK:                 %[[VAL_85:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 %[[VAL_86:.*]] = dataflow.get_logical_memory_view %[[VAL_84]], %[[VAL_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_87:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_88:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_85]]{{\[}}%[[VAL_87]], %[[VAL_7]], %[[VAL_88]], %[[VAL_7]]] dst:%[[VAL_86]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_89:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_8]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_8]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_9]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_90:.*]] -> (%[[VAL_10]], %[[VAL_11]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_91:.*]] -> (%[[VAL_12]], %[[VAL_13]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_92:.*]] -> (%[[VAL_14]], %[[VAL_15]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_93:.*]] -> (%[[VAL_16]], %[[VAL_17]]) : {
+// CHECK:                 %[[VAL_94:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_16]] -> %[[VAL_19]]], {{\[}}%[[VAL_17]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_95:.*]] = uniform.query_map(map:%[[VAL_94]], key:%[[VAL_93]]) : index
+// CHECK:                 %[[VAL_96:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 %[[VAL_97:.*]] = dataflow.get_logical_memory_view %[[VAL_95]], %[[VAL_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_98:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_99:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_97]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]] dst:%[[VAL_96]]{{\[}}%[[VAL_98]], %[[VAL_7]], %[[VAL_7]], %[[VAL_99]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_100:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_10]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_10]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_7]], time_set = #[[$ATTR_11]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:             }
+// CHECK:             dataflow.program_unit iter_arg : %[[VAL_101:.*]] -> (%[[VAL_16]], %[[VAL_17]]) : {
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_102:.*]] -> (%[[VAL_8]], %[[VAL_9]]) : {
+// CHECK:                 %[[VAL_103:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_8]] -> %[[VAL_19]]], {{\[}}%[[VAL_9]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_104:.*]] = uniform.query_map(map:%[[VAL_103]], key:%[[VAL_102]]) : index
+// CHECK:                 %[[VAL_105:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_3]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 %[[VAL_106:.*]] = dataflow.get_logical_memory_view %[[VAL_104]], %[[VAL_1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_107:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_108:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_105]]{{\[}}%[[VAL_107]], %[[VAL_7]], %[[VAL_108]], %[[VAL_7]]] dst:%[[VAL_106]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_109:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_8]], load_time_addr_map = #[[$ATTR_2]], store_order = #[[$ATTR_1]], store_set = #[[$ATTR_8]], store_time_addr_map = #[[$ATTR_2]], time_order = #[[$ATTR_3]], time_set = #[[$ATTR_9]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x64x64xf16>, memref<12x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_110:.*]] -> (%[[VAL_10]], %[[VAL_11]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_111:.*]] -> (%[[VAL_12]], %[[VAL_13]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_112:.*]] -> (%[[VAL_14]], %[[VAL_15]]) : {
+// CHECK:               }
+// CHECK:               dataflow.program_unit iter_arg : %[[VAL_113:.*]] -> (%[[VAL_16]], %[[VAL_17]]) : {
+// CHECK:                 %[[VAL_114:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_16]] -> %[[VAL_19]]], {{\[}}%[[VAL_17]] -> %[[VAL_20]]]):index
+// CHECK:                 %[[VAL_115:.*]] = uniform.query_map(map:%[[VAL_114]], key:%[[VAL_113]]) : index
+// CHECK:                 %[[VAL_116:.*]] = dataflow.get_logical_memory_view %[[VAL_18]], %[[VAL_2]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 %[[VAL_117:.*]] = dataflow.get_logical_memory_view %[[VAL_115]], %[[VAL_0]] {layout_map = #[[$ATTR_4]]} : index, index, memref<12x1x1x64x64xf16>
+// CHECK:                 scf.for %[[VAL_118:.*]] = %[[VAL_7]] to %[[VAL_5]] step %[[VAL_6]] {
+// CHECK:                   scf.for %[[VAL_119:.*]] = %[[VAL_7]] to %[[VAL_4]] step %[[VAL_6]] {
+// CHECK:                     agen.composite_load_and_store src:%[[VAL_117]]{{\[}}%[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]], %[[VAL_7]]] dst:%[[VAL_116]]{{\[}}%[[VAL_118]], %[[VAL_7]], %[[VAL_7]], %[[VAL_119]], %[[VAL_7]]]
+// CHECK:                      time_symbols(), load_iv(%[[VAL_120:.*]]:vector<64xf16>)
+// CHECK:                      {load_order = #[[$ATTR_5]], load_set = #[[$ATTR_10]], load_time_addr_map = #[[$ATTR_6]], store_order = #[[$ATTR_5]], store_set = #[[$ATTR_10]], store_time_addr_map = #[[$ATTR_6]], time_order = #[[$ATTR_7]], time_set = #[[$ATTR_11]]}
+// CHECK:                     {
+// CHECK:                       agen.yield
+// CHECK:                     } : memref<12x1x1x64x64xf16>, memref<12x1x1x64x64xf16>
+// CHECK:                   } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:                 } {loop_type = #ktdf.loop_type<parallel_loop>}
+// CHECK:               }
+// CHECK:             }
+// CHECK:             return
+// CHECK:           }
+// CHECK:         }
 
 
 

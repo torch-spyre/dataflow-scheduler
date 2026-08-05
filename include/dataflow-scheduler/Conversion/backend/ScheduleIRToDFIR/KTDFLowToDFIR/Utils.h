@@ -56,6 +56,11 @@ std::optional<scheduler::ResourceType> getEnclosingProgramUnitResourceType(
 mlir::VectorType getFlattenedVectorType(
     mlir::Type type, arch_view::ResourceKinds& resource_kinds);
 
+/// Number of vector lanes the compute resource provides for `elem_type`.
+/// std::nullopt when the architecture declares no compute resource kind.
+std::optional<int64_t> getVectorLanes(mlir::Type elem_type,
+                                      arch_view::ResourceKinds& resource_kinds);
+
 /// Match units by core ID between program_unit operands and target units,
 /// create a def_immutable_mapping + query_map, and return the query result.
 mlir::Value createQueryMapForComponent(
