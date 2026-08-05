@@ -378,8 +378,7 @@ void prunePrivateSlots(mlir::ktdf::PrivateOp private_op,
   // for later erase. Process slots in descending order so indices stay valid.
   mlir::ktdf::PrivateYieldOp yield_op = private_op.getYieldOp();
   llvm::SmallVector<mlir::memref::AllocOp> orphaned_allocs;
-  for (unsigned slot : llvm::reverse(llvm::SmallVector<unsigned>(
-           slots_to_drop_sorted.begin(), slots_to_drop_sorted.end()))) {
+  for (unsigned slot : llvm::reverse(slots_to_drop_sorted)) {
     mlir::Value yield_operand = yield_op.getOperands()[slot];
     if (auto alloc = yield_operand.getDefiningOp<mlir::memref::AllocOp>()) {
       orphaned_allocs.push_back(alloc);
