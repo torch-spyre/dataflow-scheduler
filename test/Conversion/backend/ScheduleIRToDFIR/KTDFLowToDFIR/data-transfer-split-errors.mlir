@@ -4,7 +4,7 @@
 // that walk their non-unit outer dims (plus a split innermost dim, if needed)
 // as AGEN time dimensions, but only when the shape allows an exact split.
 // Anything else is rejected rather than silently mis-lowered.
-// The hardware vector width here is 64 f16 lanes (sample_device).
+// The vector width here is 64 lanes.
 
 // Splitting requires the innermost source/destination size to be a multiple of
 // the vector width; a 96-lane innermost dim is not a multiple of 64 and cannot
