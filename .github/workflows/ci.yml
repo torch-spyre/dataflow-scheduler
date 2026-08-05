@@ -25,6 +25,11 @@ jobs:
         config:
           - { name: "Clang 21", cc: "clang-21", cxx: "clang++-21" }
           - { name: "GCC 13",   cc: "gcc-13",   cxx: "g++-13" }
+          # The same build and the same tests, instrumented. Python bindings are
+          # off: an instrumented extension module cannot be loaded by a python
+          # that does not have the sanitizer runtime in front of it.
+          - { name: "Clang 21 ASan", cc: "clang-21", cxx: "clang++-21",
+              sanitize: "address", python_bindings: "OFF" }
 
     steps:
       - uses: actions/checkout@v4
@@ -92,18 +97,48 @@ jobs:
 
       - name: Configure
         run: |
+          SANITIZE="${{ matrix.config.sanitize }}"
+          PYTHON_BINDINGS="${{ matrix.config.python_bindings || 'ON' }}"
+
+          # -fno-omit-frame-pointer so a report names the frames it came from
+          # rather than whatever the optimiser left behind.
+          SAN_FLAGS=""
+          if [ -n "$SANITIZE" ]; then
+            SAN_FLAGS="-fsanitize=$SANITIZE -fno-omit-frame-pointer"
+          fi
+
           cmake -S . -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DLLVM_ENABLE_ASSERTIONS=ON \
             -DCMAKE_C_COMPILER=${{ matrix.config.cc }} \
             -DCMAKE_CXX_COMPILER=${{ matrix.config.cxx }} \
+            -DCMAKE_C_FLAGS="$SAN_FLAGS" \
+            -DCMAKE_CXX_FLAGS="$SAN_FLAGS" \
+            -DCMAKE_EXE_LINKER_FLAGS="$SAN_FLAGS" \
+            -DCMAKE_SHARED_LINKER_FLAGS="$SAN_FLAGS" \
             -DMLIR_DIR=${{ env.MLIR_DIR }} \
             -DCLANG_FORMAT=${{ env.CLANG_FORMAT }} \
             -DLLVM_EXTERNAL_LIT=$(which lit) \
-            -DDataflowScheduler_ENABLE_PYTHON_BINDINGS=ON
+            -DDataflowScheduler_ENABLE_PYTHON_BINDINGS=$PYTHON_BINDINGS
 
       - name: Build
         run: cmake --build build
 
       - name: Test
+        env:
+          # MLIR comes in prebuilt and uninstrumented, which costs two options.
+          #
+          # detect_leaks: its tools leak by design, so leak checking here would
+          # report other people's allocations.
+          #
+          # allow_user_poisoning: LLVM_ADDRESS_SANITIZER_BUILD is decided per
+          # translation unit, so BumpPtrAllocator poisons its slabs in our
+          # instrumented code and never unpoisons them in MLIR's, and reading an
+          # object MLIR placed in such a slab is reported as a use-after-poison
+          # that nothing did wrong. Turning off the __asan_poison_memory_region
+          # API removes those; stack poisoning is a separate interface, so
+          # use-after-scope -- the bug this job was added for -- is still caught.
+          #
+          # Both go away if the artifact is ever built instrumented.
+          ASAN_OPTIONS: detect_leaks=0:allow_user_poisoning=0
         run: cmake --build build --target check-dataflow-scheduler check-dataflow-scheduler-format
