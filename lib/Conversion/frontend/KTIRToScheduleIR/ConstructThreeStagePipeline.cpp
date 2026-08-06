@@ -1244,12 +1244,13 @@ void ConstructThreeStagePipelinePass::replaceAccessTilesWithReinterpretCast(
     llvm::ArrayRef<int64_t> tile_shape = access_tile_type.getShape();
     llvm::SmallVector<int64_t> tile_dims(tile_shape.begin(), tile_shape.end());
 
-    // Get strides from memory view type
+    // Get strides from construct memory view
     llvm::SmallVector<int64_t> strides;
-    if (auto strided_layout = mlir::dyn_cast<mlir::StridedLayoutAttr>(
-            memory_view_type.getLayout())) {
-      strides.assign(strided_layout.getStrides().begin(),
-                     strided_layout.getStrides().end());
+    if (auto construct_mem_view_op =
+            mlir::cast<mlir::ktdp::ConstructMemoryViewOp>(
+                memory_view.getDefiningOp())) {
+      strides.assign(construct_mem_view_op.getStaticStrides().begin(),
+                     construct_mem_view_op.getStaticStrides().end());
     } else {
       // Default strides for row-major layout
       int64_t stride = 1;
