@@ -185,9 +185,8 @@ void processRegion(mlir::Region& region, DeviceInitContext& ctx) {
 
 }  // namespace
 
-RoutingGraph::RoutingGraph(mlir::ktdf_arch::DeviceOp declaration,
-                           mlir::AnalysisManager& analyses)
-    : DeviceView(declaration, analyses) {
+RoutingGraph::RoutingGraph(const mlir::ktdf_arch::Device& device)
+    : DeviceView(device) {
   initialize();
 }
 

@@ -280,8 +280,8 @@ LogicalResult StageCoarseningPass::applyTransformation(
         "devices");
   }
 
-  auto& memory_tree = getChildAnalysis<scheduler::arch_view::MemoryTree>(
-      device->getDeclaration());
+  auto& memory_tree =
+      device_manager.getOrCreateView<scheduler::arch_view::MemoryTree>(*device);
 
   // Build pipeline tree once - it will be manipulated throughout the
   // transformation

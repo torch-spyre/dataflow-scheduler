@@ -48,18 +48,10 @@ auto getComputeKind(const ResourceKinds& resource_kinds) -> mlir::Attribute {
 
 }  // namespace
 
-ResourceKinds::ResourceKinds(mlir::ktdf_arch::DeviceOp declaration,
-                             mlir::AnalysisManager& analyses)
-    : DeviceView(declaration, analyses) {
-  auto& device =
-      analyses
-          .getAnalysis<mlir::ktdf_arch::Device, mlir::ktdf_arch::DeviceOp>();
-  if (!device) {
-    return;
-  }
-
+ResourceKinds::ResourceKinds(const mlir::ktdf_arch::Device& device)
+    : DeviceView(device) {
   // Visit all Resources in the device.
-  device.getDefinition().walk(
+  device.getBodyRegion().walk(
       [&](mlir::ktdf_arch::Resource resource) -> mlir::WalkResult {
         // Store this exemplar for its kind.
         auto [_, inserted] = exemplars_.insert({resource.getKind(), resource});

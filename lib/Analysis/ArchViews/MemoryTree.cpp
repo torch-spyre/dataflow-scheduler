@@ -29,9 +29,8 @@
 using namespace scheduler;
 using namespace scheduler::arch_view;
 
-MemoryTree::MemoryTree(mlir::ktdf_arch::DeviceOp declaration,
-                       mlir::AnalysisManager& analyses)
-    : DeviceView(declaration, analyses) {
+MemoryTree::MemoryTree(const mlir::ktdf_arch::Device& device)
+    : DeviceView(device) {
   initialize();
 }
 

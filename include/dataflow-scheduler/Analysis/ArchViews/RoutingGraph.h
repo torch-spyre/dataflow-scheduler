@@ -78,9 +78,8 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
   using NeighborList = llvm::SmallVector<NodeId>;
   using EdgeList = llvm::SmallVector<EdgeInfo>;
 
-  /// Construct a RoutingGraph as an MLIR analysis child of @p declaration .
-  explicit RoutingGraph(mlir::ktdf_arch::DeviceOp declaration,
-                        mlir::AnalysisManager& analyses);
+  /// Construct a RoutingGraph for @p device .
+  explicit RoutingGraph(const mlir::ktdf_arch::Device& device);
 
   NodeId addNode(ResourceType resource, ResourceNode::ResourceKind kind);
   void addEdge(NodeId source, NodeId target, unsigned cost = 1);

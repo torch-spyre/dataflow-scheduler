@@ -96,10 +96,10 @@ struct KTDFLowToDFIRPass
       signalPassFailure();
       return;
     }
-    auto declaration = device->getDeclaration();
-    auto& memory_tree = getChildAnalysis<arch_view::MemoryTree>(declaration);
+    auto& memory_tree =
+        device_manager.getOrCreateView<arch_view::MemoryTree>(*device);
     auto& resource_kinds =
-        getChildAnalysis<arch_view::ResourceKinds>(declaration);
+        device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
 
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
     module_op.walk([&](mlir::func::FuncOp func) { funcs.push_back(func); });

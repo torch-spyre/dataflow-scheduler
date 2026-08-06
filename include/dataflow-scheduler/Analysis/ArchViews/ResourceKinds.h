@@ -32,8 +32,7 @@ class ResourceKinds : public mlir::ktdf_arch::DeviceView {
   using map_type = llvm::DenseMap<mlir::Attribute, mlir::ktdf_arch::Resource>;
 
  public:
-  explicit ResourceKinds(mlir::ktdf_arch::DeviceOp declaration,
-                         mlir::AnalysisManager& analyses);
+  explicit ResourceKinds(const mlir::ktdf_arch::Device& device);
 
   template <class ResourceType = mlir::ktdf_arch::Resource>
   [[nodiscard]] auto getResource(mlir::Attribute kind) const -> ResourceType {

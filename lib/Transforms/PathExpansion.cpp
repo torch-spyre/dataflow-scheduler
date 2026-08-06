@@ -94,7 +94,7 @@ void PathExpansionPass::runOnOperation() {
     return;
   }
   auto& routing_graph =
-      getChildAnalysis<arch_view::RoutingGraph>(device->getDeclaration());
+      device_manager.getOrCreateView<arch_view::RoutingGraph>(*device);
 
   LLVM_DEBUG({
     llvm::dbgs() << "Routing Graph:\n";

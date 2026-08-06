@@ -1424,7 +1424,7 @@ void ConstructThreeStagePipelinePass::runOnOperation() {
     return;
   }
   resource_kinds_ =
-      &getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
+      &device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
 
   auto compute_kind = resource_kinds_->getComputeKind();
   if (!compute_kind) {

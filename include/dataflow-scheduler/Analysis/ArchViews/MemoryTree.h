@@ -60,9 +60,8 @@ class MemoryTree : public mlir::ktdf_arch::DeviceView {
     std::optional<size_t> reserved_in_bytes;
   };
 
-  /// Construct a MemoryTree as an MLIR analysis child of @p declaration .
-  explicit MemoryTree(mlir::ktdf_arch::DeviceOp declaration,
-                      mlir::AnalysisManager& analyses);
+  /// Construct a MemoryTree for @p device .
+  explicit MemoryTree(const mlir::ktdf_arch::Device& device);
 
   /// Get a memory node by its ID
   std::optional<MemoryNode> getNode(NodeId node_id) const;

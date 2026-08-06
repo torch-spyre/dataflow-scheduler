@@ -85,7 +85,7 @@ struct KTDFToKTDFLoweringPass
       return;
     }
     auto& resource_kinds =
-        getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
+        device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
 
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
     module_op.walk([&](mlir::func::FuncOp func) {

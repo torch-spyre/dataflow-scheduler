@@ -39,8 +39,7 @@ MemoryTrackerAnalysis::MemoryTrackerAnalysis(mlir::Operation* /*op*/,
               "This could happen if the device spec file is empty or contains "
               "multiple devices");
         }
-        return am.getChildAnalysis<arch_view::MemoryTree>(
-            device->getDeclaration());
+        return device_manager.getOrCreateView<arch_view::MemoryTree>(*device);
       }()),
       tracker_(memory_tree_) {
   LLVM_DEBUG({

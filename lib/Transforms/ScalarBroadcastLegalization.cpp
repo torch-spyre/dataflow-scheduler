@@ -478,7 +478,7 @@ struct ScalarBroadcastLegalizationPass
       return;
     }
     auto& resource_kinds =
-        getChildAnalysis<arch_view::ResourceKinds>(device->getDeclaration());
+        device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
 
     const auto walk_result =
         module_op.walk([&](mlir::ktdf::PipelineOp pipeline) {

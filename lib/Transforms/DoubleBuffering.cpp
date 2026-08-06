@@ -526,7 +526,7 @@ struct DoubleBufferingPass
       return;
     }
     auto& memory_tree =
-        getChildAnalysis<arch_view::MemoryTree>(device->getDeclaration());
+        device_manager.getOrCreateView<arch_view::MemoryTree>(*device);
 
     mlir::DominanceInfo dom(module_op);
 
