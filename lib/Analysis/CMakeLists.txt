@@ -6,6 +6,7 @@ add_dataflow_scheduler_library(DataflowSchedulerAnalysis
     MemoryTrackerAnalysis.cpp
     OperationTree.cpp
     PipelineTree.cpp
+    SliceAnalysis.cpp
     Utils.cpp
     WriteSetScan.cpp
 
