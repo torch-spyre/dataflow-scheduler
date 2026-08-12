@@ -115,6 +115,30 @@ mlir::Value emitVectorLoad(mlir::OpBuilder& builder, mlir::Location loc,
 void emitVectorStore(mlir::OpBuilder& builder, mlir::Location loc,
                      mlir::Value value, mlir::Value memref);
 
+/// Resolves a buffer addressed through a local unit to a logical memory view.
+///
+/// Address assignment encodes an allocated buffer as
+/// `unrealized_conversion_cast %offset : index to memref<..., space>`.  For
+/// memory that load/store units move data through, LogicalMemoryViewBuilder has
+/// already replaced that cast with a unit-selected view, so `target` is a plain
+/// memref by the time it reaches an operation lowering.  A cast that still
+/// survives, with a memory space on its result, denotes memory reached through
+/// dataflow.get_local_unit instead: there is no unit to select, because the
+/// execution unit running the op is itself the handle.  Materialize the view
+/// from that handle plus the offset the cast carries, placing it right after
+/// the cast so that it dominates every use of the buffer, and reuse that view
+/// for the buffer's other consumers.
+///
+/// Which memory spaces those are is decided elsewhere, positionally, by
+/// MemoryTree::isBelowScratchPad -- this function only acts on what survives.
+///
+/// `target` is left unchanged for every other kind of buffer.  `builder`'s
+/// insertion point is preserved, and `target` is updated in place when a view
+/// is built.
+mlir::LogicalResult resolveLocalUnitBuffer(mlir::Operation* op,
+                                           mlir::Value& target,
+                                           mlir::OpBuilder& builder);
+
 /// Determine the data transfer type based on source and destination types.
 /// @param src_is_fifo True if source is a FIFO slot, false if memref
 /// @param dst_is_fifo True if destination is a FIFO slot, false if memref

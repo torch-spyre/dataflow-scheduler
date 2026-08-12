@@ -177,6 +177,11 @@ struct LowerLinalgGenericPattern
     auto acc_vec_type =
         getFlattenedVectorType(out_memref_type, resource_kinds_);
     if (!acc_vec_type) return mlir::failure();
+    // An address-assigned accumulator in local-unit memory arrives
+    // still wearing its memory space; resolve it against the owning unit.
+    if (mlir::failed(scheduler::resolveLocalUnitBuffer(generic_op, out_memref,
+                                                       rewriter)))
+      return mlir::failure();
     rewriter.setInsertionPoint(generic_op);
     body.getArguments().back().replaceAllUsesWith(
         scheduler::emitVectorLoad(rewriter, loc, acc_vec_type, out_memref));
@@ -495,6 +500,17 @@ struct LowerLinalgFillPattern
       return fill_op.emitError(
           "linalg.fill constant value must be integer or float");
     }
+
+    // Step 0 (memref only): a local-unit buffer arrives here still
+    // wearing its memory space, because no logical memory view was built for
+    // it. Resolve it against the running execution unit at its assigned offset.
+    // The vector type above was already derived from the original operand, and
+    // the tensor path never reaches the store, so rewriting it in place is
+    // safe.
+    if (fill_op.getResultTensors().empty() &&
+        mlir::failed(
+            scheduler::resolveLocalUnitBuffer(fill_op, out_operand, rewriter)))
+      return mlir::failure();
 
     // Step 1: vectorchain.constant_bitstream {value = [0x0]} : vector<1xT>
     mlir::VectorType seed_type = mlir::VectorType::get({1}, elem_type);

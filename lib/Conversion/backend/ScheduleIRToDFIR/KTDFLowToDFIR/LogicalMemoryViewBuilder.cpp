@@ -65,7 +65,15 @@ bool onlyDeallocUses(mlir::Value val) {
 /// casts.
 /// - Prune Source B casts whose only uses are memref.dealloc (delete cast +
 /// deallocs). Returns the set of needed memory space attributes.
-llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
+///
+/// Compute-unit-local spaces (memory-tree depth >= 2) are deliberately not
+/// collected: they get no logical memory view, because the execution unit that
+/// owns them resolves its own handle via dataflow.get_local_unit. Their cast
+/// survives into the operation lowerings, which read the assigned offset from
+/// it.
+llvm::SetVector<ResourceType> discoverAndPrune(
+    mlir::func::FuncOp func,
+    const scheduler::arch_view::MemoryTree& memory_tree) {
   llvm::SetVector<ResourceType> needed;
 
   func.walk([&](mlir::dataflow::ProgramUnitOp pu) {
@@ -96,7 +104,7 @@ llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
 
         if (onlyDeallocUses(ucc.getOutputs()[0])) {
           to_prune.push_back(op);
-        } else {
+        } else if (!memory_tree.isBelowScratchPad(*ms)) {
           needed.insert(*ms);
         }
       }
@@ -118,9 +126,9 @@ llvm::SetVector<ResourceType> discoverAndPrune(mlir::func::FuncOp func) {
 }
 
 /// Phase 3a: resolve from_unit for each needed memory space inside a
-/// program_unit. Global spaces (DDR) and below-scratchpad spaces (register
-/// files) are looked up directly from memory_unit_ssa at key -1. Per-core
-/// spaces (L1) get a uniform map + query emitted inside the body.
+/// program_unit. Global spaces (DDR) are looked up directly from
+/// memory_unit_ssa. Per-core spaces (L1) get a uniform map + query emitted
+/// inside the body.
 mlir::LogicalResult buildResolvedUnits(
     mlir::dataflow::ProgramUnitOp pu,
     const llvm::SetVector<ResourceType>& needed_spaces,
@@ -131,13 +139,16 @@ mlir::LogicalResult buildResolvedUnits(
     mlir::OpBuilder& builder) {
   llvm::SetVector<ResourceType> per_core;
   for (auto ms : needed_spaces) {
-    if (memory_tree.isGlobalMemory(ms) || memory_tree.isBelowScratchPad(ms)) {
+    if (memory_tree.isGlobalMemory(ms)) {
       auto it = memory_unit_ssa.find({ms, -1});
       if (it == memory_unit_ssa.end())
         return pu.emitError("global memory unit SSA not found");
       resolved_units[ms] = it->second;
     } else if (memory_tree.isPerCoreScratchPadMemory(ms)) {
       per_core.insert(ms);
+    } else if (memory_tree.isBelowScratchPad(ms)) {
+      // Local-unit memory: no unit to resolve. The running execution unit
+      // is its own handle (dataflow.get_local_unit), so no view is built here.
     }
   }
 
@@ -299,9 +310,14 @@ mlir::LogicalResult replaceSourceAChains(
 
 /// Phase 3c: replace Source B unrealized_conversion_casts with
 /// get_logical_memory_view. Dealloc-only casts were pruned in Phase 1.
+///
+/// Casts into local-unit memory are left in place: no view is built for
+/// them and they are not pruned, since the operation lowerings recover the
+/// assigned offset from the cast operand.
 mlir::LogicalResult replaceSourceBCasts(
     mlir::dataflow::ProgramUnitOp pu,
     const llvm::DenseMap<ResourceType, mlir::Value>& resolved_units,
+    const scheduler::arch_view::MemoryTree& memory_tree,
     llvm::DenseMap<mlir::Value, mlir::Value>& replacements,
     mlir::OpBuilder& builder) {
   auto* ctx = pu.getContext();
@@ -312,7 +328,11 @@ mlir::LogicalResult replaceSourceBCasts(
         !mlir::isa<mlir::IndexType>(ucc.getInputs()[0].getType()))
       return;
     if (ucc.getOutputs().size() != 1) return;
-    if (!getMemorySpaceAttr(ucc.getOutputs()[0].getType())) return;
+    auto ms = getMemorySpaceAttr(ucc.getOutputs()[0].getType());
+    if (!ms) return;
+    // Compute-unit-local memory gets no view; leave the cast untouched so the
+    // operation lowerings can read the assigned offset off it.
+    if (memory_tree.isBelowScratchPad(*ms)) return;
     casts.push_back(ucc);
   });
 
@@ -388,8 +408,7 @@ mlir::LogicalResult replaceSourceBCasts(
 /// propagate plain-memref types through select_memref and data_transfer.
 mlir::LogicalResult propagateTypes(
     mlir::dataflow::ProgramUnitOp pu,
-    const llvm::DenseMap<mlir::Value, mlir::Value>& replacements,
-    const scheduler::arch_view::MemoryTree& memory_tree) {
+    const llvm::DenseMap<mlir::Value, mlir::Value>& replacements) {
   for (auto& [old_val, new_val] : replacements) {
     llvm::SmallVector<mlir::Operation*> users(old_val.getUsers().begin(),
                                               old_val.getUsers().end());
@@ -409,17 +428,9 @@ mlir::LogicalResult propagateTypes(
                 "data_transfer");
         }
       } else {
-        // Sub-scratchpad spaces (e.g. SFU_REG) are register-file buffers
-        // consumed directly by compute ops (linalg.*, write_to_fifo, …).
-        // Any consumer is valid; just swap the operand.
-        auto ms = getMemorySpaceAttr(old_val.getType());
-        if (ms && memory_tree.isBelowScratchPad(*ms)) {
-          user->replaceUsesOfWith(old_val, new_val);
-        } else {
-          return pu.emitError(
-              "unexpected consumer of memory view; expected "
-              "data_transfer or select_memref");
-        }
+        return pu.emitError(
+            "unexpected consumer of memory view; expected "
+            "data_transfer or select_memref");
       }
     }
   }
@@ -435,7 +446,7 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
   LDBG(1) << "buildLogicalMemoryViews on " << func.getName();
 
   // Phase 1: discover needed memory spaces and prune dealloc-only casts.
-  auto needed_spaces = discoverAndPrune(func);
+  auto needed_spaces = discoverAndPrune(func, memory_tree);
   if (needed_spaces.empty()) {
     LDBG(1) << "  No memory spaces found; skipping";
     return mlir::success();
@@ -492,13 +503,12 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
       return mlir::failure();
 
     // Phase 3c: Source B casts.
-    if (mlir::failed(
-            replaceSourceBCasts(pu, resolved_units, replacements, builder)))
+    if (mlir::failed(replaceSourceBCasts(pu, resolved_units, memory_tree,
+                                         replacements, builder)))
       return mlir::failure();
 
     // Phase 3d: RAUW + type propagation.
-    if (mlir::failed(propagateTypes(pu, replacements, memory_tree)))
-      return mlir::failure();
+    if (mlir::failed(propagateTypes(pu, replacements))) return mlir::failure();
 
     // Erase original Source A chain ops and Source B casts (now dead).
     for (auto& [old_val, new_val] : replacements) {

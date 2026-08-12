@@ -149,9 +149,15 @@ struct LowerWriteToFifoPattern
     }
     mlir::Value queried_unit = *queried_unit_result;
 
-    // If the data operand is a memref buffer), load it into a vector first.
+    // A buffer operand (e.g. a reduction accumulator) has to be read into a
+    // vector before it can be sent; a tensor or vector operand is already the
+    // value to send.
     mlir::Value send_data = write_op.getData();
     if (mlir::isa<mlir::MemRefType>(send_data.getType())) {
+      if (mlir::failed(
+              scheduler::resolveLocalUnitBuffer(write_op, send_data, rewriter)))
+        return mlir::failure();
+      rewriter.setInsertionPoint(write_op);
       send_data =
           emitVectorLoad(rewriter, write_op.getLoc(), vector_type, send_data);
     }

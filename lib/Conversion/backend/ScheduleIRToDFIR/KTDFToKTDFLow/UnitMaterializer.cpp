@@ -31,12 +31,7 @@
 using namespace scheduler;
 using ResourceType = mlir::Attribute;
 
-// Lowercase unit-type tag for the emitted dataflow.get_unit `type`/`name`
-// strings (DFIR code generation requires lowercase). Compute resource tokens
-// are lowercased directly; Spyre memory-space attributes become their
-// lowercased kind ("l1"/"ddr"); any other attribute falls back to its
-// lowercased printed form so nothing is left uppercase.
-static std::string unitTypeTag(ResourceType rt) {
+std::string scheduler::unitTypeTag(ResourceType rt) {
   if (auto ms = mlir::dyn_cast<mlir::ktdp::SpyreMemorySpaceAttr>(rt)) {
     return mlir::ktdp::stringifySpyreMemorySpaceKind(ms.getValue()).lower();
   }
@@ -126,6 +121,7 @@ mlir::LogicalResult UnitMaterializer::materializeMemoryUnits(
   auto loc = func_.getLoc();
 
   for (auto mspace_attr : needed_spaces) {
+    // Get string name from the attribute by printing it
     std::string space_name;
     llvm::raw_string_ostream os(space_name);
     mspace_attr.print(os);
@@ -146,15 +142,14 @@ mlir::LogicalResult UnitMaterializer::materializeMemoryUnits(
             type_tag);
         get_unit_op->setAttr("core", builder.getI32IntegerAttr(core));
         memory_unit_ssa[{mspace_attr, core}] = get_unit_op.getUnit();
-        LDBG(1) << "  Created memory unit for " << space_name << " core "
-                << core;
+        LDBG(1) << "  Created per-core memory unit for " << space_name
+                << " core " << core;
       }
     } else if (memory_tree.isBelowScratchPad(mspace_attr)) {
-      auto get_unit_op = mlir::dataflow::GetUnitOp::create(
-          builder, loc, mlir::TypeRange{builder.getIndexType()}, type_tag,
-          type_tag);
-      memory_unit_ssa[{mspace_attr, -1}] = get_unit_op.getUnit();
-      LDBG(1) << "  Created below-scratchpad memory unit for " << space_name;
+      // Compute-unit-local memory: no memory unit to materialize. Access is
+      // always from the running execution unit itself, resolved via
+      // dataflow.get_local_unit.
+      LDBG(1) << "  Skipping local-unit memory " << space_name;
     } else {
       return func_.emitError("Unknown memory space classification for: ")
              << space_name;

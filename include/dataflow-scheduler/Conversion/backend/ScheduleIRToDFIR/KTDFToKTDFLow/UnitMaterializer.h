@@ -20,6 +20,8 @@
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFTOKTDFLOW_UNITMATERIALIZER_H_
 
 #include <map>
+#include <string>
+#include <tuple>
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/ComponentClassifier.h"
@@ -33,6 +35,10 @@
 #include "mlir/IR/Value.h"
 
 namespace scheduler {
+
+/// Lowercase unit-type tag for a resource attribute, as the emitted DFIR
+/// `name`/`type` strings spell it (code generation requires lowercase).
+std::string unitTypeTag(ResourceType rt);
 
 /// Storage for unit SSA values: (component, core) -> Value for non-parallel,
 /// (parallel_op, component, corelet, core) -> Value for parallel
@@ -61,9 +67,16 @@ class UnitMaterializer {
                                   mlir::OpBuilder& builder);
 
   /// Emit dataflow.get_unit ops for memory-space components at func entry.
-  /// Global spaces (memory_tree.isGlobalMemory): one unit, key core = -1.
-  /// Per-core spaces (memory_tree.isPerCoreScratchPadMemory ||
-  /// memory_tree.isBelowScratchPad): one unit per core 0..grid_size-1.
+  /// Memory-tree depth determines the instance multiplicity of a space:
+  /// - Global spaces (memory_tree.isGlobalMemory, depth 0): one unit, key
+  ///   core = -1.
+  /// - Per-core scratchpad spaces (memory_tree.isPerCoreScratchPadMemory,
+  ///   depth 1): one unit per core 0..grid_size-1.
+  /// - Compute-unit-local spaces (memory_tree.isBelowScratchPad, depth >= 2):
+  ///   no unit is materialized. Such memory is only ever accessed from the
+  ///   execution unit running it, which resolves its own handle via
+  ///   dataflow.get_local_unit, so there is no unit to select.
+  /// Any other space is an error.
   mlir::LogicalResult materializeMemoryUnits(
       const llvm::SetVector<ResourceType>& needed_spaces, int grid_size,
       const scheduler::arch_view::MemoryTree& memory_tree,
