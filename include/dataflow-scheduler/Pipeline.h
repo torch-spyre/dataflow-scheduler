@@ -33,7 +33,37 @@ namespace scheduler {
 
 struct SchedulerExtContext;
 
-/// Builds the KTDP to DFIR pipeline with the given pass manager.
+/// Builds the KTIR frontend stage: checks the incoming KTIR is legal and
+/// converts it into an initial Schedule IR (KTDF) pipeline.
+///
+/// Passes come from `Conversion/frontend/KTIRToScheduleIR`.
+void buildKTIRFrontendPipeline(
+    mlir::OpPassManager& pm,
+    const scheduler::SchedulerExtContext& scheduler_ctx);
+
+/// Builds the scheduler optimization stage: legalizes and refines the Schedule
+/// IR in place — routing data movement, tiling, coarsening, double buffering,
+/// cross-instance parallelization, tile size selection, address assignment and
+/// grid normalization.
+///
+/// Both the input and the output of this stage are Schedule IR (KTDF). Passes
+/// come from `Transforms` and `Dialect/KTDF/Transforms`.
+void buildSchedulerOptimizationPipeline(
+    mlir::OpPassManager& pm,
+    const scheduler::SchedulerExtContext& scheduler_ctx);
+
+/// Builds the DFIR backend stage: lowers the optimized Schedule IR through
+/// KTDFLow into Dataflow IR (DFIR).
+///
+/// Passes come from `Conversion/backend/ScheduleIRToDFIR`. Note that this does
+/// not emit the DFIR output; callers that want the resulting DFIR written out
+/// should append `createSplitDFIROutputPass()` themselves.
+void buildDFIRBackendPipeline(
+    mlir::OpPassManager& pm,
+    const scheduler::SchedulerExtContext& scheduler_ctx);
+
+/// Builds the full KTDP to DFIR pipeline with the given pass manager, by
+/// chaining the KTIR frontend, scheduler optimization and DFIR backend stages.
 ///
 /// Note: this does not emit the DFIR output. Callers that want the resulting
 /// DFIR written out should append `createSplitDFIROutputPass()` themselves.

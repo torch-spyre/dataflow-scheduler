@@ -33,11 +33,15 @@
 
 using namespace scheduler;
 
-void scheduler::buildKTDPToDFIRPipeline(
+void scheduler::buildKTIRFrontendPipeline(
     mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
   pm.addPass(createKTIRLegalityCheckPass());
   pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
+}
+
+void scheduler::buildSchedulerOptimizationPipeline(
+    mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
   pm.addPass(createPathExpansionPass(scheduler_ctx));
   pm.addPass(createScalarBroadcastLegalizationPass());
   pm.addPass(createNormalizeSCFForLoopsPass());
@@ -65,6 +69,17 @@ void scheduler::buildKTDPToDFIRPipeline(
   // TODO: position of cross-instance parallelization is TBD
   // pm.addPass(createParallelizeLoopsAcrossInstancesPass(scheduler_ctx));
   pm.addPass(createNormalizeGridTo1DPass());
+}
+
+void scheduler::buildDFIRBackendPipeline(
+    mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
   pm.addPass(createKTDFToKTDFLoweringPass(scheduler_ctx));
   pm.addPass(createKTDFLowToDFIRPass());
+}
+
+void scheduler::buildKTDPToDFIRPipeline(
+    mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
+  buildKTIRFrontendPipeline(pm, scheduler_ctx);
+  buildSchedulerOptimizationPipeline(pm, scheduler_ctx);
+  buildDFIRBackendPipeline(pm, scheduler_ctx);
 }
