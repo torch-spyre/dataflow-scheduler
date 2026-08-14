@@ -17,7 +17,15 @@
 }
 #MNILU = {
   kind = "MNILU",
-  ktdf_arch.features = { ktdf_arch.feature.load_store },
+  ktdf_arch.features = { 
+    ktdf_arch.feature.load = {
+      word_size = #ktdf_arch.map<"DDR" = 64>,
+      access_granularity = #ktdf_arch.map<
+        "DDR" = [{size_in_words = 1, align_in_words = 1}],
+        "L1" = [{size_in_words = 1, align_in_words = 1}]
+      >
+    }
+  },
   dataflow_scheduler.double_buffer_last
 }
 #MNILU_L1 = {
@@ -25,7 +33,15 @@
 }
 #MNISU = {
   kind = "MNISU",
-  ktdf_arch.features = { ktdf_arch.feature.load_store },
+  ktdf_arch.features = { 
+    ktdf_arch.feature.store = {
+      word_size = #ktdf_arch.map<"DDR" = 64>,
+      access_granularity = #ktdf_arch.map<
+        "DDR" = [{size_in_words = 1, align_in_words = 1}],
+        "L1" = [{size_in_words = 1, align_in_words = 1}]
+      >
+    }
+  },
   dataflow_scheduler.double_buffer_last
 }
 #L1_MNISU = {
@@ -48,7 +64,14 @@
 #L1LU = {
   kind = "L1LU",
   ktdf_arch.features = { 
-    ktdf_arch.feature.load_store,
+    ktdf_arch.feature.load = {
+      access_granularity = #ktdf_arch.map<
+        "L1" = [
+          {size_in_words = 64, align_in_words = 64}, 
+          {size_in_words = 2, align_in_words = 2}
+        ]
+      >
+    },
     ktdf_arch.feature.simd = { splat, zero_pad } 
   }
 }
@@ -62,7 +85,16 @@
 
 #L1SU = {
   kind = "L1SU",
-  ktdf_arch.features = { ktdf_arch.feature.load_store }
+  ktdf_arch.features = {
+    ktdf_arch.feature.store = {
+      access_granularity = #ktdf_arch.map<
+        "L1" = [
+          {size_in_words = 64, align_in_words = 64}, 
+          {size_in_words = 2, align_in_words = 2}
+        ]
+      >
+    }
+  }
 }
 #L1SU_CORE_FIFO = {
   ktdf_arch.features = { ktdf_arch.feature.queue = { depth = 16, ordered } }

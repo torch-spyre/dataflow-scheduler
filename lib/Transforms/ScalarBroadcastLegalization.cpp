@@ -238,6 +238,34 @@ auto tryGetSizeInBytes(mlir::Type type) -> std::optional<unsigned> {
   return maybe_bits ? std::optional{(*maybe_bits + 7) / 8} : std::nullopt;
 }
 
+[[nodiscard]]
+auto mustLegalizeLoad(Hop& hop, size_t size_in_bytes, size_t align_in_bytes)
+    -> llvm::FailureOr<bool> {
+  const auto unit = hop.to.getFeature<mlir::ktdf_arch::feature::Load>();
+  if (!unit) {
+    hop.to.emitError() << "unit does not support load";
+    return llvm::failure();
+  }
+
+  const auto load_accesses = unit.getAccessGranularity(hop.from.getKind());
+  if (!load_accesses) {
+    hop.to->emitError() << "unit does not support load from "
+                        << hop.from.getKind();
+    return llvm::failure();
+  }
+
+  const auto word_size = unit.getWordSize(hop.from.getKind());
+  if (size_in_bytes % word_size != 0 || align_in_bytes % word_size != 0) {
+    return true;
+  }
+  const auto size_in_words = size_in_bytes / word_size;
+  const auto align_in_words = align_in_bytes / word_size;
+
+  // Must have a perfect-fit access.
+  const auto access = load_accesses.fitAccess(size_in_words, align_in_words);
+  return access && access.getSizeInWords() == size_in_words;
+}
+
 struct BroadcastLegalizationSite {
   mlir::linalg::GenericOp generic_op;
   unsigned operand_index;
@@ -310,11 +338,14 @@ static mlir::LogicalResult collectSites(
 
       bool needs_legalize = false;
       if (load_hop) {
-        const auto load_granularity =
-            load_hop->via
-                .getProperty<mlir::ktdf_arch::TransferGranularityAttr>();
-        needs_legalize |=
-            load_granularity && !load_granularity.contains(*maybe_size);
+        // FIXME: What alignment can we assume here?
+        if (const auto maybe_legalize =
+                mustLegalizeLoad(*load_hop, *maybe_size, *maybe_size);
+            succeeded(maybe_legalize)) {
+          needs_legalize |= *maybe_legalize;
+        } else {
+          return mlir::WalkResult::interrupt();
+        }
       }
       needs_legalize |=
           !compute.getFeature<mlir::ktdf_arch::feature::SIMD>().canSplat();

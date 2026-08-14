@@ -24,6 +24,7 @@
 
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "ktir/Dialect/KTDP/KTDPAttrs.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/Debug.h"
@@ -81,7 +82,8 @@ void processExecutionUnitOp(mlir::ktdf_arch::ExecutionUnitOp exec_op,
   // Load/store units become LoadStoreUnit nodes; other exec units become
   // Compute nodes.
   bool is_ls =
-      exec_op.getFeature<mlir::ktdf_arch::feature::LoadStore>() != nullptr;
+      exec_op.getFeature<mlir::ktdf_arch::feature::Load>() != nullptr ||
+      exec_op.getFeature<mlir::ktdf_arch::feature::Store>() != nullptr;
   auto node_kind = is_ls
                        ? RoutingGraph::ResourceNode::ResourceKind::LoadStoreUnit
                        : RoutingGraph::ResourceNode::ResourceKind::Compute;
