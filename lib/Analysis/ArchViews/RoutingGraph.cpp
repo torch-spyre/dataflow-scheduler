@@ -80,7 +80,8 @@ void processExecutionUnitOp(mlir::ktdf_arch::ExecutionUnitOp exec_op,
 
   // Load/store units become LoadStoreUnit nodes; other exec units become
   // Compute nodes.
-  bool is_ls = exec_op.getLoadStoreAttr() && exec_op.getLoadStore();
+  bool is_ls =
+      exec_op.getFeature<mlir::ktdf_arch::feature::LoadStore>() != nullptr;
   auto node_kind = is_ls
                        ? RoutingGraph::ResourceNode::ResourceKind::LoadStoreUnit
                        : RoutingGraph::ResourceNode::ResourceKind::Compute;

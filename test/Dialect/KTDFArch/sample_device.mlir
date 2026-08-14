@@ -17,7 +17,7 @@
 }
 #MNILU = {
   kind = "MNILU",
-  load_store,
+  ktdf_arch.features = { ktdf_arch.feature.load_store },
   dataflow_scheduler.double_buffer_last
 }
 #MNILU_L1 = {
@@ -25,7 +25,7 @@
 }
 #MNISU = {
   kind = "MNISU",
-  load_store,
+  ktdf_arch.features = { ktdf_arch.feature.load_store },
   dataflow_scheduler.double_buffer_last
 }
 #L1_MNISU = {
@@ -47,8 +47,10 @@
 
 #L1LU = {
   kind = "L1LU",
-  load_store,
-  ktdf_arch.features = { ktdf_arch.feature.simd = { splat, zero_pad } }
+  ktdf_arch.features = { 
+    ktdf_arch.feature.load_store,
+    ktdf_arch.feature.simd = { splat, zero_pad } 
+  }
 }
 #L1LU_CORE_FIFO = {
   ktdf_arch.features = { ktdf_arch.feature.queue = { depth = 16, ordered } }
@@ -60,7 +62,7 @@
 
 #L1SU = {
   kind = "L1SU",
-  load_store
+  ktdf_arch.features = { ktdf_arch.feature.load_store }
 }
 #L1SU_CORE_FIFO = {
   ktdf_arch.features = { ktdf_arch.feature.queue = { depth = 16, ordered } }
