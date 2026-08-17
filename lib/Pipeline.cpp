@@ -116,6 +116,9 @@ void scheduler::buildDFIRBackendPipeline(
   //     mlir::ktdf_arch::createApplyPatternsPass({"post_lowering"}));
 
   pm.addPass(createKTDFLowToDFIRPass());
+  // And each program given the two levels it is read at: what it is, and the
+  // DataflowIR it is compiled from, which takes no arguments.
+  pm.addPass(createWrapProgramDFIRPass());
 }
 
 void scheduler::buildKTDPToDFIRPipeline(

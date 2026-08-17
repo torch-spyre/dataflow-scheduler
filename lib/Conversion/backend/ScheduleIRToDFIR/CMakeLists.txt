@@ -1,3 +1,4 @@
 add_subdirectory(KTDFToKTDFLow)
 add_subdirectory(KTDFLowToDFIR)
+add_subdirectory(WrapProgramDFIR)
 add_subdirectory(SplitDFIROutput)

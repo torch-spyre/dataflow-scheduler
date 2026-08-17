@@ -46,6 +46,7 @@
 // CHECK-NEXT:   normalize-grid-to-1d
 // CHECK-NEXT:   ktdf-to-ktdflowering
 // CHECK-NEXT:   ktdflowering-to-dfir
+// CHECK-NEXT:   wrap-program-dfir
 // CHECK-NEXT:   emit-split-dfir
 
 // expected-error @below {{no 'ktdf_arch.device' is present in the module and no device file name is provided to ensure-device-declaration pass}}

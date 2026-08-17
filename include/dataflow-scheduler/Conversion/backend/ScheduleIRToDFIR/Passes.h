@@ -48,6 +48,8 @@ std::unique_ptr<mlir::Pass> createKTDFLowToDFIRPass();
 std::unique_ptr<mlir::Pass> createKTDFLowToDFIRPass(
     const scheduler::SchedulerExtContext& scheduler_ctx);
 
+std::unique_ptr<mlir::Pass> createWrapProgramDFIRPass();
+
 std::unique_ptr<mlir::Pass> createSplitDFIROutputPass();
 std::unique_ptr<mlir::Pass> createSplitDFIROutputPass(
     llvm::StringRef output_dir);
