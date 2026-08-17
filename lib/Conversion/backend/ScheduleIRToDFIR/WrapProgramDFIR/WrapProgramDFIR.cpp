@@ -23,8 +23,8 @@
 /// whatever launches it, it is a name, a signature saying which of the run's
 /// inputs it is about, and the symbols its instructions still wait for. To code
 /// generation it is DataflowIR and nothing else: a schedule over units, with no
-/// arguments, because an argument is a value only the caller has and there is no
-/// caller on a device.
+/// arguments, because an argument is a value only the caller has and there is
+/// no caller on a device.
 ///
 /// So the program becomes a function of its own name holding what it is, and an
 /// inner module holding a function of no arguments holding what it is compiled
@@ -48,8 +48,8 @@
 ///
 /// Which symbol each address is, and what each is computed from, therefore sits
 /// in the outer function -- beside what the program is, where whatever resolves
-/// the symbols reads it -- and not in the DataflowIR, which is handed on to code
-/// generation with nothing in it that only a caller could supply.
+/// the symbols reads it -- and not in the DataflowIR, which is handed on to
+/// code generation with nothing in it that only a caller could supply.
 ///
 //
 //===----------------------------------------------------------------------===//
@@ -77,9 +77,9 @@ namespace scheduler {
 
 namespace {
 
-/// The suffix the inner function's name takes. The outer one keeps the program's
-/// own name, because that is what the run calls; the call has to say which of the
-/// two it means.
+/// The suffix the inner function's name takes. The outer one keeps the
+/// program's own name, because that is what the run calls; the call has to say
+/// which of the two it means.
 constexpr llvm::StringLiteral kBodySuffix = "_body";
 
 /// Whether \p module holds DataflowIR of its own.
@@ -97,14 +97,14 @@ bool holdsDataflow(mlir::ModuleOp module) {
 /// In the order they appear, so rebuilding them elsewhere in that order always
 /// has its operands already rebuilt.
 ///
-/// Fails where something else uses one of \p entry's arguments: an argument is a
-/// value only the caller has, so the DataflowIR left behind could not be
+/// Fails where something else uses one of \p entry's arguments: an argument is
+/// a value only the caller has, so the DataflowIR left behind could not be
 /// compiled, and saying so here beats a diagnostic from deep inside code
 /// generation.
 mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
     mlir::Block& entry) {
-  // Backwards from each declaration, so an op is collected only if a declaration
-  // is what it is for.
+  // Backwards from each declaration, so an op is collected only if a
+  // declaration is what it is for.
   llvm::SetVector<mlir::Operation*> wanted;
   llvm::SmallVector<mlir::Value> pending;
   for (mlir::Operation& op : entry) {
@@ -178,8 +178,8 @@ struct WrapProgramDFIRPass
     const mlir::FunctionType type = program.getFunctionType();
     mlir::Block& body_entry = program.getBody().front();
 
-    // What the body says about symbols, which belongs beside what the program is
-    // rather than in what it is compiled from.
+    // What the body says about symbols, which belongs beside what the program
+    // is rather than in what it is compiled from.
     mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbol_ops =
         symbolOpsOf(body_entry);
     if (mlir::failed(symbol_ops)) return mlir::failure();
@@ -198,10 +198,11 @@ struct WrapProgramDFIRPass
     for (mlir::Operation* op : contents) op->moveBefore(inner, inner->end());
 
     // Neither of the two definitions this leaves has a caller inside its own
-    // module -- each is called from a module out, which is a symbol table of its
-    // own -- so both are public, and said to be rather than left to a default.
-    // A private symbol nothing in its own module calls is what symbol-dce
-    // deletes, and dropping either of these means dropping the program.
+    // module -- each is called from a module out, which is a symbol table of
+    // its own -- so both are public, and said to be rather than left to a
+    // default. A private symbol nothing in its own module calls is what
+    // symbol-dce deletes, and dropping either of these means dropping the
+    // program.
     //
     // The forward declaration the call resolves against is the exception: it is
     // in the same module as the call, and is private precisely so that it reads
@@ -233,9 +234,9 @@ struct WrapProgramDFIRPass
                                mlir::ValueRange{});
     mlir::func::ReturnOp::create(builder, program_module.getLoc());
 
-    // And the body left with no arguments, which is what makes it something code
-    // generation can take: the originals are gone with the declarations that
-    // were the only things reading them.
+    // And the body left with no arguments, which is what makes it something
+    // code generation can take: the originals are gone with the declarations
+    // that were the only things reading them.
     for (mlir::Operation* op : llvm::reverse(*symbol_ops)) op->erase();
     body_entry.eraseArguments(0, body_entry.getNumArguments());
     program.setFunctionType(body_type);
