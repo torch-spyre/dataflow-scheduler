@@ -38,6 +38,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
+#include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDPDialect.h"
@@ -101,6 +102,12 @@ struct KTDFLowToDFIRPass
     auto& resource_kinds =
         device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
 
+    // The run's symbols, numbered once for the whole module: nothing sets a
+    // range of ids aside, so two functions cannot each start from the top. This
+    // also declares in the IR which symbol each of the run's inputs is, which
+    // is what lets a consumer read the numbering rather than work it out again.
+    SymbolAllocator symbols(module_op);
+
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
     module_op.walk([&](mlir::func::FuncOp func) { funcs.push_back(func); });
     for (auto func : funcs) {
@@ -131,8 +138,8 @@ struct KTDFLowToDFIRPass
       mlir::IRRewriter rewriter(module_op.getContext());
       (void)mlir::runRegionDCE(rewriter, func.getBody());
 
-      if (mlir::failed(
-              buildLogicalMemoryViews(func, memory_tree, scheduler_ctx_))) {
+      if (mlir::failed(buildLogicalMemoryViews(func, memory_tree,
+                                               scheduler_ctx_, symbols))) {
         return signalPassFailure();
       }
       // run arith folding into query maps after logical mem view is built to

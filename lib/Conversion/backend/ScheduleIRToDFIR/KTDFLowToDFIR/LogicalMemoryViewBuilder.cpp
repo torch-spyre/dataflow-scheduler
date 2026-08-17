@@ -19,6 +19,7 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/LogicalMemoryViewBuilder.h"
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UniformInfra.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UnitMaterializer.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
@@ -148,6 +149,15 @@ mlir::LogicalResult buildResolvedUnits(
                                       resolved_units, builder);
 }
 
+/// \p offset as a constant, or std::nullopt where it is a value only the
+/// running program has. A displacement of the second kind cannot be a term of a
+/// symbol's definition -- there is nothing to write down for it.
+std::optional<int64_t> constantOffset(mlir::OpFoldResult offset) {
+  auto attr = mlir::dyn_cast<mlir::Attribute>(offset);
+  if (!attr) return std::nullopt;
+  return llvm::cast<mlir::IntegerAttr>(attr).getInt();
+}
+
 /// Build a 1-D linearization affine map from static strides.
 /// E.g., strides [4096, 4096, 64, 1] → (d0,d1,d2,d3) -> (d0*4096 + d1*4096 +
 /// d2*64 + d3)
@@ -176,6 +186,7 @@ mlir::LogicalResult replaceSourceAChains(
     mlir::dataflow::ProgramUnitOp pu,
     const llvm::DenseMap<ResourceType, mlir::Value>& resolved_units,
     llvm::DenseMap<mlir::Value, mlir::Value>& replacements,
+    SymbolAllocator& symbols, mlir::OpBuilder& definitions,
     mlir::OpBuilder& builder) {
   auto* ctx = pu.getContext();
 
@@ -234,11 +245,44 @@ mlir::LogicalResult replaceSourceAChains(
         cursor = view.getViewDest();
       }
 
-      // Compute start_address = base_addr + reinterpret_offset, where the
-      // reinterpret offset may be a static constant OR a dynamic SSA value
-      // (e.g. a per-compute-tile offset). getConstifiedMixedOffset() yields an
-      // IntegerAttr for a static offset or the SSA Value for a dynamic one.
-      mlir::Value start_address = cmv.getOffset();
+      // Emitting the view, once the start address is settled -- shared by the
+      // symbolic path and the constant one, which arrive at that address in
+      // quite different ways but say the same thing with it.
+      auto emitView = [&](mlir::Value start_address) -> mlir::LogicalResult {
+        auto ms = getMemorySpaceAttr(cursor.getType());
+        if (!ms)
+          return cmv.emitError(
+              "construct_memory_view: no memory space found in chain");
+        auto it = resolved_units.find(*ms);
+        if (it == resolved_units.end())
+          return cmv.emitError("no resolved unit for memory space");
+
+        // Emit get_logical_memory_view with plain result type (no memory space,
+        // no strided layout). The builder is already positioned after the last
+        // chain op (and after any offset arithmetic just emitted), so no
+        // setInsertionPoint needed here.
+        auto view_op = mlir::dataflow::GetLogicalMemoryViewOp::create(
+            builder, cmv.getLoc(), plain_type, it->second, start_address,
+            mlir::AffineMapAttr::get(layout_map));
+
+        // cursor is the tail of the chain, replace all its users with the new
+        // view.
+        cursor.replaceAllUsesWith(view_op.getData());
+
+        // Erase the now-dead chain tail-to-head. msc, rc and any other
+        // intermediates are all in the vector; reverse order handles
+        // dependencies.
+        for (auto* op : llvm::reverse(intermediates)) op->erase();
+        return mlir::success();
+      };
+
+      // Whether this tensor's address is computed from one of the run's inputs
+      // rather than from constants the compiler picked. If it is, no value
+      // stands for it here and the address is a symbol: see
+      // SymbolicStartAddress.h.
+      mlir::FailureOr<std::optional<SymbolicAddress>> taken =
+          takeSymbolicAddressApart(cmv.getOffset(), pu, symbols);
+      if (mlir::failed(taken)) return mlir::failure();
 
       mlir::OpFoldResult reinterpret_offset;
       if (rc) {
@@ -250,6 +294,37 @@ mlir::LogicalResult replaceSourceAChains(
         reinterpret_offset = mlir::OpFoldResult(builder.getIndexAttr(0));
         builder.setInsertionPointAfter(cursor.getDefiningOp());
       }
+
+      // A symbolic address is emitted whole: one symbol where every grid
+      // element reads the same address, one per element gathered into a uniform
+      // map where they do not. A displacement is a term of what each symbol is
+      // computed from rather than arithmetic at the view, because what code
+      // generation writes over has to be the operand itself.
+      if (taken->has_value()) {
+        // A displacement that is not a constant cannot be said in a symbol's
+        // definition: it is a value only the running program has.
+        std::optional<int64_t> displacement =
+            constantOffset(reinterpret_offset);
+        if (!displacement)
+          return cmv.emitError(
+              "construct_memory_view: the start address is computed from a run "
+              "input and displaced by a value only known while the program "
+              "runs, so no symbol stands for it");
+
+        mlir::FailureOr<mlir::Value> symbolic =
+            emitSymbolicStartAddress(**taken, *displacement, pu, symbols,
+                                     builder, definitions, cmv.getLoc());
+        if (mlir::failed(symbolic)) return mlir::failure();
+
+        if (mlir::failed(emitView(*symbolic))) return mlir::failure();
+        continue;
+      }
+
+      // Compute start_address = base_addr + reinterpret_offset, where the
+      // reinterpret offset may be a static constant OR a dynamic SSA value
+      // (e.g. a per-compute-tile offset). getConstifiedMixedOffset() yields an
+      // IntegerAttr for a static offset or the SSA Value for a dynamic one.
+      mlir::Value start_address = cmv.getOffset();
 
       if (auto offset_attr =
               mlir::dyn_cast<mlir::Attribute>(reinterpret_offset)) {
@@ -272,32 +347,7 @@ mlir::LogicalResult replaceSourceAChains(
                                                     start_address, offset_val);
       }
 
-      // Get from_unit.
-      auto ms = getMemorySpaceAttr(cursor.getType());
-      if (!ms)
-        return cmv.emitError(
-            "construct_memory_view: no memory space found in chain");
-      auto it = resolved_units.find(*ms);
-      if (it == resolved_units.end())
-        return cmv.emitError("no resolved unit for memory space");
-      mlir::Value from_unit = it->second;
-
-      // Emit get_logical_memory_view with plain result type (no memory space,
-      // no strided layout). The builder is already positioned after the last
-      // chain op (and after any offset arithmetic just emitted), so no
-      // setInsertionPoint needed here.
-      auto view_op = mlir::dataflow::GetLogicalMemoryViewOp::create(
-          builder, cmv.getLoc(), plain_type, from_unit, start_address,
-          mlir::AffineMapAttr::get(layout_map));
-
-      // cursor is the tail of the chain, replace all its users with the new
-      // view.
-      cursor.replaceAllUsesWith(view_op.getData());
-
-      // Erase the now-dead chain tail-to-head. msc, rc and any other
-      // intermediates are all in the vector; reverse order handles
-      // dependencies.
-      for (auto* op : llvm::reverse(intermediates)) op->erase();
+      if (mlir::failed(emitView(start_address))) return mlir::failure();
     }
 
     // All chains sourced from this cmv have been replaced; erase it now.
@@ -440,7 +490,7 @@ mlir::LogicalResult propagateTypes(
 mlir::LogicalResult scheduler::buildLogicalMemoryViews(
     mlir::func::FuncOp func,
     const scheduler::arch_view::MemoryTree& memory_tree,
-    const SchedulerExtContext& ext_ctx) {
+    const SchedulerExtContext& ext_ctx, SymbolAllocator& symbols) {
   LDBG(1) << "buildLogicalMemoryViews on " << func.getName();
 
   // Phase 1: discover needed memory spaces and prune dealloc-only casts.
@@ -474,6 +524,19 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
           needed_spaces, grid_size, memory_tree, memory_unit_ssa, builder)))
     return mlir::failure();
 
+  // Where what a symbol is computed from is said: at function level rather than
+  // inside a program unit, because one grid element's program is what a unit's
+  // region is, and a symbol's definition is about the run rather than about any
+  // one element of it. Nothing reads these values -- they are there so that
+  // whatever resolves the symbols can read what each one is.
+  mlir::OpBuilder definitions(func.getContext());
+  definitions.setInsertionPoint(&entry, builder.getInsertionPoint());
+
+  // Which input each of this function's arguments is, said here rather than
+  // when the symbols were numbered: before the program units existed a
+  // declaration counted as work and was copied into every one of them.
+  symbols.declareInputsIn(func, definitions);
+
   // Phase 3: per-program_unit rewrites.
   llvm::SmallVector<mlir::dataflow::ProgramUnitOp> program_units;
   func.walk([&](mlir::dataflow::ProgramUnitOp pu) {
@@ -496,8 +559,8 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
     llvm::DenseMap<mlir::Value, mlir::Value> replacements;
 
     // Phase 3b: Source A chains.
-    if (mlir::failed(
-            replaceSourceAChains(pu, resolved_units, replacements, builder)))
+    if (mlir::failed(replaceSourceAChains(pu, resolved_units, replacements,
+                                          symbols, definitions, builder)))
       return mlir::failure();
 
     // Phase 3c: Source B casts.

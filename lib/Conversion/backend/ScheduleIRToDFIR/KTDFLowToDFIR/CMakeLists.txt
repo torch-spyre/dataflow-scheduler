@@ -6,6 +6,7 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFLowToDFIR
     PreludeWorkPartition.cpp
     ProgramUnitBuilder.cpp
     QueryMapArithCollapse.cpp
+    SymbolicStartAddress.cpp
     UnitTypeDiscovery.cpp
     Utils.cpp
     BufferPhaseLowering.cpp
@@ -31,6 +32,7 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFLowToDFIR
     DataflowScheduler::KTDFToKTDFLow
     DataflowScheduler::KTDFUtils
     DataflowScheduler::TransformUtils
+    DataflowSchedulerDialects::SymbolDialect
     DataflowSchedulerDialects::UniformDialect
     DataflowScheduler::Utils
     DataflowSchedulerDialects::VectorChainDialect

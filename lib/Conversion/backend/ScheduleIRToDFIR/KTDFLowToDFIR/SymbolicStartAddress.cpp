@@ -1,0 +1,442 @@
+//===----------------------------------------------------------------------===//
+//
+// Part of the Dataflow Scheduler project.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+//===----------------------------------------------------------------------===//
+
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
+
+#include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
+#include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/SetVector.h"
+#include "llvm/Support/DebugLog.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
+#include "mlir/IR/IRMapping.h"
+
+#define DEBUG_TYPE "symbolic-start-address"
+
+using namespace scheduler;
+
+namespace {
+
+/// The outermost module enclosing \p op. Splitting a kernel into per-schedule
+/// programs puts each program's function in a module of its own beside the one
+/// holding the kernel, so a program function and the call that reaches it are
+/// only ever siblings under this module -- never in one symbol table.
+mlir::ModuleOp topLevelModuleOf(mlir::Operation* op) {
+  mlir::ModuleOp outermost;
+  for (mlir::Operation* parent = op->getParentOp(); parent;
+       parent = parent->getParentOp()) {
+    if (auto module = mlir::dyn_cast<mlir::ModuleOp>(parent))
+      outermost = module;
+  }
+  return outermost;
+}
+
+/// The one call to \p func under \p top, or null if there is no call or more
+/// than one.
+///
+/// Matched on the callee's name rather than through a symbol table: the call
+/// sits beside a private declaration of \p func in the caller's own module,
+/// which is a different operation from \p func itself.
+mlir::func::CallOp soleCallTo(mlir::ModuleOp top, mlir::func::FuncOp func) {
+  if (!top) return {};
+  mlir::func::CallOp found;
+  bool ambiguous = false;
+  top.walk([&](mlir::func::CallOp call) {
+    if (call.getCallee() != func.getName()) return mlir::WalkResult::advance();
+    if (found) {
+      ambiguous = true;
+      return mlir::WalkResult::interrupt();
+    }
+    found = call;
+    return mlir::WalkResult::advance();
+  });
+  return ambiguous ? mlir::func::CallOp() : found;
+}
+
+/// \p value as an argument of its function's entry block, or a null
+/// BlockArgument if it is not one. A block argument of some inner region -- a
+/// loop's induction variable, a program unit's unit iter_arg -- is not an
+/// input.
+mlir::BlockArgument asFunctionArgument(mlir::Value value) {
+  auto arg = mlir::dyn_cast<mlir::BlockArgument>(value);
+  if (!arg) return {};
+  auto func =
+      mlir::dyn_cast_or_null<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
+  if (!func || func.getBody().empty() ||
+      arg.getOwner() != &func.getBody().front())
+    return {};
+  return arg;
+}
+
+/// How many call edges an input is followed along before giving up. One is
+/// enough for the pipeline as it stands -- kernel to program -- so this only
+/// guards against a cycle in malformed IR.
+constexpr unsigned kMaxCallDepth = 8;
+
+/// Whether \p op is one whose definition can be read back out of the IR.
+///
+/// The set of operators that can be *written* is larger than the set that can
+/// be read, and a symbol written outside the readable set is a hard failure in
+/// whatever resolves it rather than a silent loss. So only these are used, and
+/// anything else in an address expression is reported here.
+bool readableAsDefinition(mlir::Operation* op) {
+  return mlir::isa<mlir::arith::AddIOp, mlir::arith::SubIOp,
+                   mlir::arith::MulIOp, mlir::arith::DivSIOp,
+                   mlir::arith::RemSIOp, mlir::arith::MinSIOp,
+                   mlir::arith::CeilDivSIOp>(op);
+}
+
+/// The per-unit constants of a `uniform.query_map` over a mapping whose values
+/// are all constants, keyed by the unit each is for. std::nullopt when \p value
+/// is not such a query.
+///
+/// This is what a `ktdp.get_compute_tile_id` has become by the time addresses
+/// are lowered, and multiplying or offsetting one is how an address comes to
+/// vary with the grid element.
+std::optional<llvm::DenseMap<mlir::Value, int64_t>> perUnitConstantsOf(
+    mlir::Value value) {
+  auto query = value.getDefiningOp<mlir::uniform::QueryMapOp>();
+  if (!query) return std::nullopt;
+  auto mapping =
+      query.getMap().getDefiningOp<mlir::uniform::DefImmutableMappingOp>();
+  if (!mapping) return std::nullopt;
+
+  llvm::DenseMap<mlir::Value, int64_t> per_unit;
+  for (auto [key, mapped] : llvm::zip(mapping.getKeys(), mapping.getValues())) {
+    std::optional<int64_t> constant = mlir::getConstantIntValue(mapped);
+    if (!constant) return std::nullopt;
+    per_unit[key] = *constant;
+  }
+  return per_unit;
+}
+
+/// The units \p pu runs on, in the order it lists them -- which is the order a
+/// uniform map over them has to be keyed in.
+llvm::SmallVector<mlir::Value> unitsOf(mlir::dataflow::ProgramUnitOp pu) {
+  return llvm::SmallVector<mlir::Value>(pu.getUnits().begin(),
+                                        pu.getUnits().end());
+}
+
+}  // namespace
+
+//===----------------------------------------------------------------------===//
+// SymbolAllocator
+//===----------------------------------------------------------------------===//
+
+SymbolAllocator::SymbolAllocator(mlir::ModuleOp top) {
+  // The kernels: the functions with bodies that nothing calls. Their arguments
+  // are what the run takes in.
+  llvm::SmallVector<mlir::func::FuncOp> kernels;
+  top.walk([&](mlir::func::FuncOp func) {
+    if (func.getBody().empty()) return;
+    if (!soleCallTo(top, func)) kernels.push_back(func);
+  });
+
+  for (mlir::func::FuncOp kernel : kernels) {
+    mlir::OpBuilder builder(kernel.getContext());
+    builder.setInsertionPointToStart(&kernel.getBody().front());
+    for (mlir::BlockArgument arg : kernel.getArguments()) {
+      // An argument of any other type is not an address and no symbol stands
+      // for it. Numbering still counts the position, so that what an id is
+      // follows from the signature rather than from which arguments happened to
+      // be addresses.
+      if (mlir::isa<mlir::IndexType>(arg.getType())) {
+        mlir::symbol::CreateIdOp::create(builder, arg.getLoc(), arg,
+                                         next_input_);
+        LDBG(1) << "  " << kernel.getName() << " argument "
+                << arg.getArgNumber() << " is symbol " << next_input_;
+      }
+      --next_input_;
+    }
+  }
+  next_derived_ = next_input_;
+}
+
+std::pair<int64_t, bool> SymbolAllocator::derivedIdFor(
+    mlir::Value root, int64_t displacement, llvm::ArrayRef<int64_t> terms) {
+  auto key = std::make_tuple(root.getAsOpaquePointer(), displacement,
+                             llvm::SmallVector<int64_t>(terms));
+  const auto found = derived_.find(key);
+  if (found != derived_.end()) return {found->second, false};
+  const int64_t id = next_derived_--;
+  derived_.emplace(std::move(key), id);
+  return {id, true};
+}
+
+void SymbolAllocator::declareInputsIn(mlir::func::FuncOp func,
+                                      mlir::OpBuilder& builder) const {
+  for (mlir::BlockArgument arg : func.getArguments()) {
+    std::optional<int64_t> input = inputSymbolIdFor(arg);
+    // A constant the caller had, or something it computed: not an input, so no
+    // symbol of the run stands for it.
+    if (!input) continue;
+    mlir::symbol::CreateIdOp::create(builder, arg.getLoc(), arg, *input);
+  }
+}
+
+std::optional<int64_t> SymbolAllocator::inputSymbolIdFor(
+    mlir::Value address) const {
+  mlir::BlockArgument arg = asFunctionArgument(address);
+  if (!arg) return std::nullopt;
+
+  mlir::ModuleOp top = topLevelModuleOf(arg.getOwner()->getParentOp());
+
+  // Walk up the calls that pass this argument along. What each hop asks is the
+  // same question of one function further out, so the loop ends at the function
+  // nothing calls -- the kernel, whose signature is the run's own inputs.
+  for (unsigned depth = 0; depth <= kMaxCallDepth; ++depth) {
+    auto func = mlir::cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
+    mlir::func::CallOp call = soleCallTo(top, func);
+    if (!call) {
+      if (!mlir::isa<mlir::IndexType>(arg.getType())) return std::nullopt;
+      return -static_cast<int64_t>(arg.getArgNumber()) - 1;
+    }
+
+    mlir::Value passed = call.getOperand(arg.getArgNumber());
+    mlir::BlockArgument outer = asFunctionArgument(passed);
+    if (!outer) {
+      // A constant, or something the caller computed: whatever it is, it is not
+      // an input, and the caller's own lowering is what says what it is.
+      return std::nullopt;
+    }
+    arg = outer;
+  }
+
+  LDBG(1) << "  gave up tracing an address through " << kMaxCallDepth
+          << " calls";
+  return std::nullopt;
+}
+
+//===----------------------------------------------------------------------===//
+// Taking an address apart
+//===----------------------------------------------------------------------===//
+
+mlir::FailureOr<std::optional<SymbolicAddress>>
+scheduler::takeSymbolicAddressApart(mlir::Value address,
+                                    mlir::dataflow::ProgramUnitOp pu,
+                                    const SymbolAllocator& symbols) {
+  SymbolicAddress taken;
+
+  // Whether a run input reaches this address at all, asked first and on its
+  // own. Only once that is known can anything else about the expression be
+  // called a mistake: an address built from constants by an operation no
+  // definition could be read back from is simply a constant address, and not
+  // this file's business, whereas the same operation over an input is an
+  // address nothing can resolve -- and telling the two apart needs the whole
+  // expression looked at.
+  llvm::SetVector<mlir::Value> reached;
+  llvm::SmallVector<mlir::Value> pending{address};
+  bool rooted = false;
+  while (!pending.empty()) {
+    mlir::Value value = pending.pop_back_val();
+    if (!reached.insert(value)) continue;
+    if (symbols.inputSymbolIdFor(value)) {
+      rooted = true;
+      break;
+    }
+    if (mlir::Operation* op = value.getDefiningOp())
+      for (mlir::Value operand : op->getOperands()) pending.push_back(operand);
+  }
+  if (!rooted) return std::optional<SymbolicAddress>();
+
+  // Then depth-first again, collecting the ops in the order they have to be
+  // rebuilt and classifying every leaf. A leaf is the input the address is
+  // rooted at, a constant, or a per-grid query -- and nothing else, because
+  // nothing else has a value this can say per grid element.
+  llvm::SetVector<mlir::Value> visited;
+  llvm::SmallVector<mlir::Value> worklist{address};
+  llvm::SmallVector<mlir::Operation*> ops;
+  llvm::SmallVector<llvm::DenseMap<mlir::Value, int64_t>> per_unit_constants;
+
+  while (!worklist.empty()) {
+    mlir::Value value = worklist.pop_back_val();
+    if (!visited.insert(value)) continue;
+
+    if (std::optional<int64_t> input = symbols.inputSymbolIdFor(value)) {
+      if (taken.root && taken.root != value) {
+        return address.getDefiningOp()->emitError(
+            "start address is computed from more than one run input, so no "
+            "single symbol stands for it");
+      }
+      taken.input = *input;
+      taken.root = value;
+      continue;
+    }
+
+    // A constant contributes itself and nothing per grid element.
+    if (mlir::getConstantIntValue(value)) continue;
+
+    if (std::optional<llvm::DenseMap<mlir::Value, int64_t>> per_unit =
+            perUnitConstantsOf(value)) {
+      taken.perUnitLeaves.push_back(value);
+      per_unit_constants.push_back(std::move(*per_unit));
+      continue;
+    }
+
+    mlir::Operation* op = value.getDefiningOp();
+    if (!op) {
+      // A block argument that is not an input: a loop induction variable, or a
+      // unit iter_arg. An address the run has to resolve cannot be built from
+      // one -- there would be nothing to write down for it.
+      return address.getDefiningOp()->emitError(
+          "start address is computed from a run input and from a value that "
+          "only exists while the program runs, so no symbol stands for it");
+    }
+    if (!readableAsDefinition(op)) {
+      return op->emitError(
+          "start address is computed from a run input by an operation whose "
+          "definition cannot be written as a symbol expression");
+    }
+    ops.push_back(op);
+    for (mlir::Value operand : op->getOperands()) worklist.push_back(operand);
+  }
+
+  // Roots-last, so rebuilding in order always has its operands already built.
+  for (mlir::Operation* op : llvm::reverse(ops)) taken.expression.push_back(op);
+
+  // What each unit's copy of the per-grid leaves is. Every leaf has to say
+  // something for every unit the program runs on, or the map cannot be keyed.
+  if (!taken.perUnitLeaves.empty()) {
+    for (mlir::Value unit : unitsOf(pu)) {
+      llvm::SmallVector<int64_t> terms;
+      for (const auto& per_unit : per_unit_constants) {
+        const auto found = per_unit.find(unit);
+        if (found == per_unit.end()) {
+          return pu.emitError(
+                     "a per-grid term of a symbolic start address says nothing "
+                     "for one of the units the program runs on, so the address "
+                     "cannot be resolved there")
+                 << unit;
+        }
+        terms.push_back(found->second);
+      }
+      taken.perUnitTerms.emplace_back(unit, std::move(terms));
+    }
+  }
+
+  LDBG(1) << "  start address is symbol " << taken.input << " through "
+          << taken.expression.size() << " op(s), " << taken.perUnitTerms.size()
+          << " per-grid value(s)";
+  return std::optional<SymbolicAddress>(std::move(taken));
+}
+
+//===----------------------------------------------------------------------===//
+// Emitting it
+//===----------------------------------------------------------------------===//
+
+namespace {
+
+/// Rebuilds \p taken's expression with each per-grid leaf replaced by the
+/// constant \p terms gives it, adds \p displacement, declares the result as a
+/// symbol of its own and returns that symbol's id.
+///
+/// Where the expression is empty and nothing is displaced the address is the
+/// input itself, so there is nothing to derive and the input's own id is the
+/// answer.
+int64_t declareDerived(const SymbolicAddress& taken,
+                       llvm::ArrayRef<int64_t> terms, int64_t displacement,
+                       SymbolAllocator& symbols, mlir::OpBuilder& builder,
+                       mlir::Location loc) {
+  mlir::IRMapping mapping;
+  for (auto [leaf, term] : llvm::zip(taken.perUnitLeaves, terms))
+    mapping.map(leaf, mlir::arith::ConstantIndexOp::create(builder, loc, term));
+
+  // Folded as it is built, because with only one leaf left unknown most of the
+  // expression is constant here -- the grid element whose share starts at the
+  // tensor's own base adds nothing, and its address is the input itself.
+  // Leaving that as `input + 0` and letting canonicalization fold it later
+  // would leave a symbol declared on a value nothing computes, which reads back
+  // as a symbol with no definition at all.
+  mlir::Value result = taken.root;
+  for (mlir::Operation* op : taken.expression) {
+    mlir::Operation* clone = builder.clone(*op, mapping);
+    llvm::SmallVector<mlir::Value> folded;
+    if (mlir::succeeded(builder.tryFold(clone, folded)) && !folded.empty()) {
+      mapping.map(op->getResult(0), folded.front());
+      result = folded.front();
+      continue;
+    }
+    result = clone->getResult(0);
+  }
+  if (displacement != 0) {
+    mlir::Value by =
+        mlir::arith::ConstantIndexOp::create(builder, loc, displacement);
+    result = mlir::arith::AddIOp::create(builder, loc, result, by);
+  }
+
+  // Nothing was added to it after all: this grid element reads the input's own
+  // address, so the input's own symbol is what stands for it.
+  if (result == taken.root) return taken.input;
+
+  const auto [id, fresh] =
+      symbols.derivedIdFor(taken.root, displacement, terms);
+  if (!fresh) {
+    // Said once already, and saying it again would leave two symbols meaning
+    // one address. What was just built for the comparison above is not needed.
+    return id;
+  }
+  mlir::symbol::CreateIdOp::create(builder, loc, result, id);
+  return id;
+}
+
+}  // namespace
+
+mlir::FailureOr<mlir::Value> scheduler::emitSymbolicStartAddress(
+    const SymbolicAddress& taken, int64_t displacement,
+    mlir::dataflow::ProgramUnitOp pu, SymbolAllocator& symbols,
+    mlir::OpBuilder& builder, mlir::OpBuilder& definitions_at,
+    mlir::Location loc) {
+  // The same everywhere: one symbol, and no map to choose between copies of it.
+  // Which is the common case -- a tensor read whole rather than a slab of it per
+  // grid element -- and worth not building a map for.
+  if (taken.perUnitTerms.empty()) {
+    const int64_t id =
+        declareDerived(taken, {}, displacement, symbols, definitions_at, loc);
+    return createSymbolicStartAddress(builder, loc, id);
+  }
+
+  // One per grid element, gathered into a map keyed on the unit and queried by
+  // the iter_arg -- the same shape the units themselves are resolved through.
+  llvm::SmallVector<mlir::Value> keys;
+  llvm::SmallVector<mlir::Value> values;
+  for (const auto& [unit, terms] : taken.perUnitTerms) {
+    const int64_t id = declareDerived(taken, terms, displacement, symbols,
+                                      definitions_at, loc);
+    keys.push_back(unit);
+    values.push_back(createSymbolicStartAddress(builder, loc, id));
+  }
+
+  auto mapping = mlir::uniform::DefImmutableMappingOp::create(
+      builder, loc, builder.getIndexType(), keys, values);
+  auto query = mlir::uniform::QueryMapOp::create(
+      builder, loc, builder.getIndexType(), mapping.getResult(),
+      pu.getRegion().front().getArgument(0));
+  return query.getResult();
+}
+
+mlir::Value scheduler::createSymbolicStartAddress(mlir::OpBuilder& builder,
+                                                  mlir::Location loc,
+                                                  int64_t symbol_id) {
+  auto symbol = mlir::symbol::CreateSymbolOp::create(builder, loc,
+                                                     builder.getIndexType());
+  // The id lives in an attribute rather than in the operation's own arguments;
+  // `SymbolId` is the name symbol::CreateSymbolOp::getSymbolID reads.
+  symbol->setAttr("SymbolId", builder.getI64IntegerAttr(symbol_id));
+  return symbol.getResult();
+}

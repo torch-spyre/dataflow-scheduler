@@ -15,6 +15,10 @@
 // CHECK-NEXT:     %[[MNILU_0:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
 // CHECK-NEXT:     %[[MNILU_1:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
 // CHECK-NEXT:     dataflow.program_unit iter_arg : %[[ARG_MNILU:.*]] -> (%[[MNILU_0]], %[[MNILU_1]]) : {
+// The argument is one of the run's inputs, so which symbol it is gets said here.
+// This tensor's own address is a constant, so nothing about the view is symbolic
+// -- the input only displaces within it, which stays plain arithmetic.
+// CHECK-NEXT:       symbol.create_id %[[ARG0]] {symbol_id = -1 : si64} : index
 // CHECK-NEXT:       %[[MAP_CORE:.*]] = uniform.def_immutable_mapping({{\[}}%[[MNILU_0]] -> %[[C0]]], {{\[}}%[[MNILU_1]] -> %[[C3]]]):index
 // CHECK-NEXT:       %[[CORE_IDX:.*]] = uniform.query_map(map:%[[MAP_CORE]], key:%[[ARG_MNILU]]) : index
 // CHECK-NEXT:       %[[ADDI_0:.*]] = arith.addi %[[CORE_IDX]], %[[ARG0]] : index

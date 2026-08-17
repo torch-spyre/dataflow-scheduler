@@ -74,6 +74,7 @@ def KTDFLowToDFIRPass : Pass<"ktdflowering-to-dfir", "mlir::ModuleOp"> {
     "mlir::ktdf::KTDFDialect",
     "mlir::ktdf_lowering::KTDFLoweringDialect",
     "mlir::ktdp::KtdpDialect",
+    "mlir::symbol::SymbolDialect",
     "mlir::uniform::UniformDialect"
   ];
 }
