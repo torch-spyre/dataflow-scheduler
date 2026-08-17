@@ -149,15 +149,6 @@ mlir::LogicalResult buildResolvedUnits(
                                       resolved_units, builder);
 }
 
-/// \p offset as a constant, or std::nullopt where it is a value only the
-/// running program has. A displacement of the second kind cannot be a term of a
-/// symbol's definition -- there is nothing to write down for it.
-std::optional<int64_t> constantOffset(mlir::OpFoldResult offset) {
-  auto attr = mlir::dyn_cast<mlir::Attribute>(offset);
-  if (!attr) return std::nullopt;
-  return llvm::cast<mlir::IntegerAttr>(attr).getInt();
-}
-
 /// Build a 1-D linearization affine map from static strides.
 /// E.g., strides [4096, 4096, 64, 1] → (d0,d1,d2,d3) -> (d0*4096 + d1*4096 +
 /// d2*64 + d3)
@@ -299,17 +290,14 @@ mlir::LogicalResult replaceSourceAChains(
       // element reads the same address, one per element gathered into a uniform
       // map where they do not. A displacement is a term of what each symbol is
       // computed from rather than arithmetic at the view, because what code
-      // generation writes over has to be the operand itself.
+      // generation writes over has to be the operand itself. It is a term per
+      // grid element where the access tile read out of the view is the grid
+      // element's own slab of it, which is the other way of saying an address
+      // that varies with the grid.
       if (taken->has_value()) {
-        // A displacement that is not a constant cannot be said in a symbol's
-        // definition: it is a value only the running program has.
-        std::optional<int64_t> displacement =
-            constantOffset(reinterpret_offset);
-        if (!displacement)
-          return cmv.emitError(
-              "construct_memory_view: the start address is computed from a run "
-              "input and displaced by a value only known while the program "
-              "runs, so no symbol stands for it");
+        mlir::FailureOr<Displacement> displacement =
+            takeDisplacementApart(reinterpret_offset, pu);
+        if (mlir::failed(displacement)) return mlir::failure();
 
         mlir::FailureOr<mlir::Value> symbolic =
             emitSymbolicStartAddress(**taken, *displacement, pu, symbols,

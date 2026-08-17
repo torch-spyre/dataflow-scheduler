@@ -133,6 +133,50 @@ llvm::SmallVector<mlir::Value> unitsOf(mlir::dataflow::ProgramUnitOp pu) {
                                         pu.getUnits().end());
 }
 
+/// What \p value works out to on \p unit, or std::nullopt where it is not
+/// something that has a value there at all.
+///
+/// A leaf is a constant, worth the same everywhere, or a per-grid query, worth
+/// what the mapping says for this unit; anything else is folded from its
+/// operands by the operator it is. The operators are those a symbol's
+/// definition can be written with, so that a displacement worked out here is
+/// one the same expression could have said.
+std::optional<int64_t> evaluateAtUnit(mlir::Value value, mlir::Value unit) {
+  if (std::optional<int64_t> constant = mlir::getConstantIntValue(value))
+    return constant;
+
+  if (std::optional<llvm::DenseMap<mlir::Value, int64_t>> per_unit =
+          perUnitConstantsOf(value)) {
+    const auto found = per_unit->find(unit);
+    if (found == per_unit->end()) return std::nullopt;
+    return found->second;
+  }
+
+  mlir::Operation* op = value.getDefiningOp();
+  if (!op || !readableAsDefinition(op) || op->getNumOperands() != 2)
+    return std::nullopt;
+
+  std::optional<int64_t> lhs = evaluateAtUnit(op->getOperand(0), unit);
+  std::optional<int64_t> rhs = evaluateAtUnit(op->getOperand(1), unit);
+  if (!lhs || !rhs) return std::nullopt;
+
+  if (mlir::isa<mlir::arith::AddIOp>(op)) return *lhs + *rhs;
+  if (mlir::isa<mlir::arith::SubIOp>(op)) return *lhs - *rhs;
+  if (mlir::isa<mlir::arith::MulIOp>(op)) return *lhs * *rhs;
+  if (mlir::isa<mlir::arith::MinSIOp>(op)) return std::min(*lhs, *rhs);
+  // A division by zero is undefined where the program runs and is not something
+  // to work out an address from here either.
+  if (*rhs == 0) return std::nullopt;
+  if (mlir::isa<mlir::arith::DivSIOp>(op)) return *lhs / *rhs;
+  if (mlir::isa<mlir::arith::RemSIOp>(op)) return *lhs % *rhs;
+  // Rounding up is only worked out for a positive numerator and denominator --
+  // an offset into a tensor and a size -- rather than reproducing what the
+  // operation does with a negative one.
+  if (mlir::isa<mlir::arith::CeilDivSIOp>(op) && *lhs >= 0 && *rhs > 0)
+    return (*lhs + *rhs - 1) / *rhs;
+  return std::nullopt;
+}
+
 }  // namespace
 
 //===----------------------------------------------------------------------===//
@@ -397,27 +441,93 @@ int64_t declareDerived(const SymbolicAddress& taken,
 
 }  // namespace
 
+int64_t scheduler::Displacement::at(mlir::Value unit) const {
+  for (const auto& [key, by] : perUnit)
+    if (key == unit) return by;
+  return everywhere;
+}
+
+mlir::FailureOr<scheduler::Displacement> scheduler::takeDisplacementApart(
+    mlir::OpFoldResult offset, mlir::dataflow::ProgramUnitOp pu) {
+  Displacement displaced;
+
+  // A constant, whether it arrived as one or was folded into one: the same
+  // wherever the program runs, and the whole answer.
+  if (auto attr = mlir::dyn_cast<mlir::Attribute>(offset)) {
+    displaced.everywhere = llvm::cast<mlir::IntegerAttr>(attr).getInt();
+    return displaced;
+  }
+  auto value = llvm::cast<mlir::Value>(offset);
+  if (std::optional<int64_t> constant = mlir::getConstantIntValue(value)) {
+    displaced.everywhere = *constant;
+    return displaced;
+  }
+
+  // Otherwise the offset has to be worth something on every unit the program
+  // runs on -- an expression over the grid element's own tile id and constants.
+  llvm::SmallVector<std::pair<mlir::Value, int64_t>> per_unit;
+  for (mlir::Value unit : unitsOf(pu)) {
+    std::optional<int64_t> by = evaluateAtUnit(value, unit);
+    if (!by) {
+      // Reported on what computes the displacement where there is such an op --
+      // that is what would have to be written differently -- and on the
+      // program otherwise, a block argument having no other site to report at.
+      mlir::Operation* site = value.getDefiningOp();
+      return (site ? site->emitError() : pu.emitError())
+             << "the start address is computed from a run input and displaced "
+                "by a value only known while the program runs, so no symbol "
+                "stands for it";
+    }
+    per_unit.emplace_back(unit, *by);
+  }
+
+  // Every unit came to the same number after all -- an access tile at a fixed
+  // offset into the view, said the long way round. One number, and no map.
+  const bool uniform = llvm::all_of(per_unit, [&](const auto& entry) {
+    return entry.second == per_unit.front().second;
+  });
+  if (uniform) {
+    displaced.everywhere = per_unit.front().second;
+    return displaced;
+  }
+
+  displaced.perUnit = std::move(per_unit);
+  LDBG(1) << "  displaced by a grid element's own offset, on "
+          << displaced.perUnit.size() << " unit(s)";
+  return displaced;
+}
+
 mlir::FailureOr<mlir::Value> scheduler::emitSymbolicStartAddress(
-    const SymbolicAddress& taken, int64_t displacement,
+    const SymbolicAddress& taken, const Displacement& displacement,
     mlir::dataflow::ProgramUnitOp pu, SymbolAllocator& symbols,
     mlir::OpBuilder& builder, mlir::OpBuilder& definitions_at,
     mlir::Location loc) {
   // The same everywhere: one symbol, and no map to choose between copies of it.
-  // Which is the common case -- a tensor read whole rather than a slab of it per
-  // grid element -- and worth not building a map for.
-  if (taken.perUnitTerms.empty()) {
-    const int64_t id =
-        declareDerived(taken, {}, displacement, symbols, definitions_at, loc);
+  // Which is the common case -- a tensor read whole rather than a slab of it
+  // per grid element -- and worth not building a map for.
+  if (taken.perUnitTerms.empty() && !displacement.varies()) {
+    const int64_t id = declareDerived(taken, {}, displacement.everywhere,
+                                      symbols, definitions_at, loc);
     return createSymbolicStartAddress(builder, loc, id);
   }
+
+  // The address differs per grid element, either because the expression it is
+  // computed from does or because what displaces it does. Where only the
+  // displacement differs the expression has no per-grid leaf and every unit
+  // rebuilds the same one; the units are still what the map is keyed on.
+  llvm::SmallVector<std::pair<mlir::Value, llvm::SmallVector<int64_t>>>
+      per_unit_terms = taken.perUnitTerms;
+  if (per_unit_terms.empty())
+    for (mlir::Value unit : unitsOf(pu))
+      per_unit_terms.emplace_back(unit, llvm::SmallVector<int64_t>{});
 
   // One per grid element, gathered into a map keyed on the unit and queried by
   // the iter_arg -- the same shape the units themselves are resolved through.
   llvm::SmallVector<mlir::Value> keys;
   llvm::SmallVector<mlir::Value> values;
-  for (const auto& [unit, terms] : taken.perUnitTerms) {
-    const int64_t id = declareDerived(taken, terms, displacement, symbols,
-                                      definitions_at, loc);
+  for (const auto& [unit, terms] : per_unit_terms) {
+    const int64_t id = declareDerived(taken, terms, displacement.at(unit),
+                                      symbols, definitions_at, loc);
     keys.push_back(unit);
     values.push_back(createSymbolicStartAddress(builder, loc, id));
   }

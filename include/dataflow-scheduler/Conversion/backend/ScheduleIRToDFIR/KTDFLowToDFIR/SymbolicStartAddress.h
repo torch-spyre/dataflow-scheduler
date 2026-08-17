@@ -43,7 +43,12 @@
 ///
 /// An address that varies with the grid element -- each one working on its own
 /// slab of a tensor -- is one symbol per grid element rather than one overall.
-/// Those are gathered into a uniform map keyed on the unit, so the start
+/// Which slab that is can be said in either of two ways, and they come to the
+/// same thing here: as arithmetic over the input at the view, so the address
+/// the view is built on already differs; or as one view of the whole tensor
+/// with an access tile whose offset into it is the grid element's, which is a
+/// displacement of that view's address by the time it is lowered. Either way
+/// the symbols are gathered into a uniform map keyed on the unit, so the start
 /// address a program reads is the query, and each grid element's own symbol is
 /// what gets written:
 ///
@@ -189,16 +194,54 @@ mlir::FailureOr<std::optional<SymbolicAddress>> takeSymbolicAddressApart(
     mlir::Value address, mlir::dataflow::ProgramUnitOp pu,
     const SymbolAllocator& symbols);
 
+/// What displaces a start address: the tile a program reads is at an offset
+/// into the view it is taken from, and that offset is part of the address a
+/// symbol has to stand for.
+///
+/// The offset is a constant where every grid element reads the same tile of the
+/// view, and one constant per unit where the view is the whole tensor and each
+/// element takes its own slab out of it.
+struct Displacement {
+  /// What displaces the address where every unit agrees on it.
+  int64_t everywhere = 0;
+  /// The units it differs on and what it is on each, in the order \p pu lists
+  /// them. Empty where `everywhere` is the whole story, which is the common
+  /// case.
+  llvm::SmallVector<std::pair<mlir::Value, int64_t>> perUnit;
+
+  /// Whether the displacement is a grid element's own rather than one number.
+  bool varies() const { return !perUnit.empty(); }
+
+  /// What displaces the address on \p unit.
+  int64_t at(mlir::Value unit) const;
+};
+
+/// Takes \p offset -- what displaces a view's start address, as the access tile
+/// read out of that view leaves it -- apart into what it is worth on each unit
+/// \p pu runs on.
+///
+/// A constant is the same everywhere and is the whole answer. Anything else has
+/// to be an expression over constants and per-grid queries, which is what an
+/// access tile offset computed from the compute tile id has become by here.
+///
+/// Fails on a displacement that is neither: a value only the running program
+/// has, which cannot be a term of what a symbol is computed from -- there would
+/// be nothing to write down for it.
+mlir::FailureOr<Displacement> takeDisplacementApart(
+    mlir::OpFoldResult offset, mlir::dataflow::ProgramUnitOp pu);
+
 /// Emits the start address \p taken describes, displaced by \p displacement, at
 /// \p builder's insertion point, and returns what the view should read.
 ///
 /// One `symbol.create_symbol` where every grid element agrees, or one per
-/// element gathered into a uniform map keyed on the unit. The declaration
-/// saying what each of those symbols is computed from goes at \p
-/// definitions_at, which has to be somewhere \p taken's root is in scope and
-/// outside the region a single grid element's program is read from.
+/// element gathered into a uniform map keyed on the unit -- which is what a
+/// grid element's own displacement asks for just as much as an address that
+/// already differs per element. The declaration saying what each of those
+/// symbols is computed from goes at \p definitions_at, which has to be
+/// somewhere \p taken's root is in scope and outside the region a single grid
+/// element's program is read from.
 mlir::FailureOr<mlir::Value> emitSymbolicStartAddress(
-    const SymbolicAddress& taken, int64_t displacement,
+    const SymbolicAddress& taken, const Displacement& displacement,
     mlir::dataflow::ProgramUnitOp pu, SymbolAllocator& symbols,
     mlir::OpBuilder& builder, mlir::OpBuilder& definitions_at,
     mlir::Location loc);
