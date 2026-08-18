@@ -8,9 +8,8 @@
 // module of its own, in a function taking no arguments, because an argument is a
 // value only a caller has and there is no caller on a device.
 //
-// So the symbol declarations move out of the DataflowIR and the arguments go with
-// them, which is what makes the inner function something code generation can be
-// handed.
+// The symbol declarations move out of the DataflowIR and the arguments go with
+// them, so that code generation can be handed the inner function.
 
 // The declaration module is untouched: it holds the kernel, not a program.
 // CHECK:      func.func @kernel(%[[ARG:.*]]: index)

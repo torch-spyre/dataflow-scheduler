@@ -18,11 +18,15 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
 
+#include <limits>
+
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/DebugLog.h"
+#include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/IRMapping.h"
@@ -160,9 +164,20 @@ std::optional<int64_t> evaluateAtUnit(mlir::Value value, mlir::Value unit) {
   std::optional<int64_t> rhs = evaluateAtUnit(op->getOperand(1), unit);
   if (!lhs || !rhs) return std::nullopt;
 
-  if (mlir::isa<mlir::arith::AddIOp>(op)) return *lhs + *rhs;
-  if (mlir::isa<mlir::arith::SubIOp>(op)) return *lhs - *rhs;
-  if (mlir::isa<mlir::arith::MulIOp>(op)) return *lhs * *rhs;
+  // Checked, and an overflow is std::nullopt like anything else that cannot be
+  // worked out: what the caller does with that is report the offset as one no
+  // symbol can be written for, which is the right answer for a number that does
+  // not fit either.
+  int64_t result = 0;
+  if (mlir::isa<mlir::arith::AddIOp>(op))
+    return llvm::AddOverflow(*lhs, *rhs, result) ? std::nullopt
+                                                 : std::optional(result);
+  if (mlir::isa<mlir::arith::SubIOp>(op))
+    return llvm::SubOverflow(*lhs, *rhs, result) ? std::nullopt
+                                                 : std::optional(result);
+  if (mlir::isa<mlir::arith::MulIOp>(op))
+    return llvm::MulOverflow(*lhs, *rhs, result) ? std::nullopt
+                                                 : std::optional(result);
   if (mlir::isa<mlir::arith::MinSIOp>(op)) return std::min(*lhs, *rhs);
   // A division by zero is undefined where the program runs and is not something
   // to work out an address from here either.
@@ -206,6 +221,14 @@ SymbolAllocator::SymbolAllocator(mlir::ModuleOp top) {
         LDBG(1) << "  " << kernel.getName() << " argument "
                 << arg.getArgNumber() << " is symbol " << next_input_;
       }
+      // Ids only ever descend, and a negative id is what marks one as a symbol,
+      // so a wrap would hand out a positive number that means something else.
+      // It takes 2^63 arguments to get here, but an id that is silently not a
+      // symbol is not a failure anything downstream would catch.
+      if (next_input_ == std::numeric_limits<int64_t>::min())
+        llvm::report_fatal_error(
+            "symbol ids exhausted numbering the run's "
+            "inputs");
       --next_input_;
     }
   }
@@ -218,6 +241,8 @@ std::pair<int64_t, bool> SymbolAllocator::derivedIdFor(
                              llvm::SmallVector<int64_t>(terms));
   const auto found = derived_.find(key);
   if (found != derived_.end()) return {found->second, false};
+  if (next_derived_ == std::numeric_limits<int64_t>::min())
+    llvm::report_fatal_error("symbol ids exhausted deriving addresses");
   const int64_t id = next_derived_--;
   derived_.emplace(std::move(key), id);
   return {id, true};
@@ -328,7 +353,7 @@ scheduler::takeSymbolicAddressApart(mlir::Value address,
 
     if (std::optional<llvm::DenseMap<mlir::Value, int64_t>> per_unit =
             perUnitConstantsOf(value)) {
-      taken.perUnitLeaves.push_back(value);
+      taken.per_unit_leaves.push_back(value);
       per_unit_constants.push_back(std::move(*per_unit));
       continue;
     }
@@ -356,7 +381,7 @@ scheduler::takeSymbolicAddressApart(mlir::Value address,
 
   // What each unit's copy of the per-grid leaves is. Every leaf has to say
   // something for every unit the program runs on, or the map cannot be keyed.
-  if (!taken.perUnitLeaves.empty()) {
+  if (!taken.per_unit_leaves.empty()) {
     for (mlir::Value unit : unitsOf(pu)) {
       llvm::SmallVector<int64_t> terms;
       for (const auto& per_unit : per_unit_constants) {
@@ -370,13 +395,13 @@ scheduler::takeSymbolicAddressApart(mlir::Value address,
         }
         terms.push_back(found->second);
       }
-      taken.perUnitTerms.emplace_back(unit, std::move(terms));
+      taken.per_unit_terms.emplace_back(unit, std::move(terms));
     }
   }
 
   LDBG(1) << "  start address is symbol " << taken.input << " through "
-          << taken.expression.size() << " op(s), " << taken.perUnitTerms.size()
-          << " per-grid value(s)";
+          << taken.expression.size() << " op(s), "
+          << taken.per_unit_terms.size() << " per-grid value(s)";
   return std::optional<SymbolicAddress>(std::move(taken));
 }
 
@@ -398,7 +423,7 @@ int64_t declareDerived(const SymbolicAddress& taken,
                        SymbolAllocator& symbols, mlir::OpBuilder& builder,
                        mlir::Location loc) {
   mlir::IRMapping mapping;
-  for (auto [leaf, term] : llvm::zip(taken.perUnitLeaves, terms))
+  for (auto [leaf, term] : llvm::zip(taken.per_unit_leaves, terms))
     mapping.map(leaf, mlir::arith::ConstantIndexOp::create(builder, loc, term));
 
   // Folded as it is built, because with only one leaf left unknown most of the
@@ -442,9 +467,9 @@ int64_t declareDerived(const SymbolicAddress& taken,
 }  // namespace
 
 int64_t scheduler::Displacement::at(mlir::Value unit) const {
-  for (const auto& [key, by] : perUnit)
-    if (key == unit) return by;
-  return everywhere;
+  for (const auto& [key, offset] : per_unit)
+    if (key == unit) return offset;
+  return common_offset;
 }
 
 mlir::FailureOr<scheduler::Displacement> scheduler::takeDisplacementApart(
@@ -454,12 +479,12 @@ mlir::FailureOr<scheduler::Displacement> scheduler::takeDisplacementApart(
   // A constant, whether it arrived as one or was folded into one: the same
   // wherever the program runs, and the whole answer.
   if (auto attr = mlir::dyn_cast<mlir::Attribute>(offset)) {
-    displaced.everywhere = llvm::cast<mlir::IntegerAttr>(attr).getInt();
+    displaced.common_offset = llvm::cast<mlir::IntegerAttr>(attr).getInt();
     return displaced;
   }
   auto value = llvm::cast<mlir::Value>(offset);
   if (std::optional<int64_t> constant = mlir::getConstantIntValue(value)) {
-    displaced.everywhere = *constant;
+    displaced.common_offset = *constant;
     return displaced;
   }
 
@@ -487,13 +512,13 @@ mlir::FailureOr<scheduler::Displacement> scheduler::takeDisplacementApart(
     return entry.second == per_unit.front().second;
   });
   if (uniform) {
-    displaced.everywhere = per_unit.front().second;
+    displaced.common_offset = per_unit.front().second;
     return displaced;
   }
 
-  displaced.perUnit = std::move(per_unit);
+  displaced.per_unit = std::move(per_unit);
   LDBG(1) << "  displaced by a grid element's own offset, on "
-          << displaced.perUnit.size() << " unit(s)";
+          << displaced.per_unit.size() << " unit(s)";
   return displaced;
 }
 
@@ -505,8 +530,8 @@ mlir::FailureOr<mlir::Value> scheduler::emitSymbolicStartAddress(
   // The same everywhere: one symbol, and no map to choose between copies of it.
   // Which is the common case -- a tensor read whole rather than a slab of it
   // per grid element -- and worth not building a map for.
-  if (taken.perUnitTerms.empty() && !displacement.varies()) {
-    const int64_t id = declareDerived(taken, {}, displacement.everywhere,
+  if (taken.per_unit_terms.empty() && !displacement.varies()) {
+    const int64_t id = declareDerived(taken, {}, displacement.common_offset,
                                       symbols, definitions_at, loc);
     return createSymbolicStartAddress(builder, loc, id);
   }
@@ -516,7 +541,7 @@ mlir::FailureOr<mlir::Value> scheduler::emitSymbolicStartAddress(
   // displacement differs the expression has no per-grid leaf and every unit
   // rebuilds the same one; the units are still what the map is keyed on.
   llvm::SmallVector<std::pair<mlir::Value, llvm::SmallVector<int64_t>>>
-      per_unit_terms = taken.perUnitTerms;
+      per_unit_terms = taken.per_unit_terms;
   if (per_unit_terms.empty())
     for (mlir::Value unit : unitsOf(pu))
       per_unit_terms.emplace_back(unit, llvm::SmallVector<int64_t>{});

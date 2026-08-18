@@ -508,11 +508,11 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
           needed_spaces, grid_size, memory_tree, memory_unit_ssa, builder)))
     return mlir::failure();
 
-  // Where what a symbol is computed from is said: at function level rather than
-  // inside a program unit, because one grid element's program is what a unit's
-  // region is, and a symbol's definition is about the run rather than about any
-  // one element of it. Nothing reads these values -- they are there so that
-  // whatever resolves the symbols can read what each one is.
+  // Where each symbol's definition is emitted: at function level, not inside a
+  // program unit. A unit's region is one grid element's program, while a symbol
+  // belongs to the run as a whole. Nothing reads the values emitted here; they
+  // exist so that whatever resolves the symbols can read each definition back
+  // out of the IR.
   mlir::OpBuilder definitions(func.getContext());
   definitions.setInsertionPoint(&entry, builder.getInsertionPoint());
 

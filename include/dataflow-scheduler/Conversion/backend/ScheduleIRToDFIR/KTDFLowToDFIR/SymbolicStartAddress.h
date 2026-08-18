@@ -30,11 +30,12 @@
 /// separately, as arithmetic the IR carries alongside:
 ///
 /// ```mlir
-///   symbol.create_id %arg0 {symbol_id = -1 : si64} : index   // the input
+///   // -1 is the input; -3 is -1 + 24576.
+///   symbol.create_id %arg0 {symbol_id = -1 : si64} : index
 ///   %0 = arith.addi %arg0, %c24576 : index
-///   symbol.create_id %0 {symbol_id = -3 : si64} : index      // -3 = -1 +
-///   24576 %sym = symbol.create_symbol {SymbolId = -3 : i64} : index %v =
-///   dataflow.get_logical_memory_view %unit, %sym {layout_map = ...}
+///   symbol.create_id %0 {symbol_id = -3 : si64} : index
+///   %sym = symbol.create_symbol {SymbolId = -3 : i64} : index
+///   %v = dataflow.get_logical_memory_view %unit, %sym {layout_map = ...}
 /// ```
 ///
 /// Nothing reads `%0`. It is there so that whatever resolves the symbols can
@@ -162,22 +163,23 @@ class SymbolAllocator {
 /// A start address that is an expression over a run input, taken apart: which
 /// input it is rooted at, and what each grid element's own address is.
 struct SymbolicAddress {
-  /// The input the address is computed from, as a symbol id.
+  /// The symbol id of the input the address is computed from.
   int64_t input = 0;
-  /// The value the expression is rooted at -- the argument the input arrives
-  /// as, which every per-element expression is written over.
+  /// The block argument that input arrives as. Every per-unit expression is
+  /// rebuilt over this value.
   mlir::Value root;
-  /// The units this address is read on, and for each the constant every
-  /// per-grid term of the expression takes there. Empty where the address is
-  /// the same everywhere, which is the common case.
+  /// One entry per unit the address is read on: the unit, and the constant each
+  /// of `per_unit_leaves` takes there, in the same order. Empty when the
+  /// address does not vary with the grid element, which is the common case.
   llvm::SmallVector<std::pair<mlir::Value, llvm::SmallVector<int64_t>>>
-      perUnitTerms;
-  /// The ops of the expression, roots-last, each to be rebuilt per unit. Empty
-  /// where the address is the input itself and there is nothing to derive.
+      per_unit_terms;
+  /// The operations of the expression, operands before results, so rebuilding
+  /// them in order works. Empty when the address is the input itself.
   llvm::SmallVector<mlir::Operation*> expression;
-  /// The per-grid leaves of the expression, in the order `perUnitTerms` lists
-  /// their values.
-  llvm::SmallVector<mlir::Value> perUnitLeaves;
+  /// The operands of the expression whose value differs per unit -- each a
+  /// `uniform.query_map` over per-unit constants. `per_unit_terms` gives what
+  /// each is worth on each unit.
+  llvm::SmallVector<mlir::Value> per_unit_leaves;
 };
 
 /// Takes \p address apart as an expression over a run input, or returns
@@ -194,39 +196,38 @@ mlir::FailureOr<std::optional<SymbolicAddress>> takeSymbolicAddressApart(
     mlir::Value address, mlir::dataflow::ProgramUnitOp pu,
     const SymbolAllocator& symbols);
 
-/// What displaces a start address: the tile a program reads is at an offset
-/// into the view it is taken from, and that offset is part of the address a
-/// symbol has to stand for.
+/// The offset of the tile a program reads into the view it is taken from. It is
+/// part of the address the symbol stands for, so it has to be a number here.
 ///
-/// The offset is a constant where every grid element reads the same tile of the
-/// view, and one constant per unit where the view is the whole tensor and each
-/// element takes its own slab out of it.
+/// It is one number when every grid element reads the same tile of the view,
+/// and one number per unit when the view is the whole tensor and each element
+/// reads its own slab of it.
 struct Displacement {
-  /// What displaces the address where every unit agrees on it.
-  int64_t everywhere = 0;
-  /// The units it differs on and what it is on each, in the order \p pu lists
-  /// them. Empty where `everywhere` is the whole story, which is the common
+  /// The offset every unit shares. When `per_unit` is empty this is the offset.
+  int64_t common_offset = 0;
+  /// The offset on each unit, in the order the program unit lists them. Empty
+  /// when the offset does not vary with the grid element, which is the common
   /// case.
-  llvm::SmallVector<std::pair<mlir::Value, int64_t>> perUnit;
+  llvm::SmallVector<std::pair<mlir::Value, int64_t>> per_unit;
 
-  /// Whether the displacement is a grid element's own rather than one number.
-  bool varies() const { return !perUnit.empty(); }
+  /// Whether the offset differs between units.
+  bool varies() const { return !per_unit.empty(); }
 
-  /// What displaces the address on \p unit.
+  /// The offset on \p unit.
   int64_t at(mlir::Value unit) const;
 };
 
-/// Takes \p offset -- what displaces a view's start address, as the access tile
-/// read out of that view leaves it -- apart into what it is worth on each unit
-/// \p pu runs on.
+/// Evaluates \p offset -- the offset of the tile a program reads into the view
+/// it is taken from -- on each unit \p pu runs on.
 ///
-/// A constant is the same everywhere and is the whole answer. Anything else has
-/// to be an expression over constants and per-grid queries, which is what an
-/// access tile offset computed from the compute tile id has become by here.
+/// A constant evaluates to itself on every unit. Otherwise \p offset has to be
+/// an expression over constants and `uniform.query_map`s of per-unit constants,
+/// which is what an offset computed from `ktdp.get_compute_tile_id` has become
+/// by this point.
 ///
-/// Fails on a displacement that is neither: a value only the running program
-/// has, which cannot be a term of what a symbol is computed from -- there would
-/// be nothing to write down for it.
+/// Fails when \p offset is neither, i.e. when it is only known while the
+/// program runs. A symbol's definition has to be written down at compile time,
+/// and such an offset cannot be.
 mlir::FailureOr<Displacement> takeDisplacementApart(
     mlir::OpFoldResult offset, mlir::dataflow::ProgramUnitOp pu);
 

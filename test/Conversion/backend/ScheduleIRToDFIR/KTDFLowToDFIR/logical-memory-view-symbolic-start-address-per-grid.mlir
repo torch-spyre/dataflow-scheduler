@@ -16,8 +16,8 @@
 // CHECK-NEXT:      symbol.create_id %[[BASE]] {symbol_id = -1 : si64} : index
 
 // The definition of the second core's address, at function level -- outside the
-// region that is one core's program, because what a symbol is is about the run
-// rather than about any one core.
+// region that is one core's program, because symbols belong to the run rather
+// than to any one core.
 // CHECK-LABEL:   func.func private @sched_0(%{{.*}}: index) attributes {grid = [2]} {
 // CHECK:           %[[C24576:.*]] = arith.constant 24576 : index
 // CHECK:           %[[DDR:.*]] = dataflow.get_unit {name = "ddr", type = "ddr"}

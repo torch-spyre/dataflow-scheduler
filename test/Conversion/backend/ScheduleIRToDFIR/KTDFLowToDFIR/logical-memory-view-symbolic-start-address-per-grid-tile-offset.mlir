@@ -7,19 +7,19 @@
 // reinterpret_cast carries. Which is what a KTIR access tile split along the
 // outer dimension becomes.
 //
-// So the address a core reads is the input displaced by a value that differs per
-// core, and that is a symbol per core exactly as arithmetic on the view's own
-// address would have been. A displacement is a term of what each symbol is
-// computed from rather than arithmetic left at the view, because what the run
-// writes over has to be the whole operand.
+// So the address a core reads is the input plus an offset that differs per core,
+// which gives a symbol per core exactly as arithmetic on the view's own address
+// would have. The offset becomes a term of each symbol's definition rather than
+// arithmetic left at the view, because the run has to write over the whole
+// operand.
 
 // CHECK-LABEL:   func.func @test(
 // CHECK-SAME:      %[[BASE:.*]]: index)
 // CHECK-NEXT:      symbol.create_id %[[BASE]] {symbol_id = -1 : si64} : index
 
-// The second core's address, defined at function level: the input plus the rows
-// its tile starts at. Nothing reads it -- it is there so that whatever resolves
-// the symbols can read what -2 is.
+// The second core's address, defined at function level: the input plus the row
+// its tile starts at. Nothing reads it; it is there so that whatever resolves
+// the symbols can read the definition of -2.
 // CHECK-LABEL:   func.func private @sched_0(%{{.*}}: index) attributes {grid = [2]} {
 // CHECK:           %[[C24576:.*]] = arith.constant 24576 : index
 // CHECK:           %[[DDR:.*]] = dataflow.get_unit {name = "ddr", type = "ddr"}
