@@ -57,8 +57,9 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SetVector.h"
+#include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -69,6 +70,14 @@
 
 #define PASS_NAME "wrap-program-dfir"
 #define DEBUG_TYPE PASS_NAME
+
+namespace {
+static llvm::cl::opt<bool> DisableThisPass(
+    "wrap-program-dfir-disable",
+    llvm::cl::desc("Leave each program as one level rather than splitting it "
+                   "into what it is and what it is compiled from"),
+    llvm::cl::init(false));
+}  // namespace
 
 using namespace scheduler;
 
@@ -94,15 +103,14 @@ bool holdsDataflow(mlir::ModuleOp module) {
   return found;
 }
 
-/// The ops of \p entry that exist only to say what a symbol is -- every
-/// `symbol.create_id` and, transitively, whatever computes what it points at.
-/// In the order they appear, so rebuilding them elsewhere in that order always
-/// has its operands already rebuilt.
+/// Gets the ops of \p entry that exist only to say what a symbol is: every
+/// `symbol.create_id`, and whatever computes the value each one points at. In
+/// the order they appear in the block, so rebuilding them elsewhere in that
+/// order always has its operands already rebuilt.
 ///
-/// Fails where something else uses one of \p entry's arguments: an argument is
-/// a value only the caller has, so the DataflowIR left behind could not be
-/// compiled, and saying so here beats a diagnostic from deep inside code
-/// generation.
+/// Fails if anything else uses one of \p entry's arguments. An argument is a
+/// value only the caller has, so the DataflowIR left behind could not be
+/// compiled, and failing here beats a diagnostic from inside code generation.
 ///
 /// Only \p entry is looked at, and a declaration anywhere else in the function
 /// is a failure rather than something followed. What writes them is
@@ -128,9 +136,10 @@ mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
       });
   if (elsewhere.wasInterrupted()) return mlir::failure();
 
-  // Backwards from each declaration, so an op is collected only if a
-  // declaration is what it is for.
-  llvm::SetVector<mlir::Operation*> wanted;
+  // Walked backwards from each declaration, so an op is collected only when a
+  // declaration depends on it. A set rather than a list: the order comes from
+  // the block below, and nothing iterates this.
+  llvm::DenseSet<mlir::Operation*> wanted;
   llvm::SmallVector<mlir::Value> pending;
   for (mlir::Operation& op : entry) {
     if (!mlir::isa<mlir::symbol::CreateIdOp>(op)) continue;
@@ -140,21 +149,35 @@ mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
   while (!pending.empty()) {
     mlir::Value value = pending.pop_back_val();
     mlir::Operation* op = value.getDefiningOp();
-    if (!op || op->getBlock() != &entry) continue;
-    if (!wanted.insert(op)) continue;
+    if (!op) {
+      // A block argument, and the only ones a declaration in this block may be
+      // written over are the program's own -- those are rebuilt over the
+      // caller's arguments. Anything else is a value that exists only inside
+      // some region of the body, and cloning the declaration would have nothing
+      // to give it.
+      auto arg = mlir::dyn_cast<mlir::BlockArgument>(value);
+      if (arg && arg.getOwner() == &entry) continue;
+      return entry.getParentOp()->emitError()
+             << PASS_NAME
+             << ": a symbol is said over a value that exists only inside the "
+                "program's body, so it cannot be declared beside the program";
+    }
+    if (op->getBlock() != &entry) continue;
+    if (!wanted.insert(op).second) continue;
     for (mlir::Value operand : op->getOperands()) pending.push_back(operand);
   }
 
-  // Every use of an argument has to be one of them, or the DataflowIR needs a
-  // value it will not have.
+  // An argument may be read only by the ops collected above. Anything else
+  // reading one would be left in the DataflowIR, which is compiled with no
+  // arguments to give it.
   for (mlir::BlockArgument arg : entry.getArguments()) {
     for (mlir::Operation* user : arg.getUsers()) {
       if (wanted.contains(user)) continue;
       return user->emitError()
              << PASS_NAME
-             << ": this reads an argument of the program, which the DataflowIR "
-                "compiled from it cannot be given -- only what a symbol is may "
-                "be said over one";
+             << ": this reads an argument of the program. The DataflowIR the "
+                "program is compiled from takes no arguments, so only a symbol "
+                "declaration may read one";
     }
   }
 
@@ -167,6 +190,7 @@ mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
 struct WrapProgramDFIRPass
     : public impl::WrapProgramDFIRPassBase<WrapProgramDFIRPass> {
   void runOnOperation() override {
+    if (DisableThisPass) return;
     mlir::ModuleOp top = getOperation();
 
     // Collected before any is wrapped, because wrapping a program module adds a
@@ -279,9 +303,8 @@ struct WrapProgramDFIRPass
                                mlir::ValueRange{});
     mlir::func::ReturnOp::create(rewriter, program_module.getLoc());
 
-    // And the body left with no arguments, which is what makes it something
-    // code generation can take: the originals are gone with the declarations
-    // that were the only things reading them.
+    // The body is left with no arguments, which is what code generation needs.
+    // Nothing reads them any more: the declarations that did were just moved.
     for (mlir::Operation* op : llvm::reverse(*symbol_ops)) op->erase();
     body_entry.eraseArguments(0, body_entry.getNumArguments());
     program.setFunctionType(body_type);
