@@ -19,7 +19,7 @@
   kind = "MNILU",
   ktdf_arch.features = { 
     ktdf_arch.feature.load = {
-      word_size = #ktdf_arch.map<"DDR" = 64>,
+      word_size = #ktdf_arch.map<"DDR" = 64, "L1" = 64>,
       access_granularity = #ktdf_arch.map<
         "DDR" = [{size_in_words = 1, align_in_words = 1}],
         "L1" = [{size_in_words = 1, align_in_words = 1}]
@@ -35,7 +35,7 @@
   kind = "MNISU",
   ktdf_arch.features = { 
     ktdf_arch.feature.store = {
-      word_size = #ktdf_arch.map<"DDR" = 64>,
+      word_size = #ktdf_arch.map<"DDR" = 64, "L1" = 64>,
       access_granularity = #ktdf_arch.map<
         "DDR" = [{size_in_words = 1, align_in_words = 1}],
         "L1" = [{size_in_words = 1, align_in_words = 1}]
