@@ -20,6 +20,9 @@
 // CHECK-NEXT:   ktir-legality-check
 // CHECK-NEXT:   compute-group-extraction
 // CHECK-NEXT:   construct-three-stage-pipeline
+// CHECK-NEXT:   func.func(
+// CHECK-NEXT:   ktdfarch-apply-patterns
+// CHECK-NEXT:   )
 // CHECK-NEXT:   path-expansion
 // CHECK-NEXT:   scalar-broadcast-legalization
 // CHECK-NEXT:   normalize-scf-for-loops

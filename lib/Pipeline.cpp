@@ -28,6 +28,7 @@
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h"
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 
@@ -42,6 +43,9 @@ void scheduler::buildKTIRFrontendPipeline(
 
 void scheduler::buildSchedulerOptimizationPipeline(
     mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
+  // TODO: Check state / CLI arguments to determine which pattern groups to
+  //       enable. E.g., device variants, relaxed numerics, ...
+  pm.addPass(mlir::ktdf_arch::createApplyPatternsPass());
   pm.addPass(createPathExpansionPass(scheduler_ctx));
   pm.addPass(createScalarBroadcastLegalizationPass());
   pm.addPass(createNormalizeSCFForLoopsPass());
