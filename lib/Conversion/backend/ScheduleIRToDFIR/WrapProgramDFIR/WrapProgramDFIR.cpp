@@ -63,6 +63,8 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/IRMapping.h"
+#include "mlir/IR/PatternMatch.h"
+#include "mlir/IR/SymbolTable.h"
 #include "mlir/Pass/Pass.h"
 
 #define PASS_NAME "wrap-program-dfir"
@@ -101,8 +103,31 @@ bool holdsDataflow(mlir::ModuleOp module) {
 /// a value only the caller has, so the DataflowIR left behind could not be
 /// compiled, and saying so here beats a diagnostic from deep inside code
 /// generation.
+///
+/// Only \p entry is looked at, and a declaration anywhere else in the function
+/// is a failure rather than something followed. What writes them is
+/// SymbolAllocator, which writes every one into the entry block, over an
+/// argument or over arithmetic it puts there too -- so an expression that ran
+/// through control flow or a nested region is not a shape this has to handle,
+/// and it is refused rather than half-handled: left where it was, a declaration
+/// would stay in the DataflowIR that code generation is handed, which is the
+/// one thing this pass exists to prevent. Following definitions across regions
+/// would take something like `PredecessorInfo`, and there is nothing yet to
+/// follow.
 mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
-    mlir::Block& entry) {
+    mlir::func::FuncOp program, mlir::Block& entry) {
+  mlir::WalkResult elsewhere =
+      program.walk([&](mlir::symbol::CreateIdOp declaration) {
+        if (declaration->getBlock() == &entry)
+          return mlir::WalkResult::advance();
+        declaration.emitError()
+            << PASS_NAME
+            << ": a symbol is declared outside the program's entry block, so "
+               "what it is could not be moved out of the DataflowIR";
+        return mlir::WalkResult::interrupt();
+      });
+  if (elsewhere.wasInterrupted()) return mlir::failure();
+
   // Backwards from each declaration, so an op is collected only if a
   // declaration is what it is for.
   llvm::SetVector<mlir::Operation*> wanted;
@@ -144,10 +169,10 @@ struct WrapProgramDFIRPass
   void runOnOperation() override {
     mlir::ModuleOp top = getOperation();
 
+    // Collected before any is wrapped, because wrapping a program module adds a
+    // module inside it and this walk is over the modules of `top`.
     llvm::SmallVector<mlir::ModuleOp> programs;
-    for (mlir::Operation& op : top.getBodyRegion().front()) {
-      auto program_module = mlir::dyn_cast<mlir::ModuleOp>(op);
-      if (!program_module) continue;
+    for (auto program_module : top.getOps<mlir::ModuleOp>()) {
       // Only the programs. The declaration module is the unnamed one and holds
       // the kernels rather than any DataflowIR.
       if (!program_module.getSymName().has_value()) continue;
@@ -181,21 +206,41 @@ struct WrapProgramDFIRPass
     // What the body says about symbols, which belongs beside what the program
     // is rather than in what it is compiled from.
     mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbol_ops =
-        symbolOpsOf(body_entry);
+        symbolOpsOf(program, body_entry);
     if (mlir::failed(symbol_ops)) return mlir::failure();
 
-    program.setSymName(body_name);
+    // Renamed through the symbol table, so the uses of the old name go with it.
+    // A name already taken is reported rather than uniqued with a suffix: what
+    // a program's body is called is a contract with whatever reads the compiled
+    // program -- it looks the body up as the program's name plus `_body` -- so
+    // a second `<name>_body` here is a collision to be told about, not one to
+    // paper over with `<name>_body_0`.
+    mlir::SymbolTable program_symbols(program_module);
+    if (program_symbols.lookup(body_name)) {
+      return program_module.emitError()
+             << PASS_NAME << ": '" << name << "' already holds a '" << body_name
+             << "', which is the name the DataflowIR it is compiled from has "
+                "to "
+                "take";
+    }
+    if (mlir::failed(program_symbols.rename(program, body_name))) {
+      return program_module.emitError() << PASS_NAME << ": could not rename '"
+                                        << name << "' to '" << body_name << "'";
+    }
 
-    llvm::SmallVector<mlir::Operation*> contents;
-    for (mlir::Operation& op : program_module.getBodyRegion().front())
-      contents.push_back(&op);
+    // A block of its own for what the program module will hold, so that what it
+    // holds now moves into the inner module whole rather than op by op. The
+    // inner module goes in the new block; everything else is what moves.
+    mlir::IRRewriter rewriter(program_module.getContext());
+    mlir::Block& contents = program_module.getBodyRegion().front();
+    mlir::Block* outer = rewriter.createBlock(
+        &program_module.getBodyRegion(), program_module.getBodyRegion().end());
 
-    mlir::OpBuilder builder(program_module.getContext());
-    builder.setInsertionPointToEnd(program_module.getBody());
-    auto dfir_module = mlir::ModuleOp::create(builder, program_module.getLoc());
-
-    mlir::Block* inner = dfir_module.getBody();
-    for (mlir::Operation* op : contents) op->moveBefore(inner, inner->end());
+    rewriter.setInsertionPointToEnd(outer);
+    auto dfir_module =
+        mlir::ModuleOp::create(rewriter, program_module.getLoc());
+    rewriter.inlineBlockBefore(&contents, dfir_module.getBody(),
+                               dfir_module.getBody()->end());
 
     // Neither of the two definitions this leaves has a caller inside its own
     // module -- each is called from a module out, which is a symbol table of
@@ -209,17 +254,17 @@ struct WrapProgramDFIRPass
     // as standing in for a definition elsewhere.
     program.setVisibility(mlir::SymbolTable::Visibility::Public);
 
-    builder.setInsertionPoint(dfir_module);
-    auto body_type = builder.getFunctionType(/*inputs=*/{}, /*results=*/{});
+    rewriter.setInsertionPoint(dfir_module);
+    auto body_type = rewriter.getFunctionType(/*inputs=*/{}, /*results=*/{});
     auto declaration = mlir::func::FuncOp::create(
-        builder, program_module.getLoc(), body_name, body_type);
+        rewriter, program_module.getLoc(), body_name, body_type);
     declaration.setPrivate();
 
-    auto caller = mlir::func::FuncOp::create(builder, program_module.getLoc(),
+    auto caller = mlir::func::FuncOp::create(rewriter, program_module.getLoc(),
                                              name, type);
     caller.setVisibility(mlir::SymbolTable::Visibility::Public);
     mlir::Block* entry = caller.addEntryBlock();
-    builder.setInsertionPointToEnd(entry);
+    rewriter.setInsertionPointToEnd(entry);
 
     // The symbol declarations rebuilt over the caller's own arguments, in the
     // order they were written, and before the call: from here down a program is
@@ -228,11 +273,11 @@ struct WrapProgramDFIRPass
     mlir::IRMapping mapping;
     for (mlir::BlockArgument arg : body_entry.getArguments())
       mapping.map(arg, entry->getArgument(arg.getArgNumber()));
-    for (mlir::Operation* op : *symbol_ops) builder.clone(*op, mapping);
+    for (mlir::Operation* op : *symbol_ops) rewriter.clone(*op, mapping);
 
-    mlir::func::CallOp::create(builder, program_module.getLoc(), declaration,
+    mlir::func::CallOp::create(rewriter, program_module.getLoc(), declaration,
                                mlir::ValueRange{});
-    mlir::func::ReturnOp::create(builder, program_module.getLoc());
+    mlir::func::ReturnOp::create(rewriter, program_module.getLoc());
 
     // And the body left with no arguments, which is what makes it something
     // code generation can take: the originals are gone with the declarations

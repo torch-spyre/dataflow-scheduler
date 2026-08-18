@@ -133,10 +133,9 @@ mlir::LogicalResult buildResolvedUnits(
   llvm::SetVector<ResourceType> per_core;
   for (auto ms : needed_spaces) {
     if (memory_tree.isGlobalMemory(ms) || memory_tree.isBelowScratchPad(ms)) {
-      auto it = memory_unit_ssa.find({ms, -1});
-      if (it == memory_unit_ssa.end())
-        return pu.emitError("global memory unit SSA not found");
-      resolved_units[ms] = it->second;
+      mlir::Value unit = memory_unit_ssa.lookup({ms, -1});
+      if (!unit) return pu.emitError("global memory unit SSA not found");
+      resolved_units[ms] = unit;
     } else if (memory_tree.isPerCoreScratchPadMemory(ms)) {
       per_core.insert(ms);
     }
@@ -244,16 +243,15 @@ mlir::LogicalResult replaceSourceAChains(
         if (!ms)
           return cmv.emitError(
               "construct_memory_view: no memory space found in chain");
-        auto it = resolved_units.find(*ms);
-        if (it == resolved_units.end())
-          return cmv.emitError("no resolved unit for memory space");
+        mlir::Value unit = resolved_units.lookup(*ms);
+        if (!unit) return cmv.emitError("no resolved unit for memory space");
 
         // Emit get_logical_memory_view with plain result type (no memory space,
         // no strided layout). The builder is already positioned after the last
         // chain op (and after any offset arithmetic just emitted), so no
         // setInsertionPoint needed here.
         auto view_op = mlir::dataflow::GetLogicalMemoryViewOp::create(
-            builder, cmv.getLoc(), plain_type, it->second, start_address,
+            builder, cmv.getLoc(), plain_type, unit, start_address,
             mlir::AffineMapAttr::get(layout_map));
 
         // cursor is the tail of the chain, replace all its users with the new
@@ -386,10 +384,8 @@ mlir::LogicalResult replaceSourceBCasts(
     auto ms = getMemorySpaceAttr(result_type);
     if (!ms)
       return ucc.emitError("unrealized_conversion_cast: no ktdf memory space");
-    auto it = resolved_units.find(*ms);
-    if (it == resolved_units.end())
-      return ucc.emitError("no resolved unit for memory space");
-    mlir::Value from_unit = it->second;
+    mlir::Value from_unit = resolved_units.lookup(*ms);
+    if (!from_unit) return ucc.emitError("no resolved unit for memory space");
 
     mlir::Value addr = ucc.getInputs()[0];
     auto plain_type =
