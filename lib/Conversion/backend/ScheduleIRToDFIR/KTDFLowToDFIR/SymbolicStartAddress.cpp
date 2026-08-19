@@ -23,6 +23,7 @@
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
 #include "llvm/Support/DebugLog.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -203,8 +204,10 @@ SymbolAllocator::SymbolAllocator(mlir::ModuleOp top) {
   // are what the run takes in.
   llvm::SmallVector<mlir::func::FuncOp> kernels;
   top.walk([&](mlir::func::FuncOp func) {
-    if (func.getBody().empty()) return;
-    if (!soleCallTo(top, func)) kernels.push_back(func);
+    if (!func.getBody().empty() && !soleCallTo(top, func))
+      kernels.push_back(func);
+    // Nothing nests a function in another, so the body holds no kernel to find.
+    return mlir::WalkResult::skip();
   });
 
   for (mlir::func::FuncOp kernel : kernels) {
@@ -237,14 +240,13 @@ SymbolAllocator::SymbolAllocator(mlir::ModuleOp top) {
 
 std::pair<int64_t, bool> SymbolAllocator::derivedIdFor(
     mlir::Value root, int64_t displacement, llvm::ArrayRef<int64_t> terms) {
-  auto key = std::make_tuple(root.getAsOpaquePointer(), displacement,
-                             llvm::SmallVector<int64_t>(terms));
+  const DerivedKey key{root, displacement, llvm::SmallVector<int64_t>(terms)};
   const auto found = derived_.find(key);
   if (found != derived_.end()) return {found->second, false};
   if (next_derived_ == std::numeric_limits<int64_t>::min())
     llvm::report_fatal_error("symbol ids exhausted deriving addresses");
   const int64_t id = next_derived_--;
-  derived_.emplace(std::move(key), id);
+  derived_.insert({key, id});
   return {id, true};
 }
 
@@ -266,9 +268,8 @@ std::optional<int64_t> SymbolAllocator::inputSymbolIdFor(
 
   mlir::ModuleOp top = topLevelModuleOf(arg.getOwner()->getParentOp());
 
-  // Walk up the calls that pass this argument along. What each hop asks is the
-  // same question of one function further out, so the loop ends at the function
-  // nothing calls -- the kernel, whose signature is the run's own inputs.
+  // Walk up the calls that pass this argument along. The loop ends at the
+  // top-level function -- the kernel, whose signature is the run's own inputs.
   for (unsigned depth = 0; depth <= kMaxCallDepth; ++depth) {
     auto func = mlir::cast<mlir::func::FuncOp>(arg.getOwner()->getParentOp());
     mlir::func::CallOp call = soleCallTo(top, func);
@@ -277,13 +278,10 @@ std::optional<int64_t> SymbolAllocator::inputSymbolIdFor(
       return -static_cast<int64_t>(arg.getArgNumber()) - 1;
     }
 
-    mlir::Value passed = call.getOperand(arg.getArgNumber());
-    mlir::BlockArgument outer = asFunctionArgument(passed);
-    if (!outer) {
-      // A constant, or something the caller computed: whatever it is, it is not
-      // an input, and the caller's own lowering is what says what it is.
-      return std::nullopt;
-    }
+    mlir::Value arg_passed = call.getOperand(arg.getArgNumber());
+    mlir::BlockArgument outer = asFunctionArgument(arg_passed);
+    // A constant, or something the caller computed: arg_passed is not an input.
+    if (!outer) return std::nullopt;
     arg = outer;
   }
 
@@ -302,19 +300,18 @@ scheduler::takeSymbolicAddressApart(mlir::Value address,
                                     const SymbolAllocator& symbols) {
   SymbolicAddress taken;
 
-  // Whether a run input reaches this address at all, asked first and on its
-  // own. Only once that is known can anything else about the expression be
-  // called a mistake: an address built from constants by an operation no
-  // definition could be read back from is simply a constant address, and not
-  // this file's business, whereas the same operation over an input is an
-  // address nothing can resolve -- and telling the two apart needs the whole
-  // expression looked at.
-  llvm::SetVector<mlir::Value> reached;
+  // The set of values this address is computed from, walked first only to
+  // answer whether a run input is among them. That has to be settled before
+  // anything else in the expression can be called an error: an operator no
+  // definition can be read back from is fine over constants -- that is just a
+  // constant address
+  // -- and fatal over an input, and only the whole expression says which it is.
+  llvm::DenseSet<mlir::Value> reached;
   llvm::SmallVector<mlir::Value> pending{address};
   bool rooted = false;
   while (!pending.empty()) {
     mlir::Value value = pending.pop_back_val();
-    if (!reached.insert(value)) continue;
+    if (!reached.insert(value).second) continue;
     if (symbols.inputSymbolIdFor(value)) {
       rooted = true;
       break;
@@ -455,12 +452,9 @@ int64_t declareDerived(const SymbolicAddress& taken,
 
   const auto [id, fresh] =
       symbols.derivedIdFor(taken.root, displacement, terms);
-  if (!fresh) {
-    // Said once already, and saying it again would leave two symbols meaning
-    // one address. What was just built for the comparison above is not needed.
-    return id;
-  }
-  mlir::symbol::CreateIdOp::create(builder, loc, result, id);
+  // Declared once. A second declaration of the same id would leave two symbols
+  // meaning one address.
+  if (fresh) mlir::symbol::CreateIdOp::create(builder, loc, result, id);
   return id;
 }
 
@@ -494,9 +488,6 @@ mlir::FailureOr<scheduler::Displacement> scheduler::takeDisplacementApart(
   for (mlir::Value unit : unitsOf(pu)) {
     std::optional<int64_t> by = evaluateAtUnit(value, unit);
     if (!by) {
-      // Reported on what computes the displacement where there is such an op --
-      // that is what would have to be written differently -- and on the
-      // program otherwise, a block argument having no other site to report at.
       mlir::Operation* site = value.getDefiningOp();
       return (site ? site->emitError() : pu.emitError())
              << "the start address is computed from a run input and displaced "

@@ -70,12 +70,11 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_SYMBOLICSTARTADDRESS_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_SYMBOLICSTARTADDRESS_H_
 
-#include <map>
 #include <optional>
-#include <tuple>
 #include <utility>
 
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
@@ -100,6 +99,18 @@ namespace scheduler {
 /// for the inputs, and to leave everything this allocator handed out alone. The
 /// declarations this writes into the IR are what say so: a consumer reads the
 /// ids rather than working them out again.
+/// What identifies a derived address: the input it is rooted at, the offset
+/// added to it, and the constants its per-unit operands take.
+struct DerivedKey {
+  mlir::Value root;
+  int64_t offset = 0;
+  llvm::SmallVector<int64_t> terms;
+
+  bool operator==(const DerivedKey& other) const {
+    return root == other.root && offset == other.offset && terms == other.terms;
+  }
+};
+
 class SymbolAllocator {
  public:
   /// Numbers the inputs of every kernel under \p top and declares each on the
@@ -123,26 +134,23 @@ class SymbolAllocator {
   /// work to be done on a unit and is copied into every one of them.
   void declareInputsIn(mlir::func::FuncOp func, mlir::OpBuilder& builder) const;
 
-  /// The symbol id standing for \p address if it is a run input, std::nullopt
-  /// if it is not -- a constant, or anything computed.
+  /// Returns the symbol id standing for \p address if it is a run input,
+  /// std::nullopt if it is not.
   ///
   /// An input is a block argument of a function's entry block, traced back
-  /// through the calls that pass it along until the kernel is reached. What
-  /// identifies it is its position in *that* signature, since a program
-  /// function takes only the subset of inputs it reads and two programs' first
-  /// arguments are in general two different tensors.
+  /// through the calls that pass it along until the kernel is reached. Its
+  /// position in the *kernel's* signature is what identifies it: a program
+  /// function takes only the inputs it reads, so two programs' first arguments
+  /// are in general two different tensors.
   std::optional<int64_t> inputSymbolIdFor(mlir::Value address) const;
 
-  /// The id for a symbol derived from \p root, displaced by \p displacement,
-  /// with
-  /// \p terms for the per-grid leaves of its expression -- and whether it is
-  /// new.
+  /// Returns the id for the symbol derived from \p root by \p displacement and
+  /// \p terms, and whether that id is newly handed out.
   ///
   /// The same address asked for twice gets the same id. One
   /// `ktdp.construct_memory_view` is copied into every unit the program runs
-  /// work on, so without this one tensor's address would become as many symbols
-  /// as there are units, all meaning the same thing and all to be resolved
-  /// separately.
+  /// on, so without this one tensor's address would become as many symbols as
+  /// there are units, all meaning the same thing and each resolved separately.
   std::pair<int64_t, bool> derivedIdFor(mlir::Value root, int64_t displacement,
                                         llvm::ArrayRef<int64_t> terms);
 
@@ -153,11 +161,11 @@ class SymbolAllocator {
   /// One past the last input id handed out, so `-(count + 1)`.
   int64_t next_input_ = -1;
   int64_t next_derived_ = -1;
-  /// What each address already asked for was given, keyed by what makes it that
-  /// address: where it is rooted, what displaces it, and its per-grid terms.
-  std::map<std::tuple<const void*, int64_t, llvm::SmallVector<int64_t>>,
-           int64_t>
-      derived_;
+  /// The id handed out for each derived address, keyed by the three things that
+  /// identify one: the input it is rooted at, the offset added to it, and the
+  /// constants its per-unit operands take. Nothing iterates it, so the order
+  /// does not matter.
+  llvm::DenseMap<DerivedKey, int64_t> derived_;
 };
 
 /// A start address that is an expression over a run input, taken apart: which
@@ -253,5 +261,28 @@ mlir::Value createSymbolicStartAddress(mlir::OpBuilder& builder,
                                        mlir::Location loc, int64_t symbol_id);
 
 }  // namespace scheduler
+
+namespace llvm {
+
+/// So that SymbolAllocator can keep its derived ids in a DenseMap.
+template <>
+struct DenseMapInfo<scheduler::DerivedKey> {
+  static scheduler::DerivedKey getEmptyKey() {
+    return {DenseMapInfo<mlir::Value>::getEmptyKey(), 0, {}};
+  }
+  static scheduler::DerivedKey getTombstoneKey() {
+    return {DenseMapInfo<mlir::Value>::getTombstoneKey(), 0, {}};
+  }
+  static unsigned getHashValue(const scheduler::DerivedKey& key) {
+    return static_cast<unsigned>(
+        hash_combine(key.root, key.offset, hash_combine_range(key.terms)));
+  }
+  static bool isEqual(const scheduler::DerivedKey& lhs,
+                      const scheduler::DerivedKey& rhs) {
+    return lhs == rhs;
+  }
+};
+
+}  // namespace llvm
 
 #endif  // DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_SYMBOLICSTARTADDRESS_H_

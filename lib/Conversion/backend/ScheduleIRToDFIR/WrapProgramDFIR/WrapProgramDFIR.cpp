@@ -266,16 +266,8 @@ struct WrapProgramDFIRPass
     rewriter.inlineBlockBefore(&contents, dfir_module.getBody(),
                                dfir_module.getBody()->end());
 
-    // Neither of the two definitions this leaves has a caller inside its own
-    // module -- each is called from a module out, which is a symbol table of
-    // its own -- so both are public, and said to be rather than left to a
-    // default. A private symbol nothing in its own module calls is what
-    // symbol-dce deletes, and dropping either of these means dropping the
-    // program.
-    //
-    // The forward declaration the call resolves against is the exception: it is
-    // in the same module as the call, and is private precisely so that it reads
-    // as standing in for a definition elsewhere.
+    // Symbol-dce deletes private symbols which are not called, so visibility
+    // should be set to public.
     program.setVisibility(mlir::SymbolTable::Visibility::Public);
 
     rewriter.setInsertionPoint(dfir_module);

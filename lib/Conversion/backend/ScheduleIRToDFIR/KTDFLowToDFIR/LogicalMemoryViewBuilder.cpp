@@ -516,9 +516,10 @@ mlir::LogicalResult scheduler::buildLogicalMemoryViews(
   mlir::OpBuilder definitions(func.getContext());
   definitions.setInsertionPoint(&entry, builder.getInsertionPoint());
 
-  // Which input each of this function's arguments is, said here rather than
-  // when the symbols were numbered: before the program units existed a
-  // declaration counted as work and was copied into every one of them.
+  // Which input each of this function's arguments is, declared here rather than
+  // when the symbols were numbered. Declaring it earlier would have put it in
+  // the work the program units were built from, and each unit would have got a
+  // copy of it.
   symbols.declareInputsIn(func, definitions);
 
   // Phase 3: per-program_unit rewrites.
