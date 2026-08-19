@@ -10,10 +10,14 @@ set(_source_components
   MLIRPythonSources.Core
   MLIRPythonSources.Dialects.arith
   MLIRPythonSources.Dialects.builtin
+  MLIRPythonSources.Dialects.complex
   MLIRPythonSources.Dialects.func
   MLIRPythonSources.Dialects.index
+  MLIRPythonSources.Dialects.linalg
+  MLIRPythonSources.Dialects.math
   MLIRPythonSources.Dialects.memref
   MLIRPythonSources.Dialects.scf
+  MLIRPythonSources.Dialects.tensor
   
   KTIRPythonSources.Dialects
   KTIRPythonExtensions

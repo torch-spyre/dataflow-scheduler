@@ -1,5 +1,6 @@
-# This requirement is inherited transitively from MLIR.
+# These requirements are inherited transitively from MLIR.
 nanobind>=2.12, <3.0
+numpy>=2.1.0, <=2.1.2
 
 # Transitive requirements from `dataflow-scheduler-dialects`.
 -r ../external/dataflow-scheduler-dialects/python/requirements.txt
