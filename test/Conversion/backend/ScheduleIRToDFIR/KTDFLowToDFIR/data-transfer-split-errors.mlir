@@ -56,3 +56,33 @@ module {
     return
   }
 }
+
+// -----
+
+// A walked dimension whose two sides advance by different distances cannot stay
+// on the time axis, but it can be walked by an enclosing loop instead. Doing
+// that for two such dimensions at once would mean choosing a nesting order
+// between them, which nothing in the transfer determines.
+module {
+  ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
+  func.func @two_divergent_walked_dimensions() attributes {grid = [2]} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
+    %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
+    %map = uniform.def_immutable_mapping([%c0 -> %0], [%c1 -> %1]):index
+    %tile_id = ktdp.get_compute_tile_id : index
+    %unit = uniform.query_map(map:%map, key:%tile_id) : index
+    // Per step of the outer walked dim: 8*64 = 512 elements in the source,
+    // 8*128 = 1024 in the destination. Per step of the inner one: 64 and 128.
+    %ddr_buf = memref.alloc() : memref<4x8x64xf16, "DDR">
+    %l1_buf = memref.alloc() : memref<4x8x128xf16, "L1">
+    ktdf_lowering.execute_on %unit {
+      // expected-error @below {{source and destination advance by different distances in 2 walked dimensions of a transfer of 2048 elements; only one such dimension can be resolved}}
+      ktdf.data_transfer from %ddr_buf[0, 0, 0] size [4, 8, 64]
+                         to %l1_buf[0, 0, 0] size [4, 8, 64]
+        : memref<4x8x64xf16, "DDR">, memref<4x8x128xf16, "L1">
+    }
+    return
+  }
+}
