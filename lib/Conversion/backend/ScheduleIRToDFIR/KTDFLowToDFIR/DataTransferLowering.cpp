@@ -25,6 +25,9 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "llvm/ADT/SmallVector.h"
+#include "mlir/Analysis/Presburger/IntegerRelation.h"
+#include "mlir/Analysis/Presburger/PresburgerSpace.h"
+#include "mlir/Dialect/Affine/Analysis/AffineStructures.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/IntegerSet.h"
@@ -137,17 +140,56 @@ TransferTimeDims describeTransferTimeDims(llvm::ArrayRef<int64_t> sizes,
   return dims;
 }
 
-/// The per-dimension coefficients of a one-result affine map that is linear in
-/// its dimensions and has no symbols, recovered by probing: the coefficient of
-/// d_i is the map's value at d_i = 1 minus its value at the origin.
-llvm::SmallVector<int64_t> linearMapCoefficients(mlir::AffineMap map) {
-  llvm::SmallVector<int64_t> point(map.getNumDims(), 0);
-  const int64_t base = map.compose(point).front();
+/// The coefficient of each dimension of `map`, which must have one result, or
+/// failure if that result is not a linear function of those dimensions and so
+/// has no one coefficient per dimension. A symbol, `floordiv`, `ceildiv` or
+/// `mod` in the result is what makes it fail.
+///
+/// Flattening the map into a Presburger relation is what makes those cases
+/// detectable. Evaluating the map at sample points cannot tell them apart from
+/// a genuine coefficient.
+mlir::FailureOr<llvm::SmallVector<int64_t>> coefficientsIfLinearInDims(
+    mlir::AffineMap map) {
+  assert(map.getNumResults() == 1 && "expected a one-result map");
+  // Not known until runtime, so never a static distance.
+  if (map.getNumSymbols() != 0) {
+    return mlir::failure();
+  }
+
+  mlir::presburger::IntegerRelation relation(
+      mlir::presburger::PresburgerSpace::getRelationSpace());
+  // Fails for a semi-affine map, which cannot be flattened at all.
+  if (mlir::failed(mlir::affine::getRelationFromMap(map, relation))) {
+    return mlir::failure();
+  }
+
+  // Flattening emits inequalities only to bound the local variables it
+  // introduces for `floordiv`, `ceildiv` and `mod`, so any inequality means
+  // the result is not linear in the dimensions.
+  if (relation.getNumInequalities() != 0) {
+    return mlir::failure();
+  }
+  assert(relation.getNumLocalVars() == 0 &&
+         "a local variable is always bounded by inequalities");
+
+  // What is left is the one equality getRelationFromMap states per result,
+  //
+  //   coefficient_0 * d_0 + ... + coefficient_n * d_n - r + constant == 0
+  //
+  // whose dimension columns are the answer. Its constant column is the map's
+  // base offset, which a distance does not depend on.
+  if (relation.getNumEqualities() != 1) {
+    return mlir::failure();
+  }
+  const unsigned num_dims = map.getNumDims();
+  // The -1 that equates the flattened expression to `r`. Any other value would
+  // scale or flip every coefficient taken below.
+  if (relation.atEq64(0, /*result column=*/num_dims) != -1) {
+    return mlir::failure();
+  }
   llvm::SmallVector<int64_t> coefficients;
-  for (unsigned i = 0, e = map.getNumDims(); i < e; ++i) {
-    point[i] = 1;
-    coefficients.push_back(map.compose(point).front() - base);
-    point[i] = 0;
+  for (unsigned dim = 0; dim < num_dims; ++dim) {
+    coefficients.push_back(relation.atEq64(0, dim));
   }
   return coefficients;
 }
@@ -164,11 +206,10 @@ mlir::FailureOr<llvm::SmallVector<int64_t>> getElementStrides(
   if (auto view =
           memref.getDefiningOp<mlir::dataflow::GetLogicalMemoryViewOp>()) {
     auto layout = view.getLayoutMap();
-    if (layout.getNumDims() != rank || layout.getNumResults() != 1 ||
-        layout.getNumSymbols() != 0) {
+    if (layout.getNumDims() != rank || layout.getNumResults() != 1) {
       return mlir::failure();
     }
-    return linearMapCoefficients(layout);
+    return coefficientsIfLinearInDims(layout);
   }
   llvm::SmallVector<int64_t> strides;
   int64_t offset = 0;

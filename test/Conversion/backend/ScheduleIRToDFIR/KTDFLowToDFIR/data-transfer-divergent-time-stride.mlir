@@ -18,6 +18,7 @@
 // CHECK: #[[$TIME_ORDER:.+]] = affine_map<(d0) -> (d0)>
 // CHECK: #[[$WALKED_LOAD_ADDR:.+]] = affine_map<(d0) -> (0, d0, 0)>
 // CHECK: #[[$WALKED_STORE_ADDR:.+]] = affine_map<(d0) -> (0, 0, d0, 0)>
+// CHECK: #[[$VIEW_LAYOUT:.+]] = affine_map<(d0, d1, d2, d3) -> (d0 * 128 + d1 * 64 + d2 * 64 + d3)>
 // CHECK: #[[$LOAD_SET:.+]] = affine_set<(d0, d1, d2) : (d0 == 0, d1 == 0, d2 >= 0, -d2 + 63 >= 0)>
 // CHECK: #[[$STORE_SET:.+]] = affine_set<(d0, d1, d2, d3) : (d0 == 0, d1 == 0, d2 == 0, d3 >= 0, -d3 + 63 >= 0)>
 // CHECK: #[[$ONE_STEP:.+]] = affine_set<(d0) : (d0 == 0)>
@@ -108,6 +109,52 @@ module {
           : memref<2x256x64xf16, "DDR">, memref<2x1x256x64xf16, "L1">
       }
     }
+    return
+  }
+
+  // The same transfer with the destination reached through a logical memory
+  // view, whose layout map is what the distances are then read from rather
+  // than the memref's strides. Here the two agree, so what this pins is that
+  // the layout map is read correctly, not that it differs.
+  // CHECK-LABEL:   func.func @divergent_stride_through_a_view() attributes {grid = [2]} {
+  // CHECK:           %[[C1:.*]] = arith.constant 1 : index
+  // CHECK:           %[[C2:.*]] = arith.constant 2 : index
+  // CHECK:           %[[C0:.*]] = arith.constant 0 : index
+  // CHECK:           %[[C128:.*]] = arith.constant 128 : index
+  // CHECK:           dataflow.program_unit iter_arg : %{{.*}} -> (%{{.*}}, %{{.*}}) : {
+  // CHECK:             %[[DDR:.*]] = memref.alloc() : memref<2x256x64xf16, "DDR">
+  // CHECK:             %[[VIEW:.*]] = dataflow.get_logical_memory_view %{{.*}}, %[[C128]] {layout_map = #[[$VIEW_LAYOUT]]} : index, index, memref<256x2x1x64xf16>
+  // CHECK:             scf.for %[[STICK:.*]] = %[[C0]] to %[[C2]] step %[[C1]] {
+  // CHECK:               agen.composite_load_and_store src:%[[DDR]]{{\[}}%[[STICK]], %[[C0]], 0] dst:%[[VIEW]]{{\[}}%[[C0]], %[[STICK]], 0, 0]
+  // CHECK:                time_symbols(), load_iv(%{{.*}}:vector<64xf16>)
+  // CHECK:                {load_order = #[[$LOAD_ORDER]], load_set = #[[$LOAD_SET]], load_time_addr_map = #[[$PINNED_LOAD_ADDR]], store_order = #[[$STORE_ORDER]], store_set = #[[$STORE_SET]], store_time_addr_map = #[[$PINNED_STORE_ADDR]], time_order = #[[$TIME_ORDER]], time_set = #[[$ONE_STEP]]}
+  // CHECK:             }
+  // CHECK:           }
+  // CHECK:           return
+  // CHECK:         }
+  func.func @divergent_stride_through_a_view() attributes {grid = [2]} {
+    %c0 = arith.constant 0 : index
+    %c1 = arith.constant 1 : index
+    %c128 = arith.constant 128 : index
+    %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
+    %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
+    %map = uniform.def_immutable_mapping([%c0 -> %0], [%c1 -> %1]):index
+    %tile_id = ktdp.get_compute_tile_id : index
+    %unit = uniform.query_map(map:%map, key:%tile_id) : index
+
+    %ddr_buf = memref.alloc() : memref<2x256x64xf16, "DDR">
+    // An L1 memref cast from a start address, which the pass replaces with a
+    // dataflow.get_logical_memory_view carrying the layout map above.
+    %l1_buf = builtin.unrealized_conversion_cast %c128 : index to memref<256x2x1x64xf16, "L1">
+
+    ktdf_lowering.execute_on %unit {
+      ktdf_lowering.execute_on %unit {
+        ktdf.data_transfer from %ddr_buf[0, %c0, 0] size [2, 1, 64]
+                           to %l1_buf[%c0, 0, 0, 0] size [1, 2, 1, 64]
+          : memref<2x256x64xf16, "DDR">, memref<256x2x1x64xf16, "L1">
+      }
+    }
+    memref.dealloc %l1_buf : memref<256x2x1x64xf16, "L1">
     return
   }
 }

@@ -36,6 +36,7 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFLowToDFIR
     DataflowSchedulerDialects::VectorChainDialect
 
   LINK_MLIR_LIBS
+    MLIRAffineAnalysis
     MLIRArithDialect
     MLIRFuncDialect
     MLIRIR
