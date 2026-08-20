@@ -302,10 +302,10 @@ scheduler::takeSymbolicAddressApart(mlir::Value address,
 
   // The set of values this address is computed from, walked first only to
   // answer whether a run input is among them. That has to be settled before
-  // anything else in the expression can be called an error: an operator no
-  // definition can be read back from is fine over constants -- that is just a
-  // constant address
-  // -- and fatal over an input, and only the whole expression says which it is.
+  // anything else in the expression can be called an error. An operator whose
+  // definition cannot be read back is fine over constants, where the address is
+  // just a constant, and fatal over an input; only the whole expression says
+  // which of the two this is.
   llvm::DenseSet<mlir::Value> reached;
   llvm::SmallVector<mlir::Value> pending{address};
   bool rooted = false;
