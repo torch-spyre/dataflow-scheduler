@@ -100,14 +100,18 @@ namespace scheduler {
 /// declarations this writes into the IR are what say so: a consumer reads the
 /// ids rather than working them out again.
 /// What identifies a derived address: the input it is rooted at, the offset
-/// added to it, and the constants its per-unit operands take.
+/// added to it, the constants its per-unit operands take, and the word size it
+/// is divided by. The word size is part of it because one tensor read through
+/// units that address in different word sizes is two different numbers.
 struct DerivedKey {
   mlir::Value root;
   int64_t offset = 0;
   llvm::SmallVector<int64_t> terms;
+  int64_t word_size = 1;
 
   bool operator==(const DerivedKey& other) const {
-    return root == other.root && offset == other.offset && terms == other.terms;
+    return root == other.root && offset == other.offset &&
+           terms == other.terms && word_size == other.word_size;
   }
 };
 
@@ -144,15 +148,16 @@ class SymbolAllocator {
   /// are in general two different tensors.
   std::optional<int64_t> inputSymbolIdFor(mlir::Value address) const;
 
-  /// Returns the id for the symbol derived from \p root by \p displacement and
-  /// \p terms, and whether that id is newly handed out.
+  /// Returns the id for the symbol derived from \p root by \p displacement,
+  /// \p terms and \p word_size, and whether that id is newly handed out.
   ///
   /// The same address asked for twice gets the same id. One
   /// `ktdp.construct_memory_view` is copied into every unit the program runs
   /// on, so without this one tensor's address would become as many symbols as
   /// there are units, all meaning the same thing and each resolved separately.
   std::pair<int64_t, bool> derivedIdFor(mlir::Value root, int64_t displacement,
-                                        llvm::ArrayRef<int64_t> terms);
+                                        llvm::ArrayRef<int64_t> terms,
+                                        int64_t word_size);
 
   /// How many inputs the run takes, i.e. how many ids are the inputs' own.
   int64_t numInputs() const { return -next_input_ - 1; }
@@ -239,8 +244,15 @@ struct Displacement {
 mlir::FailureOr<Displacement> takeDisplacementApart(
     mlir::OpFoldResult offset, mlir::dataflow::ProgramUnitOp pu);
 
-/// Emits the start address \p taken describes, displaced by \p displacement, at
-/// \p builder's insertion point, and returns what the view should read.
+/// Emits the start address \p taken describes, displaced by \p displacement and
+/// divided by \p word_size, at \p builder's insertion point, and returns what
+/// the view should read.
+///
+/// \p word_size is the size in bytes of the word the unit reading the view
+/// addresses in. The run hands its input addresses over as byte addresses, so
+/// the symbol a program reads has to be the byte address divided by it -- the
+/// division goes into the symbol's definition, after everything else, because
+/// the operand the run writes over has to be the symbol alone.
 ///
 /// One `symbol.create_symbol` where every grid element agrees, or one per
 /// element gathered into a uniform map keyed on the unit -- which is what a
@@ -251,9 +263,9 @@ mlir::FailureOr<Displacement> takeDisplacementApart(
 /// element's program is read from.
 mlir::FailureOr<mlir::Value> emitSymbolicStartAddress(
     const SymbolicAddress& taken, const Displacement& displacement,
-    mlir::dataflow::ProgramUnitOp pu, SymbolAllocator& symbols,
-    mlir::OpBuilder& builder, mlir::OpBuilder& definitions_at,
-    mlir::Location loc);
+    int64_t word_size, mlir::dataflow::ProgramUnitOp pu,
+    SymbolAllocator& symbols, mlir::OpBuilder& builder,
+    mlir::OpBuilder& definitions_at, mlir::Location loc);
 
 /// Emits the `symbol.create_symbol` standing for symbol \p symbol_id at
 /// \p builder's insertion point.
@@ -274,8 +286,8 @@ struct DenseMapInfo<scheduler::DerivedKey> {
     return {DenseMapInfo<mlir::Value>::getTombstoneKey(), 0, {}};
   }
   static unsigned getHashValue(const scheduler::DerivedKey& key) {
-    return static_cast<unsigned>(
-        hash_combine(key.root, key.offset, hash_combine_range(key.terms)));
+    return static_cast<unsigned>(hash_combine(
+        key.root, key.offset, hash_combine_range(key.terms), key.word_size));
   }
   static bool isEqual(const scheduler::DerivedKey& lhs,
                       const scheduler::DerivedKey& rhs) {

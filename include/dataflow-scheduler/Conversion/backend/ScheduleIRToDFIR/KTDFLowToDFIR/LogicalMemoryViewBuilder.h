@@ -20,6 +20,7 @@
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LOGICALMEMORYVIEWBUILDER_H_
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
+#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -37,9 +38,13 @@ namespace scheduler {
 /// SymbolicStartAddress.h.
 ///
 /// Must be called after mlir::runRegionDCE has cleaned up dead ops.
+/// \p resource_kinds says, per unit kind, the word size the unit addresses in,
+/// which a symbolic start address is divided by: the run hands its inputs over
+/// as byte addresses.
 mlir::LogicalResult buildLogicalMemoryViews(
     mlir::func::FuncOp func,
     const scheduler::arch_view::MemoryTree& memory_tree,
+    const scheduler::arch_view::ResourceKinds& resource_kinds,
     const scheduler::SchedulerExtContext& ext_ctx, SymbolAllocator& symbols);
 
 }  // namespace scheduler

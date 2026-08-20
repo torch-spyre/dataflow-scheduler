@@ -10,6 +10,11 @@
 // alone as the view's start address: the symbol is a placeholder whatever runs
 // the program writes over, so it has to be the whole operand.
 //
+// The unit addresses in words of 64 bytes and the run hands the address over in
+// bytes, so the symbol a program reads is a symbol of its own, defined as the
+// input divided by that. The input keeps its own id, which is what the host
+// resolves the division from.
+//
 // The second program is the mixed case: one base an input, one a constant. A
 // constant base is untouched -- there is nothing symbolic about it.
 
@@ -34,7 +39,11 @@
 // The program says which input its own argument is, so what corrects it can be
 // written against what it declares rather than against the kernel's signature.
 // CHECK:           symbol.create_id %arg0 {symbol_id = -1 : si64} : index
-// CHECK:           %[[SYM_0:.*]] = symbol.create_symbol {SymbolId = -1 : i64} : index
+// The address in words, which is what the view reads: symbol -3, defined as the
+// input over the unit's word size.
+// CHECK-NEXT:      %[[WORDS_0:.*]] = arith.divsi %arg0, %[[C64:.*]] : index
+// CHECK-NEXT:      symbol.create_id %[[WORDS_0]] {symbol_id = -3 : si64} : index
+// CHECK:           %[[SYM_0:.*]] = symbol.create_symbol {SymbolId = -3 : i64} : index
 // CHECK-NEXT:      dataflow.get_logical_memory_view %[[DDR_0]], %[[SYM_0]]
 // CHECK-NOT:       @sched_1
 // CHECK-NOT:       SymbolId = -2
@@ -46,7 +55,9 @@
 // CHECK:           %[[C64000:.*]] = arith.constant 64000 : index
 // CHECK:           %[[DDR_1:.*]] = dataflow.get_unit {name = "ddr", type = "ddr"}
 // CHECK:           symbol.create_id %arg0 {symbol_id = -2 : si64} : index
-// CHECK:           %[[SYM_1:.*]] = symbol.create_symbol {SymbolId = -2 : i64} : index
+// CHECK-NEXT:      %[[WORDS_1:.*]] = arith.divsi %arg0, %{{.*}} : index
+// CHECK-NEXT:      symbol.create_id %[[WORDS_1]] {symbol_id = -4 : si64} : index
+// CHECK:           %[[SYM_1:.*]] = symbol.create_symbol {SymbolId = -4 : i64} : index
 // CHECK-NEXT:      dataflow.get_logical_memory_view %[[DDR_1]], %[[SYM_1]]
 // The constant base beside it is still a constant.
 // CHECK-NEXT:      dataflow.get_logical_memory_view %[[DDR_1]], %[[C64000]]

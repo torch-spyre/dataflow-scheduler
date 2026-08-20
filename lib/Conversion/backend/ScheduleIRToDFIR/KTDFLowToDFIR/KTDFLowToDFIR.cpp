@@ -138,8 +138,8 @@ struct KTDFLowToDFIRPass
       mlir::IRRewriter rewriter(module_op.getContext());
       (void)mlir::runRegionDCE(rewriter, func.getBody());
 
-      if (mlir::failed(buildLogicalMemoryViews(func, memory_tree,
-                                               scheduler_ctx_, symbols))) {
+      if (mlir::failed(buildLogicalMemoryViews(
+              func, memory_tree, resource_kinds, scheduler_ctx_, symbols))) {
         return signalPassFailure();
       }
       // run arith folding into query maps after logical mem view is built to

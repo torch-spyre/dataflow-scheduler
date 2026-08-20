@@ -5,11 +5,12 @@
 // address for the program and no one symbol -- there is a symbol per core, and
 // the start address the view reads is the choice between them.
 //
-// The core whose slab starts at the tensor's own base adds nothing, so its
-// address *is* the input and the input's own symbol stands for it. Only the
-// others are symbols of their own, and what each is computed from is said as
+// Both are symbols of their own, and what each is computed from is said as
 // arithmetic beside the program: nothing reads those values, they are there so
-// that whatever resolves the symbols can read what each one is.
+// that whatever resolves the symbols can read what each one is. The core whose
+// slab starts at the tensor's own base adds nothing to the input, but the unit
+// addresses in words of 64 bytes and the run hands the address over in bytes, so
+// even that one is the input divided rather than the input itself.
 
 // CHECK-LABEL:   func.func @test(
 // CHECK-SAME:      %[[BASE:.*]]: index)
@@ -22,13 +23,18 @@
 // CHECK:           %[[C24576:.*]] = arith.constant 24576 : index
 // CHECK:           %[[DDR:.*]] = dataflow.get_unit {name = "ddr", type = "ddr"}
 // CHECK:           symbol.create_id %arg0 {symbol_id = -1 : si64} : index
-// CHECK-NEXT:      %[[DERIVED:.*]] = arith.addi %arg0, %[[C24576]] : index
-// CHECK-NEXT:      symbol.create_id %[[DERIVED]] {symbol_id = -2 : si64} : index
+// The first core's address in words, and the second core's: the input, plus that
+// core's share of the tensor where there is one, over the unit's word size.
+// CHECK-NEXT:      %[[WORDS_0:.*]] = arith.divsi %arg0, %[[C64:.*]] : index
+// CHECK-NEXT:      symbol.create_id %[[WORDS_0]] {symbol_id = -2 : si64} : index
+// CHECK-NEXT:      %[[SHIFTED:.*]] = arith.addi %arg0, %[[C24576]] : index
+// CHECK-NEXT:      %[[WORDS_1:.*]] = arith.divsi %[[SHIFTED]], %[[C64]] : index
+// CHECK-NEXT:      symbol.create_id %[[WORDS_1]] {symbol_id = -3 : si64} : index
 
 // And in the program, a symbol per core gathered into a map keyed on the unit:
 // core 0 reads the input's own symbol, core 1 the derived one.
-// CHECK:           %[[SYM_0:.*]] = symbol.create_symbol {SymbolId = -1 : i64} : index
-// CHECK-NEXT:      %[[SYM_1:.*]] = symbol.create_symbol {SymbolId = -2 : i64} : index
+// CHECK:           %[[SYM_0:.*]] = symbol.create_symbol {SymbolId = -2 : i64} : index
+// CHECK-NEXT:      %[[SYM_1:.*]] = symbol.create_symbol {SymbolId = -3 : i64} : index
 // CHECK-NEXT:      %[[MAP:.*]] = uniform.def_immutable_mapping({{\[}}%{{.*}} -> %[[SYM_0]]], {{\[}}%{{.*}} -> %[[SYM_1]]]):index
 // CHECK-NEXT:      %[[Q:.*]] = uniform.query_map(map:%[[MAP]], key:%{{.*}}) : index
 // CHECK-NEXT:      dataflow.get_logical_memory_view %[[DDR]], %[[Q]]

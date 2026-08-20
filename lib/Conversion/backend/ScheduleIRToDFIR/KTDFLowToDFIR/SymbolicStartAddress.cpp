@@ -239,8 +239,10 @@ SymbolAllocator::SymbolAllocator(mlir::ModuleOp top) {
 }
 
 std::pair<int64_t, bool> SymbolAllocator::derivedIdFor(
-    mlir::Value root, int64_t displacement, llvm::ArrayRef<int64_t> terms) {
-  const DerivedKey key{root, displacement, llvm::SmallVector<int64_t>(terms)};
+    mlir::Value root, int64_t displacement, llvm::ArrayRef<int64_t> terms,
+    int64_t word_size) {
+  const DerivedKey key{root, displacement, llvm::SmallVector<int64_t>(terms),
+                       word_size};
   const auto found = derived_.find(key);
   if (found != derived_.end()) return {found->second, false};
   if (next_derived_ == std::numeric_limits<int64_t>::min())
@@ -417,11 +419,28 @@ namespace {
 /// answer.
 int64_t declareDerived(const SymbolicAddress& taken,
                        llvm::ArrayRef<int64_t> terms, int64_t displacement,
-                       SymbolAllocator& symbols, mlir::OpBuilder& builder,
-                       mlir::Location loc) {
+                       int64_t word_size, SymbolAllocator& symbols,
+                       mlir::OpBuilder& builder, mlir::Location loc) {
+  // Whether the expression comes back to the input itself is only known once it
+  // has been folded, and the id is only known to be new after that, so some of
+  // what is built here can turn out not to be wanted. Those are erased rather
+  // than left dead in the IR: what erases the IR later has no reason to take
+  // them in an order that keeps a use alive, and a dead operand chain is how
+  // one ends up destroyed while something still points at it.
+  llvm::SmallVector<mlir::Operation*> built;
+  auto note = [&built](mlir::Value value) {
+    if (mlir::Operation* op = value.getDefiningOp()) built.push_back(op);
+    return value;
+  };
+  auto discardBuilt = [&built] {
+    for (mlir::Operation* op : llvm::reverse(built))
+      if (op->use_empty()) op->erase();
+  };
+
   mlir::IRMapping mapping;
   for (auto [leaf, term] : llvm::zip(taken.per_unit_leaves, terms))
-    mapping.map(leaf, mlir::arith::ConstantIndexOp::create(builder, loc, term));
+    mapping.map(leaf,
+                note(mlir::arith::ConstantIndexOp::create(builder, loc, term)));
 
   // Folded as it is built, because with only one leaf left unknown most of the
   // expression is constant here -- the grid element whose share starts at the
@@ -435,26 +454,61 @@ int64_t declareDerived(const SymbolicAddress& taken,
     llvm::SmallVector<mlir::Value> folded;
     if (mlir::succeeded(builder.tryFold(clone, folded)) && !folded.empty()) {
       mapping.map(op->getResult(0), folded.front());
-      result = folded.front();
+      result = note(folded.front());
       continue;
     }
-    result = clone->getResult(0);
+    result = note(clone->getResult(0));
   }
   if (displacement != 0) {
     mlir::Value by =
-        mlir::arith::ConstantIndexOp::create(builder, loc, displacement);
-    result = mlir::arith::AddIOp::create(builder, loc, result, by);
+        note(mlir::arith::ConstantIndexOp::create(builder, loc, displacement));
+    result = note(mlir::arith::AddIOp::create(builder, loc, result, by));
   }
 
-  // Nothing was added to it after all: this grid element reads the input's own
-  // address, so the input's own symbol is what stands for it.
-  if (result == taken.root) return taken.input;
+  // `result` is the byte address now: the input, plus this grid element's
+  // share, plus whatever displaced it. Where nothing was added to it, it is the
+  // input itself and the input's own symbol stands for it.
+  const bool derived_in_bytes = result != taken.root;
 
+  if (word_size == 1) {
+    if (!derived_in_bytes) {
+      discardBuilt();
+      return taken.input;
+    }
+    const auto [id, fresh] =
+        symbols.derivedIdFor(taken.root, displacement, terms, word_size);
+    // Declared once. A second declaration of the same id would leave two
+    // symbols meaning one address, so what was built to get here is thrown away
+    // instead.
+    if (!fresh) {
+      discardBuilt();
+      return id;
+    }
+    mlir::symbol::CreateIdOp::create(builder, loc, result, id);
+    return id;
+  }
+
+  // The unit addresses in words of `word_size` bytes and the run hands its
+  // inputs over as byte addresses, so the symbol a program reads is the byte
+  // address divided by that -- last, after everything else the address is built
+  // from.
   const auto [id, fresh] =
-      symbols.derivedIdFor(taken.root, displacement, terms);
-  // Declared once. A second declaration of the same id would leave two symbols
-  // meaning one address.
-  if (fresh) mlir::symbol::CreateIdOp::create(builder, loc, result, id);
+      symbols.derivedIdFor(taken.root, displacement, terms, word_size);
+  if (!fresh) {
+    discardBuilt();
+    return id;
+  }
+
+  // The byte address stays unnamed, and the definition is the division over the
+  // expression that built it -- `(input + share) / word_size` rather than a
+  // symbol for the sum and a division over that. Whatever reads definitions has
+  // an operator for that shape, and a symbol nothing waits for would be one
+  // more thing for the run to resolve for no reason.
+  mlir::Value bytes_per_word =
+      mlir::arith::ConstantIndexOp::create(builder, loc, word_size);
+  mlir::Value in_words =
+      mlir::arith::DivSIOp::create(builder, loc, result, bytes_per_word);
+  mlir::symbol::CreateIdOp::create(builder, loc, in_words, id);
   return id;
 }
 
@@ -515,15 +569,15 @@ mlir::FailureOr<scheduler::Displacement> scheduler::takeDisplacementApart(
 
 mlir::FailureOr<mlir::Value> scheduler::emitSymbolicStartAddress(
     const SymbolicAddress& taken, const Displacement& displacement,
-    mlir::dataflow::ProgramUnitOp pu, SymbolAllocator& symbols,
-    mlir::OpBuilder& builder, mlir::OpBuilder& definitions_at,
-    mlir::Location loc) {
+    int64_t word_size, mlir::dataflow::ProgramUnitOp pu,
+    SymbolAllocator& symbols, mlir::OpBuilder& builder,
+    mlir::OpBuilder& definitions_at, mlir::Location loc) {
   // The same everywhere: one symbol, and no map to choose between copies of it.
   // Which is the common case -- a tensor read whole rather than a slab of it
   // per grid element -- and worth not building a map for.
   if (taken.per_unit_terms.empty() && !displacement.varies()) {
     const int64_t id = declareDerived(taken, {}, displacement.common_offset,
-                                      symbols, definitions_at, loc);
+                                      word_size, symbols, definitions_at, loc);
     return createSymbolicStartAddress(builder, loc, id);
   }
 
@@ -543,7 +597,7 @@ mlir::FailureOr<mlir::Value> scheduler::emitSymbolicStartAddress(
   llvm::SmallVector<mlir::Value> values;
   for (const auto& [unit, terms] : per_unit_terms) {
     const int64_t id = declareDerived(taken, terms, displacement.at(unit),
-                                      symbols, definitions_at, loc);
+                                      word_size, symbols, definitions_at, loc);
     keys.push_back(unit);
     values.push_back(createSymbolicStartAddress(builder, loc, id));
   }

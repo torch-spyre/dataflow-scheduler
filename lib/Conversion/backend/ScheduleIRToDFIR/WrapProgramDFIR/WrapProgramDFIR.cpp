@@ -103,10 +103,16 @@ bool holdsDataflow(mlir::ModuleOp module) {
   return found;
 }
 
-/// Gets the ops of \p entry that exist only to say what a symbol is: every
+/// Gets the ops of \p entry a symbol declaration is built from: every
 /// `symbol.create_id`, and whatever computes the value each one points at. In
 /// the order they appear in the block, so rebuilding them elsewhere in that
 /// order always has its operands already rebuilt.
+///
+/// `erasable` gets the subset that nothing else reads, which is what may be
+/// erased once the declarations have been rebuilt beside the program. The rest
+/// is shared with the body -- a constant an address is divided by can be the
+/// same one a transfer strides by -- and is copied rather than moved: erasing
+/// it would take a value the DataflowIR still uses.
 ///
 /// Fails if anything else uses one of \p entry's arguments. An argument is a
 /// value only the caller has, so the DataflowIR left behind could not be
@@ -123,7 +129,8 @@ bool holdsDataflow(mlir::ModuleOp module) {
 /// would take something like `PredecessorInfo`, and there is nothing yet to
 /// follow.
 mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
-    mlir::func::FuncOp program, mlir::Block& entry) {
+    mlir::func::FuncOp program, mlir::Block& entry,
+    llvm::DenseSet<mlir::Operation*>& erasable) {
   mlir::WalkResult elsewhere =
       program.walk([&](mlir::symbol::CreateIdOp declaration) {
         if (declaration->getBlock() == &entry)
@@ -184,6 +191,14 @@ mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
   llvm::SmallVector<mlir::Operation*> ordered;
   for (mlir::Operation& op : entry)
     if (wanted.contains(&op)) ordered.push_back(&op);
+
+  // What only the declarations read may go with them. Anything with a reader
+  // outside the set stays: it is the body's too.
+  for (mlir::Operation* op : ordered) {
+    const bool only_ours = llvm::all_of(
+        op->getUsers(), [&](auto* user) { return wanted.contains(user); });
+    if (only_ours) erasable.insert(op);
+  }
   return ordered;
 }
 
@@ -229,8 +244,9 @@ struct WrapProgramDFIRPass
 
     // What the body says about symbols, which belongs beside what the program
     // is rather than in what it is compiled from.
+    llvm::DenseSet<mlir::Operation*> erasable;
     mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbol_ops =
-        symbolOpsOf(program, body_entry);
+        symbolOpsOf(program, body_entry, erasable);
     if (mlir::failed(symbol_ops)) return mlir::failure();
 
     // Renamed through the symbol table, so the uses of the old name go with it.
@@ -297,7 +313,9 @@ struct WrapProgramDFIRPass
 
     // The body is left with no arguments, which is what code generation needs.
     // Nothing reads them any more: the declarations that did were just moved.
-    for (mlir::Operation* op : llvm::reverse(*symbol_ops)) op->erase();
+    // Reverse order, so an operand goes after the last thing reading it.
+    for (mlir::Operation* op : llvm::reverse(*symbol_ops))
+      if (erasable.contains(op)) op->erase();
     body_entry.eraseArguments(0, body_entry.getNumArguments());
     program.setFunctionType(body_type);
 
