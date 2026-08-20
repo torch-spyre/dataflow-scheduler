@@ -54,6 +54,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <optional>
+
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/Passes.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
@@ -114,10 +116,6 @@ bool holdsDataflow(mlir::ModuleOp module) {
 /// same one a transfer strides by -- and is copied rather than moved: erasing
 /// it would take a value the DataflowIR still uses.
 ///
-/// Fails if anything else uses one of \p entry's arguments. An argument is a
-/// value only the caller has, so the DataflowIR left behind could not be
-/// compiled, and failing here beats a diagnostic from inside code generation.
-///
 /// Only \p entry is looked at, and a declaration anywhere else in the function
 /// is a failure rather than something followed. What writes them is
 /// SymbolAllocator, which writes every one into the entry block, over an
@@ -128,7 +126,7 @@ bool holdsDataflow(mlir::ModuleOp module) {
 /// one thing this pass exists to prevent. Following definitions across regions
 /// would take something like `PredecessorInfo`, and there is nothing yet to
 /// follow.
-mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
+mlir::FailureOr<std::optional<llvm::SmallVector<mlir::Operation*>>> symbolOpsOf(
     mlir::func::FuncOp program, mlir::Block& entry,
     llvm::DenseSet<mlir::Operation*>& erasable) {
   mlir::WalkResult elsewhere =
@@ -174,17 +172,15 @@ mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
     for (mlir::Value operand : op->getOperands()) pending.push_back(operand);
   }
 
-  // An argument may be read only by the ops collected above. Anything else
-  // reading one would be left in the DataflowIR, which is compiled with no
-  // arguments to give it.
+  // An argument read by anything else is a value the program computes with
+  // rather than an address a symbol stands for, and this program cannot be
+  // split into two levels at all.
   for (mlir::BlockArgument arg : entry.getArguments()) {
     for (mlir::Operation* user : arg.getUsers()) {
       if (wanted.contains(user)) continue;
-      return user->emitError()
-             << PASS_NAME
-             << ": this reads an argument of the program. The DataflowIR the "
-                "program is compiled from takes no arguments, so only a symbol "
-                "declaration may read one";
+      LDBG(1) << "  " << program.getSymName()
+              << " computes with an argument, so it stays one level: " << *user;
+      return {std::optional<llvm::SmallVector<mlir::Operation*>>()};
     }
   }
 
@@ -199,7 +195,8 @@ mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbolOpsOf(
         op->getUsers(), [&](auto* user) { return wanted.contains(user); });
     if (only_ours) erasable.insert(op);
   }
-  return ordered;
+  return {
+      std::optional<llvm::SmallVector<mlir::Operation*>>(std::move(ordered))};
 }
 
 struct WrapProgramDFIRPass
@@ -245,9 +242,12 @@ struct WrapProgramDFIRPass
     // What the body says about symbols, which belongs beside what the program
     // is rather than in what it is compiled from.
     llvm::DenseSet<mlir::Operation*> erasable;
-    mlir::FailureOr<llvm::SmallVector<mlir::Operation*>> symbol_ops =
-        symbolOpsOf(program, body_entry, erasable);
+    mlir::FailureOr<std::optional<llvm::SmallVector<mlir::Operation*>>>
+        symbol_ops = symbolOpsOf(program, body_entry, erasable);
     if (mlir::failed(symbol_ops)) return mlir::failure();
+    // Nothing that can be split out: left as it is, and as it was before this
+    // pass.
+    if (!symbol_ops->has_value()) return mlir::success();
 
     // Renamed through the symbol table, so the uses of the old name go with it.
     // A name already taken is reported rather than uniqued with a suffix: what
@@ -305,7 +305,7 @@ struct WrapProgramDFIRPass
     mlir::IRMapping mapping;
     for (mlir::BlockArgument arg : body_entry.getArguments())
       mapping.map(arg, entry->getArgument(arg.getArgNumber()));
-    for (mlir::Operation* op : *symbol_ops) rewriter.clone(*op, mapping);
+    for (mlir::Operation* op : **symbol_ops) rewriter.clone(*op, mapping);
 
     mlir::func::CallOp::create(rewriter, program_module.getLoc(), declaration,
                                mlir::ValueRange{});
@@ -314,13 +314,13 @@ struct WrapProgramDFIRPass
     // The body is left with no arguments, which is what code generation needs.
     // Nothing reads them any more: the declarations that did were just moved.
     // Reverse order, so an operand goes after the last thing reading it.
-    for (mlir::Operation* op : llvm::reverse(*symbol_ops))
+    for (mlir::Operation* op : llvm::reverse(**symbol_ops))
       if (erasable.contains(op)) op->erase();
     body_entry.eraseArguments(0, body_entry.getNumArguments());
     program.setFunctionType(body_type);
 
     LDBG(1) << "  " << name << " is now itself and " << body_name << ", "
-            << symbol_ops->size() << " symbol op(s) moved out of the latter";
+            << (*symbol_ops)->size() << " symbol op(s) moved out of the latter";
     return mlir::success();
   }
 };
