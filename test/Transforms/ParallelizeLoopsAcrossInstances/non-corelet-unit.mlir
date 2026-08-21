@@ -1,7 +1,8 @@
 // RUN: dataflow-scheduler-opt -allow-unregistered-dialect %s -parallelize-loops-across-instances | FileCheck %s
 
-// applicable_units includes L3LU (core-shared). Pipeline is rejected; loop
-// stays as scf.for.
+// applicable_units names a unit the whole core shares rather than one a
+// sub-core owns, so there is no sibling group to distribute across. The
+// pipeline is rejected and the loop stays an scf.for.
 
 // CHECK-LABEL:   func.func @non_corelet() {
 // CHECK-NEXT:      %[[C0:.+]] = arith.constant 0 : index
@@ -11,7 +12,7 @@
 // CHECK-NEXT:        ktdf.pipeline {
 // CHECK-NEXT:          ktdf.stage depends_in(none) depends_out(none) {
 // CHECK-NEXT:            "test.body"(%[[IV]]) : (index) -> ()
-// CHECK-NEXT:          } {applicable_units = ["L3LU"]}
+// CHECK-NEXT:          } {applicable_units = ["MNILU"]}
 // CHECK-NEXT:        }
 // CHECK-NEXT:      } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:      return
@@ -27,7 +28,7 @@ module {
       ktdf.pipeline {
         ktdf.stage depends_in(none) depends_out(none) {
           "test.body"(%i) : (index) -> ()
-        } {applicable_units = ["L3LU"]}
+        } {applicable_units = ["MNILU"]}
       }
     } {loop_type = #ktdf.loop_type<parallel_loop>}
     return
