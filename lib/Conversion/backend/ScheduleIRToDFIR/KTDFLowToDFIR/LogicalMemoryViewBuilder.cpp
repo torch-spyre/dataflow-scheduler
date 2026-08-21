@@ -20,6 +20,7 @@
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UniformInfra.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UnitMaterializer.h"
@@ -347,6 +348,17 @@ mlir::LogicalResult replaceSourceAChains(
         mlir::FailureOr<Displacement> displacement =
             takeDisplacementApart(reinterpret_offset, pu);
         if (mlir::failed(displacement)) return mlir::failure();
+
+        // The offset came off a memref, so it counts elements; the address it
+        // displaces is one of the run's inputs, which is a byte address (that
+        // is why emitSymbolicStartAddress divides by the word size at the end).
+        // Convert, or every grid element but the first reads at
+        // element_size-th of the distance it should.
+        //
+        // Only on this path: the constant-address path below adds the same
+        // offset to an address the compiler picked, which is itself in
+        // elements, so the two agree there and must not be converted.
+        displacement->scaleBy(getElementSizeBytes(src_type.getElementType()));
 
         auto memory_space = getMemorySpaceAttr(cursor.getType());
         if (!memory_space)

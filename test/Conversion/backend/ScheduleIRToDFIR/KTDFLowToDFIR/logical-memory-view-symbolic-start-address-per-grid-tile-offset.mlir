@@ -20,15 +20,19 @@
 // The second core's address, defined at function level: the input plus the row
 // its tile starts at. Nothing reads it; it is there so that whatever resolves
 // the symbols can read the definition of -3.
+//
+// In bytes, because the input is a byte address: the reinterpret_cast offset
+// counts elements -- six rows of 4096 is 24576 elements -- and an f16 is two
+// bytes wide, so the distance is 24576 * 2 = 49152 bytes.
 // CHECK-LABEL:   func.func private @sched_0(%{{.*}}: index) attributes {grid = [2]} {
-// CHECK:           %[[C24576:.*]] = arith.constant 24576 : index
+// CHECK:           %[[C49152:.*]] = arith.constant 49152 : index
 // CHECK:           %[[DDR:.*]] = dataflow.get_unit {name = "ddr", type = "ddr"}
 // CHECK:           symbol.create_id %arg0 {symbol_id = -1 : si64} : index
 // The first core's address in words, and the second core's: the input, plus that
 // core's share of the tensor where there is one, over the unit's word size.
 // CHECK-NEXT:      %[[WORDS_0:.*]] = arith.divsi %arg0, %[[C64:.*]] : index
 // CHECK-NEXT:      symbol.create_id %[[WORDS_0]] {symbol_id = -2 : si64} : index
-// CHECK-NEXT:      %[[SHIFTED:.*]] = arith.addi %arg0, %[[C24576]] : index
+// CHECK-NEXT:      %[[SHIFTED:.*]] = arith.addi %arg0, %[[C49152]] : index
 // CHECK-NEXT:      %[[WORDS_1:.*]] = arith.divsi %[[SHIFTED]], %[[C64]] : index
 // CHECK-NEXT:      symbol.create_id %[[WORDS_1]] {symbol_id = -3 : si64} : index
 

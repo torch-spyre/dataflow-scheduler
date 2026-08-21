@@ -520,6 +520,11 @@ int64_t scheduler::Displacement::at(mlir::Value unit) const {
   return common_offset;
 }
 
+void scheduler::Displacement::scaleBy(int64_t factor) {
+  common_offset *= factor;
+  for (auto& [unit, offset] : per_unit) offset *= factor;
+}
+
 mlir::FailureOr<scheduler::Displacement> scheduler::takeDisplacementApart(
     mlir::OpFoldResult offset, mlir::dataflow::ProgramUnitOp pu) {
   Displacement displaced;

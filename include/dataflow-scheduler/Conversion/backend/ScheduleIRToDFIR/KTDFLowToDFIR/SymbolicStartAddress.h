@@ -228,6 +228,10 @@ struct Displacement {
 
   /// The offset on \p unit.
   int64_t at(mlir::Value unit) const;
+
+  /// Multiplies by \p factor, covering both `common_offset` and `per_unit`, to
+  /// convert the unit the offsets are counted in.
+  void scaleBy(int64_t factor);
 };
 
 /// Evaluates \p offset -- the offset of the tile a program reads into the view
