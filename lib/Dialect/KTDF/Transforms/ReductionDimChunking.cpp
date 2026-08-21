@@ -280,6 +280,17 @@ struct ReductionDimChunkingPass
         per_dim_num_chunks.push_back(static_cast<int64_t>(nc));
     }
 
+    // One chunk on every dimension leaves the reduction as it is: the rewrite
+    // below would rebuild the pipeline to emit the same program, differing only
+    // in how the indices print. It also keeps the pass off a single-level
+    // pipeline, which has no batch loop for rewriteComputeStage to index
+    // against.
+    if (llvm::all_of(per_dim_num_chunks,
+                     [](int64_t chunks) { return chunks == 1; })) {
+      LDBG(1) << PASS_NAME ": every reduction dim has one chunk, nothing to do";
+      return success();
+    }
+
     return rewriteComputeStage(inner_pipeline, load_stage, compute_stage,
                                store_stage, generic_op, reduction_dims,
                                chunk_sizes, per_dim_num_chunks);
@@ -407,10 +418,16 @@ struct ReductionDimChunkingPass
     auto compute_units = compute_stage.getApplicableUnitsAttr();
     auto store_units = store_stage.getApplicableUnitsAttr();
 
-    // Batch-loop induction variable.
+    // Batch-loop induction variable. The enclosing loop is a precondition:
+    // the indices of the transfers built below are expressed relative to it.
+    // A single-level pipeline is well-formed IR, so report the missing loop
+    // rather than assert on it.
     auto batch_for =
-        cast<scf::ForOp>(inner_pipeline->getParentRegion()->getParentOp());
-    assert(batch_for && "inner pipeline not nested inside a batch scf.for");
+        dyn_cast<scf::ForOp>(inner_pipeline->getParentRegion()->getParentOp());
+    if (!batch_for)
+      return inner_pipeline.emitError(PASS_NAME)
+             << ": reduction needs chunking, but its pipeline is not nested in "
+                "a batch scf.for, so there is no index to chunk against";
     Value batch_iv = batch_for.getInductionVar();
 
     // Materialise per-dim upper-bound constants before the outermost loop.
