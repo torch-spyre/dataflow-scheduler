@@ -99,19 +99,28 @@ namespace scheduler {
 /// for the inputs, and to leave everything this allocator handed out alone. The
 /// declarations this writes into the IR are what say so: a consumer reads the
 /// ids rather than working them out again.
-/// What identifies a derived address: the input it is rooted at, the offset
-/// added to it, the constants its per-unit operands take, and the word size it
-/// is divided by. The word size is part of it because one tensor read through
-/// units that address in different word sizes is two different numbers.
+/// What identifies a derived address: the input it is rooted at, the expression
+/// over it, the offset added to it, the constants its per-unit operands take,
+/// and the word size it is divided by. The word size is part of it because one
+/// tensor read through units that address in different word sizes is two
+/// different numbers.
 struct DerivedKey {
   mlir::Value root;
   int64_t offset = 0;
   llvm::SmallVector<int64_t> terms;
   int64_t word_size = 1;
+  /// The operations the address is built from the input by, outermost last.
+  llvm::SmallVector<llvm::StringRef> operators;
+  /// Which operand of each of those takes a constant, and which constant. Part
+  /// of what identifies the address because nothing else here is: two tensors
+  /// the compiler placed at different addresses, each displaced by one run
+  /// input, agree in root, offset, terms and word size.
+  llvm::SmallVector<int64_t> constants;
 
   bool operator==(const DerivedKey& other) const {
     return root == other.root && offset == other.offset &&
-           terms == other.terms && word_size == other.word_size;
+           terms == other.terms && word_size == other.word_size &&
+           operators == other.operators && constants == other.constants;
   }
 };
 
@@ -148,16 +157,14 @@ class SymbolAllocator {
   /// are in general two different tensors.
   std::optional<int64_t> inputSymbolIdFor(mlir::Value address) const;
 
-  /// Returns the id for the symbol derived from \p root by \p displacement,
-  /// \p terms and \p word_size, and whether that id is newly handed out.
+  /// Returns the id for the symbol \p key describes, and whether that id is
+  /// newly handed out.
   ///
   /// The same address asked for twice gets the same id. One
   /// `ktdp.construct_memory_view` is copied into every unit the program runs
   /// on, so without this one tensor's address would become as many symbols as
   /// there are units, all meaning the same thing and each resolved separately.
-  std::pair<int64_t, bool> derivedIdFor(mlir::Value root, int64_t displacement,
-                                        llvm::ArrayRef<int64_t> terms,
-                                        int64_t word_size);
+  std::pair<int64_t, bool> derivedIdFor(const DerivedKey& key);
 
   /// How many inputs the run takes, i.e. how many ids are the inputs' own.
   int64_t numInputs() const { return -next_input_ - 1; }
@@ -291,7 +298,8 @@ struct DenseMapInfo<scheduler::DerivedKey> {
   }
   static unsigned getHashValue(const scheduler::DerivedKey& key) {
     return static_cast<unsigned>(hash_combine(
-        key.root, key.offset, hash_combine_range(key.terms), key.word_size));
+        key.root, key.offset, hash_combine_range(key.terms), key.word_size,
+        hash_combine_range(key.operators), hash_combine_range(key.constants)));
   }
   static bool isEqual(const scheduler::DerivedKey& lhs,
                       const scheduler::DerivedKey& rhs) {

@@ -38,6 +38,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/AnalysisManager.h"
 
 #define DEBUG_TYPE "logical-memory-view-builder"
@@ -211,6 +212,30 @@ mlir::FailureOr<int64_t> wordSizeOf(
     word_size = of_this_unit;
   }
   return word_size.value_or(1);
+}
+
+/// Erases the ops of \p roots nothing reads any more, and whatever they were
+/// the last reader of.
+///
+/// The arithmetic an address was read out of is dead once a symbol stands for
+/// the address instead, and it cannot be left where it is: it reads the
+/// program's own argument, and what gives a program its two levels refuses one
+/// whose body computes with an argument. Nothing between here and there erases
+/// it.
+void eraseDeadArithmetic(llvm::ArrayRef<mlir::Operation*> roots) {
+  llvm::SmallVector<mlir::Operation*> worklist(roots);
+  llvm::DenseSet<mlir::Operation*> erased;
+  while (!worklist.empty()) {
+    mlir::Operation* op = worklist.pop_back_val();
+    // An op reached twice is on the worklist twice, and the second visit would
+    // be to freed memory.
+    if (erased.contains(op) || !mlir::isOpTriviallyDead(op)) continue;
+    for (mlir::Value operand : op->getOperands())
+      if (mlir::Operation* def = operand.getDefiningOp())
+        worklist.push_back(def);
+    erased.insert(op);
+    op->erase();
+  }
 }
 
 /// Phase 3b: replace Source A chains with get_logical_memory_view.
@@ -402,6 +427,55 @@ mlir::LogicalResult replaceSourceAChains(
         auto offset_val = llvm::cast<mlir::Value>(reinterpret_offset);
         start_address = mlir::arith::AddIOp::create(builder, cmv.getLoc(),
                                                     start_address, offset_val);
+
+        // The offset can itself reach a run input, though -- the grid element's
+        // share of the tensor displaced by a row the run hands in -- and then
+        // the sum is no more a number than an address taken from an input is.
+        // It becomes a symbol the same way, over the sum converted to bytes:
+        // the base is one the compiler picked and the offset came off a memref,
+        // so both count elements, while a symbol's definition is divided by the
+        // word size, which counts bytes.
+        mlir::Value element_size = mlir::arith::ConstantIndexOp::create(
+            builder, cmv.getLoc(),
+            getElementSizeBytes(src_type.getElementType()));
+        mlir::Value in_bytes = mlir::arith::MulIOp::create(
+            builder, cmv.getLoc(), start_address, element_size);
+
+        // Taken apart over the whole address rather than over the offset alone:
+        // what a symbol stands for is where the tile starts, and the base the
+        // offset displaces is part of that.
+        mlir::FailureOr<std::optional<SymbolicAddress>> displaced =
+            takeSymbolicAddressApart(in_bytes, pu, symbols);
+        if (mlir::failed(displaced)) return mlir::failure();
+
+        if (displaced->has_value()) {
+          auto memory_space = getMemorySpaceAttr(cursor.getType());
+          if (!memory_space)
+            return cmv.emitError(
+                "construct_memory_view: no memory space found in chain");
+          mlir::FailureOr<int64_t> word_size =
+              wordSizeOf(pu, *memory_space, resource_kinds);
+          if (mlir::failed(word_size)) return mlir::failure();
+
+          // Nothing displaces it here: the offset is inside the expression, and
+          // the grid element's share of it is a per-grid term of that, so the
+          // symbols come out one per element just the same.
+          mlir::FailureOr<mlir::Value> symbolic = emitSymbolicStartAddress(
+              **displaced, Displacement(), *word_size, pu, symbols, builder,
+              definitions, cmv.getLoc());
+          if (mlir::failed(symbolic)) return mlir::failure();
+          if (mlir::failed(emitView(*symbolic))) return mlir::failure();
+
+          // After the view, because the chain the offset reached the tile
+          // through is what held the last use of some of this.
+          eraseDeadArithmetic({in_bytes.getDefiningOp()});
+          continue;
+        }
+
+        // Every unit works the offset out on its own, so the sum stands as the
+        // address and the conversion to bytes was not wanted.
+        in_bytes.getDefiningOp()->erase();
+        if (element_size.use_empty()) element_size.getDefiningOp()->erase();
       }
 
       if (mlir::failed(emitView(start_address))) return mlir::failure();
