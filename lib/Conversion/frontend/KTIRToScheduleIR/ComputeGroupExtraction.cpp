@@ -300,6 +300,19 @@ static void collectArgsUsed(mlir::Value val,
   }
 }
 
+// Gets the values \p op reads inside its regions but does not define there.
+// A compute op can read a scalar in its body rather than through its operands,
+// as the base and the stride of an address computation are read. The group
+// depends on those as much as on its operands.
+static auto valuesUsedInRegions(mlir::Operation* op)
+    -> llvm::SmallVector<mlir::Value> {
+  llvm::SetVector<mlir::Value> used;
+  for (mlir::Region& region : op->getRegions()) {
+    mlir::getUsedValuesDefinedAbove(region, region, used);
+  }
+  return {used.begin(), used.end()};
+}
+
 // Helper function to recursively materialize dependencies
 static void materializeDependency(mlir::Value val, mlir::IRMapping& mapper,
                                   mlir::OpBuilder& builder) {
@@ -358,6 +371,9 @@ void ComputeGroupExtractionPass::extractComputeGroup(
     for (mlir::Value operand : op->getOperands()) {
       collectArgsUsed(operand, visited, args, args_visited);
     }
+    for (mlir::Value used : valuesUsedInRegions(op)) {
+      collectArgsUsed(used, visited, args, args_visited);
+    }
   }
 
   // Build function type with args as parameters
@@ -411,6 +427,9 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   for (mlir::Operation* op : ops_to_move) {
     for (mlir::Value operand : op->getOperands()) {
       materializeDependency(operand, mapper, builder);
+    }
+    for (mlir::Value used : valuesUsedInRegions(op)) {
+      materializeDependency(used, mapper, builder);
     }
   }
 
