@@ -1,4 +1,4 @@
-//===-- HoistRegisters.cpp -------------------------------*- c++ -*-===//
+//===-- MaterializeRegisters.cpp -------------------------*- c++ -*-===//
 //
 // Part of the Dataflow Scheduler project.
 //
@@ -38,7 +38,7 @@
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
 
 namespace scheduler {
-#define GEN_PASS_DEF_HOISTREGISTERSPASS
+#define GEN_PASS_DEF_MATERIALIZEREGISTERSPASS
 #include "dataflow-scheduler/Transforms/Passes.h.inc"
 }  // namespace scheduler
 
@@ -273,9 +273,9 @@ auto hoistAllocation(memref::AllocaOp alloc, linalg::GenericOp generic,
   return success();
 }
 
-/// Hoists the registers of \p generic out of its body.
-auto hoistRegisterConstants(linalg::GenericOp generic, AnalysisManager analyses,
-                            RewriterBase& rewriter) -> LogicalResult {
+/// Makes the registers \p generic uses real in front of its body.
+auto materializeRegisters(linalg::GenericOp generic, AnalysisManager analyses,
+                          RewriterBase& rewriter) -> LogicalResult {
   const auto constants = getMappedConstants(generic);
 
   for (auto constant : constants) {
@@ -307,15 +307,15 @@ auto hoistRegisterConstants(linalg::GenericOp generic, AnalysisManager analyses,
   return success();
 }
 
-struct HoistRegistersPass
-    : public impl::HoistRegistersPassBase<HoistRegistersPass> {
-  using HoistRegistersPassBase::HoistRegistersPassBase;
+struct MaterializeRegistersPass
+    : public impl::MaterializeRegistersPassBase<MaterializeRegistersPass> {
+  using MaterializeRegistersPassBase::MaterializeRegistersPassBase;
 
   void runOnOperation() override {
     IRRewriter rewriter(&getContext());
     const auto result = getOperation()->walk([&](linalg::GenericOp generic) {
-      if (failed(hoistRegisterConstants(generic, getAnalysisManager(),
-                                        rewriter))) {
+      if (failed(
+              materializeRegisters(generic, getAnalysisManager(), rewriter))) {
         return WalkResult::interrupt();
       }
       return WalkResult::skip();

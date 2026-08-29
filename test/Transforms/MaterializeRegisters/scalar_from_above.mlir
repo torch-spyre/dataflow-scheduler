@@ -6,7 +6,7 @@
 // its lanes there. The data register keeps its per-element store, which becomes
 // lane zero.
 
-// RUN: dataflow-scheduler-opt -hoist-registers %s | FileCheck %s
+// RUN: dataflow-scheduler-opt -materialize-registers %s | FileCheck %s
 
 // CHECK-LABEL: func.func @scalar_from_above(
 // CHECK-SAME:      %{{.*}}: tensor<64xf16>,
