@@ -103,14 +103,14 @@ struct HoistConstantStoragePass
             return mlir::ktdf::PipelineAnchor::Parent;
           }
 
-          if (auto alloc = llvm::dyn_cast<mlir::memref::AllocOp>(op); alloc) {
-            auto* const write = findInvariantWriteIn(alloc.getResult(),
+          if (llvm::isa<mlir::memref::AllocOp, mlir::memref::AllocaOp>(op)) {
+            auto* const write = findInvariantWriteIn(op->getResult(0),
                                                      &pipeline.getBodyRegion());
             if (write) {
               LDBG() << "found invariant write "
                      << mlir::OpWithFlags(write, kSkipRegions);
               LDBG() << "hoisting allocation "
-                     << mlir::OpWithFlags(alloc, kSkipRegions);
+                     << mlir::OpWithFlags(op, kSkipRegions);
               invariant_writes.insert(write);
               ++num_hoisted;
               return mlir::ktdf::PipelineAnchor::Parent;
