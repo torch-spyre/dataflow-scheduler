@@ -28,6 +28,7 @@
 #include <mlir/IR/Matchers.h>
 #include <mlir/IR/PatternMatch.h>
 #include <mlir/Pass/Pass.h>
+#include <mlir/Transforms/RegionUtils.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
@@ -136,11 +137,6 @@ auto getBodyAllocations(linalg::GenericOp generic) -> SmallVector<Operation*> {
   return result;
 }
 
-/// Whether \p value stands outside the body of \p generic.
-auto isAboveBody(Value value, linalg::GenericOp generic) -> bool {
-  return !generic.getBodyRegion().isAncestor(value.getParentRegion());
-}
-
 /// Gets how many elements of its tile \p generic covers, zero if it is not
 /// static.
 auto getTileSize(linalg::GenericOp generic) -> int64_t {
@@ -220,7 +216,7 @@ auto hoistAllocation(Operation* alloc, linalg::GenericOp generic,
       // such as the base and the stride of an address arrive this way, hoisted
       // out of the body before this pass runs.
       const auto stored = store.getValueToStore();
-      if (isAboveBody(stored, generic)) {
+      if (areValuesDefinedAbove(ValueRange{stored}, generic.getBodyRegion())) {
         rewriter.setInsertionPoint(generic);
         linalg::FillOp::create(rewriter, store.getLoc(), ValueRange{stored},
                                ValueRange{reg});
