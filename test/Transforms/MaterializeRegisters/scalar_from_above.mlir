@@ -1,21 +1,20 @@
 // A register the body does not compute per element. The scale is a scalar the
-// caller passes in, so storing it fills the whole register rather than one lane,
-// and the arithmetic computing it does not belong in the body either.
+// caller passes in, so storing it fills the whole register rather than one lane.
+// The data register keeps its per-element store, which becomes lane zero.
 //
-// The arithmetic moves in front of the generic and the register is filled across
-// its lanes there. The data register keeps its per-element store, which becomes
-// lane zero.
+// The arithmetic computing the scale already stands in front of the generic:
+// hoist-invariants runs before this pass and takes pure ops out of the body.
 
 // RUN: dataflow-scheduler-opt -materialize-registers %s | FileCheck %s
 
 // CHECK-LABEL: func.func @scalar_from_above(
 // CHECK-SAME:      %{{.*}}: tensor<64xf16>,
 // CHECK-SAME:      %[[SCALE_IN:.*]]: index)
+// CHECK:       %[[NARROW:.*]] = arith.index_castui %[[SCALE_IN]] : index to i32
+// CHECK:       %[[WIDE:.*]] = arith.uitofp %[[NARROW]] : i32 to f16
 // CHECK:       %[[IN:.*]] = memref.alloca() : memref<64xf16, "SFU_REG">
 // CHECK-NEXT:  %[[ZERO:.*]] = arith.constant 0 : index
 // CHECK-NEXT:  %[[SCALE:.*]] = memref.alloca() : memref<64xf16, "SFU_REG">
-// CHECK-NEXT:  %[[NARROW:.*]] = arith.index_castui %[[SCALE_IN]] : index to i32
-// CHECK-NEXT:  %[[WIDE:.*]] = arith.uitofp %[[NARROW]] : i32 to f16
 // CHECK-NEXT:  linalg.fill ins(%[[WIDE]] : f16) outs(%[[SCALE]] : memref<64xf16, "SFU_REG">)
 // CHECK-NEXT:  %[[OUT:.*]] = memref.alloca() : memref<64xf16, "SFU_REG">
 // CHECK:       linalg.generic
@@ -31,14 +30,14 @@
 module {
   func.func @scalar_from_above(%in: tensor<64xf16>, %scale: index) -> tensor<64xf16> {
     %init = tensor.empty() : tensor<64xf16>
+    %narrow = arith.index_castui %scale : index to i32
+    %widened = arith.uitofp %narrow : i32 to f16
     %result = linalg.generic {indexing_maps = [#id, #id],
                               iterator_types = ["parallel"]}
         ins(%in : tensor<64xf16>) outs(%init : tensor<64xf16>) {
     ^bb0(%x: f16, %out: f16):
       %data = memref.alloca() : memref<f16, "SFU_REG">
       memref.store %x, %data[] : memref<f16, "SFU_REG">
-      %narrow = arith.index_castui %scale : index to i32
-      %widened = arith.uitofp %narrow : i32 to f16
       %scalar = memref.alloca() : memref<f16, "SFU_REG">
       memref.store %widened, %scalar[] : memref<f16, "SFU_REG">
       %outreg = memref.alloca() : memref<f16, "SFU_REG">

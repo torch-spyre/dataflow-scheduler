@@ -27,7 +27,6 @@
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/IR/Matchers.h>
 #include <mlir/IR/PatternMatch.h>
-#include <mlir/Interfaces/SideEffectInterfaces.h>
 #include <mlir/Pass/Pass.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
@@ -142,39 +141,6 @@ auto isAboveBody(Value value, linalg::GenericOp generic) -> bool {
   return !generic.getBodyRegion().isAncestor(value.getParentRegion());
 }
 
-/// Whether the ops computing \p value could stand in front of \p generic.
-///
-/// They could if none of them is the body's own: a per-element value, or an op
-/// that reads or writes memory.
-auto canLeaveBody(Value value, linalg::GenericOp generic,
-                  DenseSet<Operation*>& visited) -> bool {
-  if (isAboveBody(value, generic)) return true;
-
-  auto* const op = value.getDefiningOp();
-  if (!op) return false;
-  if (!visited.insert(op).second) return true;
-  if (op->getNumRegions() != 0 || !isMemoryEffectFree(op)) return false;
-
-  return llvm::all_of(op->getOperands(), [&](Value operand) {
-    return canLeaveBody(operand, generic, visited);
-  });
-}
-
-/// Moves the ops computing \p value in front of \p generic.
-///
-/// Operands first, so each op lands after what it reads. Only call this where
-/// canLeaveBody() holds.
-void takeOutOfBody(Value value, linalg::GenericOp generic,
-                   RewriterBase& rewriter) {
-  if (isAboveBody(value, generic)) return;
-
-  auto* const op = value.getDefiningOp();
-  for (const auto operand : op->getOperands()) {
-    takeOutOfBody(operand, generic, rewriter);
-  }
-  rewriter.moveOpBefore(op, generic);
-}
-
 /// Gets how many elements of its tile \p generic covers, zero if it is not
 /// static.
 auto getTileSize(linalg::GenericOp generic) -> int64_t {
@@ -241,22 +207,19 @@ auto hoistAllocation(memref::AllocaOp alloc, linalg::GenericOp generic,
   for (auto* user : llvm::to_vector(alloc->getUsers())) {
     rewriter.setInsertionPoint(user);
     if (auto store = dyn_cast<memref::StoreOp>(user)) {
-      // A value the body does not compute per element belongs to the whole
-      // register, not to lane zero. The ops computing it move in front of the
-      // generic and every lane is filled there. Runtime scalars such as the
-      // base and the stride of an address arrive this way.
+      // A value from outside the body is the same for every element, so it
+      // belongs to the whole register rather than to lane zero. Runtime scalars
+      // such as the base and the stride of an address arrive this way, hoisted
+      // out of the body before this pass runs.
       const auto stored = store.getValueToStore();
-      DenseSet<Operation*> visited;
-      if (canLeaveBody(stored, generic, visited)) {
-        takeOutOfBody(stored, generic, rewriter);
+      if (isAboveBody(stored, generic)) {
         rewriter.setInsertionPoint(generic);
         linalg::FillOp::create(rewriter, store.getLoc(), ValueRange{stored},
                                ValueRange{reg});
-        rewriter.eraseOp(store);
-        continue;
+      } else {
+        memref::StoreOp::create(rewriter, store.getLoc(), stored, reg,
+                                ValueRange{zero});
       }
-      memref::StoreOp::create(rewriter, store.getLoc(), stored, reg,
-                              ValueRange{zero});
       rewriter.eraseOp(store);
       continue;
     }
