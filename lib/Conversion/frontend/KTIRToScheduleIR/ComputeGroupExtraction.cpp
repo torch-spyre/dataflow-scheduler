@@ -78,6 +78,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include <algorithm>
+
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
@@ -306,11 +308,37 @@ static void collectArgsUsed(mlir::Value val,
 // depends on those as much as on its operands.
 static auto valuesUsedInRegions(mlir::Operation* op)
     -> llvm::SmallVector<mlir::Value> {
-  llvm::SetVector<mlir::Value> used;
-  for (mlir::Region& region : op->getRegions()) {
-    mlir::getUsedValuesDefinedAbove(region, region, used);
+  llvm::SmallVector<mlir::Value> used;
+  llvm::DenseSet<mlir::Value> seen;
+
+  llvm::SmallVector<mlir::Operation*> worklist;
+  auto pushChildren = [&](mlir::Operation* parent) {
+    const auto first = worklist.size();
+    for (mlir::Region& region : parent->getRegions()) {
+      for (mlir::Block& block : region) {
+        for (mlir::Operation& child : block) worklist.push_back(&child);
+      }
+    }
+    // Taken off the back, so reversing what was just added walks in order.
+    std::reverse(worklist.begin() + first, worklist.end());
+  };
+
+  pushChildren(op);
+  while (!worklist.empty()) {
+    mlir::Operation* nested = worklist.pop_back_val();
+    for (mlir::Value operand : nested->getOperands()) {
+      auto* const owner = operand.getParentBlock()->getParentOp();
+      if (owner && op->isAncestor(owner)) continue;
+      if (seen.insert(operand).second) used.push_back(operand);
+    }
+
+    // Nothing inside an op isolated from above reads a value from out here.
+    if (!nested->hasTrait<mlir::OpTrait::IsIsolatedFromAbove>()) {
+      pushChildren(nested);
+    }
   }
-  return {used.begin(), used.end()};
+
+  return used;
 }
 
 // Helper function to recursively materialize dependencies
