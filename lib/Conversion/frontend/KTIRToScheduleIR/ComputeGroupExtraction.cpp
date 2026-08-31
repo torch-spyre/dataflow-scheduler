@@ -78,8 +78,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include <algorithm>
-
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
@@ -308,35 +306,25 @@ static void collectArgsUsed(mlir::Value val,
 // depends on those as much as on its operands.
 static auto valuesUsedInRegions(mlir::Operation* op)
     -> llvm::SmallVector<mlir::Value> {
+  // Ordered, because the order they are found in is the order they become
+  // parameters of the extracted function in.
   llvm::SmallVector<mlir::Value> used;
   llvm::DenseSet<mlir::Value> seen;
 
-  llvm::SmallVector<mlir::Operation*> worklist;
-  auto pushChildren = [&](mlir::Operation* parent) {
-    const auto first = worklist.size();
-    for (mlir::Region& region : parent->getRegions()) {
-      for (mlir::Block& block : region) {
-        for (mlir::Operation& child : block) worklist.push_back(&child);
+  op->walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* child) {
+    for (mlir::Value operand : child->getOperands()) {
+      if (!operand.getParentRegion()->isAncestor(op->getParentRegion())) {
+        continue;
       }
-    }
-    // Taken off the back, so reversing what was just added walks in order.
-    std::reverse(worklist.begin() + first, worklist.end());
-  };
-
-  pushChildren(op);
-  while (!worklist.empty()) {
-    mlir::Operation* nested = worklist.pop_back_val();
-    for (mlir::Value operand : nested->getOperands()) {
-      auto* const owner = operand.getParentBlock()->getParentOp();
-      if (owner && op->isAncestor(owner)) continue;
       if (seen.insert(operand).second) used.push_back(operand);
     }
 
     // Nothing inside an op isolated from above reads a value from out here.
-    if (!nested->hasTrait<mlir::OpTrait::IsIsolatedFromAbove>()) {
-      pushChildren(nested);
+    if (child->hasTrait<mlir::OpTrait::IsIsolatedFromAbove>()) {
+      return mlir::WalkResult::skip();
     }
-  }
+    return mlir::WalkResult::advance();
+  });
 
   return used;
 }
