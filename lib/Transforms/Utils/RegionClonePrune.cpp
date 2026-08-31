@@ -30,18 +30,18 @@ using namespace scheduler;
 
 namespace {
 
-/// True iff `iv` is transitively used by any op in `kept`.
+/// True iff some op in `kept` reads `iv` itself.
+///
+/// Itself, rather than "has an ancestor in `kept`": a kept enclosing loop is an
+/// ancestor of everything within it, so that question answers yes for the
+/// variable of every loop inside one and no loop is ever dropped. Reaching the
+/// variable through a chain of ops is the caller's part -- it looks at a loop
+/// again each time an op inside it joins `kept`.
 bool ivUsedByKept(mlir::Value iv,
                   const llvm::DenseSet<mlir::Operation*>& kept) {
-  for (mlir::Operation* user : iv.getUsers()) {
-    // Walk up from user: if any ancestor is in kept, the IV matters.
-    mlir::Operation* cur = user;
-    while (cur) {
-      if (kept.contains(cur)) return true;
-      cur = cur->getParentOp();
-    }
-  }
-  return false;
+  return llvm::any_of(iv.getUsers(), [&](mlir::Operation* user) {
+    return kept.contains(user);
+  });
 }
 
 /// Compute the set of cloned ops to keep, starting from `anchor` and
