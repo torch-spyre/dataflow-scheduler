@@ -273,33 +273,6 @@ void ComputeGroupExtractionPass::buildAccessTileEqClasses(
   }
 }
 
-// Helper function to recursively collect iter args from operand dependencies
-static void collectArgsUsed(mlir::Value val,
-                            llvm::DenseSet<mlir::Operation*>& visited,
-                            llvm::SmallVectorImpl<mlir::Value>& args,
-                            llvm::DenseSet<mlir::Value>& args_visited) {
-  // If this is a block argument (e.g., iter arg from scf.for), add it to the
-  // list of arguments to pass to the extracted function
-  if (mlir::isa<mlir::BlockArgument>(val)) {
-    // Avoid duplicates
-    if (args_visited.insert(val).second) {
-      args.push_back(val);
-    }
-    return;
-  }
-
-  mlir::Operation* op = val.getDefiningOp();
-
-  // Avoid revisiting operations
-  if (visited.count(op)) return;
-  visited.insert(op);
-
-  // Recursively collect from operands
-  for (mlir::Value operand : op->getOperands()) {
-    collectArgsUsed(operand, visited, args, args_visited);
-  }
-}
-
 // Gets the values \p op reads and does not define: its operands, and whatever
 // its regions read from outside them. A compute op can read a scalar in its
 // body rather than through its operands, as the base and the stride of an
@@ -330,6 +303,33 @@ static auto valuesReadFromAbove(mlir::Operation* op)
   return used;
 }
 
+// Helper function to recursively collect iter args from what an op reads
+static void collectArgsUsed(mlir::Value val,
+                            llvm::DenseSet<mlir::Operation*>& visited,
+                            llvm::SmallVectorImpl<mlir::Value>& args,
+                            llvm::DenseSet<mlir::Value>& args_visited) {
+  // If this is a block argument (e.g., iter arg from scf.for), add it to the
+  // list of arguments to pass to the extracted function
+  if (mlir::isa<mlir::BlockArgument>(val)) {
+    // Avoid duplicates
+    if (args_visited.insert(val).second) {
+      args.push_back(val);
+    }
+    return;
+  }
+
+  mlir::Operation* op = val.getDefiningOp();
+
+  // Avoid revisiting operations
+  if (visited.count(op)) return;
+  visited.insert(op);
+
+  // Recursively collect from what it reads
+  for (mlir::Value read : valuesReadFromAbove(op)) {
+    collectArgsUsed(read, visited, args, args_visited);
+  }
+}
+
 // Helper function to recursively materialize dependencies
 static void materializeDependency(mlir::Value val, mlir::IRMapping& mapper,
                                   mlir::OpBuilder& builder) {
@@ -344,9 +344,9 @@ static void materializeDependency(mlir::Value val, mlir::IRMapping& mapper,
 
   mlir::Operation* op = val.getDefiningOp();
 
-  // Ensure all operands of the ancestor are cloned first
-  for (mlir::Value operand : op->getOperands()) {
-    materializeDependency(operand, mapper, builder);
+  // Ensure everything the ancestor reads is cloned first
+  for (mlir::Value read : valuesReadFromAbove(op)) {
+    materializeDependency(read, mapper, builder);
   }
 
   // Now clone the ancestor itself into the new block
