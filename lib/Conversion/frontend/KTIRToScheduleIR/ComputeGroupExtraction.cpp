@@ -300,11 +300,12 @@ static void collectArgsUsed(mlir::Value val,
   }
 }
 
-// Gets the values \p op reads inside its regions but does not define there.
-// A compute op can read a scalar in its body rather than through its operands,
-// as the base and the stride of an address computation are read. The group
-// depends on those as much as on its operands.
-static auto valuesUsedInRegions(mlir::Operation* op)
+// Gets the values \p op reads and does not define: its operands, and whatever
+// its regions read from outside them. A compute op can read a scalar in its
+// body rather than through its operands, as the base and the stride of an
+// address computation are read, and the group depends on that as much as on an
+// operand.
+static auto valuesReadFromAbove(mlir::Operation* op)
     -> llvm::SmallVector<mlir::Value> {
   // Ordered, because the order they are found in is the order they become
   // parameters of the extracted function in.
@@ -384,10 +385,7 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   llvm::DenseSet<mlir::Operation*> visited;
   llvm::DenseSet<mlir::Value> args_visited;
   for (mlir::Operation* op : ops_to_move) {
-    for (mlir::Value operand : op->getOperands()) {
-      collectArgsUsed(operand, visited, args, args_visited);
-    }
-    for (mlir::Value used : valuesUsedInRegions(op)) {
+    for (mlir::Value used : valuesReadFromAbove(op)) {
       collectArgsUsed(used, visited, args, args_visited);
     }
   }
@@ -441,10 +439,7 @@ void ComputeGroupExtractionPass::extractComputeGroup(
   // Step 1: Materialize all dependencies for the entire range.
   // (e.g. arith.constants, construct_memory_views, construct_access_tiles)
   for (mlir::Operation* op : ops_to_move) {
-    for (mlir::Value operand : op->getOperands()) {
-      materializeDependency(operand, mapper, builder);
-    }
-    for (mlir::Value used : valuesUsedInRegions(op)) {
+    for (mlir::Value used : valuesReadFromAbove(op)) {
       materializeDependency(used, mapper, builder);
     }
   }
