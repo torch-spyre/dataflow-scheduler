@@ -23,7 +23,6 @@
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
-#include "ktir/Dialect/SpyreOp/SpyreOp.h"
 #include "ktir/Dialect/SpyreOp/SpyreOpDialect.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -62,14 +61,10 @@ namespace {
     return true;
   }
 
-  // Accept an index cast whose only users are address computations. The base
-  // and the stride of 'spyreop.idx32toaddr' are runtime scalars that a kernel
-  // holds as index and casts here.
-  if (auto cast = mlir::dyn_cast<mlir::arith::IndexCastUIOp>(op)) {
-    return !cast->use_empty() &&
-           llvm::all_of(cast->getUsers(), [](mlir::Operation* user) {
-             return mlir::isa<mlir::spyreop::Idx32ToAddr>(user);
-           });
+  // Accept an index cast. A kernel holds a runtime scalar as index and casts it
+  // where it is used -- the base and the stride of an address computation, say.
+  if (mlir::isa<mlir::arith::IndexCastUIOp>(op)) {
+    return true;
   }
 
   // Reject everything else.
