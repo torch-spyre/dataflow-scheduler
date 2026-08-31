@@ -40,6 +40,7 @@ namespace scheduler {
 
 std::unique_ptr<mlir::Pass> createKTIRLegalityCheckPass();
 std::unique_ptr<mlir::Pass> createComputeGroupExtractionPass();
+std::unique_ptr<mlir::Pass> createIndirectComputeGroupSplitPass();
 std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass(
     const SchedulerExtContext& scheduler_ctx);
 std::unique_ptr<mlir::Pass> createConstructThreeStagePipelinePass();

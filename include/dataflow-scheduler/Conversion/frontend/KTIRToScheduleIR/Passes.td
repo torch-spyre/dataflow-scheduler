@@ -61,4 +61,36 @@ def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
   ];
 }
 
+def IndirectComputeGroupSplitPass
+    : Pass<"indirect-compute-group-split", "mlir::ModuleOp"> {
+  let summary = "Split indirect-access compute groups into addr-resolve and "
+                "gather/scatter subgroups";
+  let description = [{
+    Finds every extracted child-module function that contains a
+    `ktdp.construct_indirect_access_tile` op and splits it into two sibling
+    child modules: one that resolves raw integer indices to flat absolute
+    addresses and stores them into a global address buffer, and one that loads
+    the address buffer into the ind_addr_buf (IAB) and performs the actual
+    gather/scatter compute using `ktdp_lowering.construct_indirect_access_tile`.
+
+    Both gather (indirect load) and scatter (indirect store) are handled.
+    The pass verifies that each extracted child-module function contains at
+    most one `ktdp.construct_indirect_access_tile` and fails with a diagnostic
+    if this invariant is violated.
+
+    Child-module functions that do not contain an indirect op are left
+    unchanged. This pass is a no-op on the orchestrator module.
+  }];
+  let constructor = "::scheduler::createIndirectComputeGroupSplitPass()";
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::func::FuncDialect",
+    "mlir::ktdp::KtdpDialect",
+    "mlir::ktdp_lowering::KTDPLoweringDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::spyreop::SpyreOpDialect",
+    "mlir::tensor::TensorDialect"
+  ];
+}
+
 #endif // DATAFLOW_SCHEDULER_CONVERSION_KTIRTOSCHEDULEIR_PASSES_TD

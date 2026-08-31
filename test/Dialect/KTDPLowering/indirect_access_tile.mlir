@@ -38,7 +38,7 @@
 // CHECK: ktdp_lowering.construct_indirect_access_tile
 // CHECK-SAME:   intermediate_variables([[IV0:%[a-z0-9_]+]], [[IV1:%[a-z0-9_]+]], [[IV2:%[a-z0-9_]+]], [[IV3:%[a-z0-9_]+]])
 // CHECK-SAME:   base_ptr = [[IAB]]{{\[}}[[IV0]], [[IV1]]{{\]}}
-// CHECK-SAME:   [[BASE]][[[C0]], [[C0]] + [[IV2]], [[IV3]]]
+// CHECK-SAME:   [[BASE]][([[C0]]), ([[C0]] + [[IV2]]), ([[IV3]])]
 // CHECK-SAME:   variables_space_order
 // CHECK-SAME:   variables_space_set
 // CHECK-SAME:   : memref<64x2x64xf16>, memref<2x32xindex, "IAB"> -> !ktdp.access_tile<2x32x2x64xindex>
@@ -70,7 +70,7 @@ func.func @roundtrip_2d_iab(
 // CHECK: ktdp_lowering.construct_indirect_access_tile
 // CHECK-SAME:   intermediate_variables([[IV0:%[a-z0-9_]+]], [[IV1:%[a-z0-9_]+]], [[IV2:%[a-z0-9_]+]])
 // CHECK-SAME:   base_ptr = [[IAB]]{{\[}}[[IV0]]{{\]}}
-// CHECK-SAME:   [[BASE]][[[C0]], [[C0]] + [[IV1]], [[IV2]]]
+// CHECK-SAME:   [[BASE]][([[C0]]), ([[C0]] + [[IV1]]), ([[IV2]])]
 // CHECK-SAME:   variables_space_order
 // CHECK-SAME:   variables_space_set
 // CHECK-SAME:   : memref<64x2x64xf16>, memref<32xindex, "IAB"> -> !ktdp.access_tile<32x2x64xindex>
@@ -105,7 +105,7 @@ func.func @roundtrip_1d_iab(
 // CHECK: ktdp_lowering.construct_indirect_access_tile
 // CHECK-SAME:   intermediate_variables([[IV0:%[a-z0-9_]+]], [[IV1:%[a-z0-9_]+]], [[IV2:%[a-z0-9_]+]])
 // CHECK-SAME:   base_ptr = [[IAB]]{{\[}}[[I1]], [[IV0]]{{\]}}
-// CHECK-SAME:   [[BASE]][[[C0]], [[C0]] + [[IV1]], [[IV2]]]
+// CHECK-SAME:   [[BASE]][([[C0]]), ([[C0]] + [[IV1]]), ([[IV2]])]
 // CHECK-SAME:   variables_space_order
 // CHECK-SAME:   variables_space_set
 // CHECK-SAME:   : memref<64x2x64xf16>, memref<2x32xindex, "IAB"> -> !ktdp.access_tile<32x2x64xindex>
@@ -138,7 +138,7 @@ func.func @mixed_iab_subscripts(
 // CHECK: ktdp_lowering.construct_indirect_access_tile
 // CHECK-SAME:   intermediate_variables([[IV0:%[a-z0-9_]+]], [[IV1:%[a-z0-9_]+]])
 // CHECK-SAME:   base_ptr = [[IAB]]{{\[}}[[I2]]{{\]}}
-// CHECK-SAME:   [[BASE]][[[C0]], [[C0]] + [[IV0]], [[IV1]]]
+// CHECK-SAME:   [[BASE]][([[C0]]), ([[C0]] + [[IV0]]), ([[IV1]])]
 // CHECK-SAME:   variables_space_order
 // CHECK-SAME:   variables_space_set
 // CHECK-SAME:   : memref<64x2x64xf16>, memref<32xindex, "IAB"> -> !ktdp.access_tile<2x64xindex>
