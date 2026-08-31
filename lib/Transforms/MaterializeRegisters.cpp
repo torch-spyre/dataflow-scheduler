@@ -126,12 +126,12 @@ auto materializeRegister(arith::ConstantOp constant, linalg::GenericOp generic,
 /// A pattern allocates the scratch a template computes in where it matched, so
 /// that lands in the body too. Only allocations sized entirely by their type
 /// are taken; one the body computes a size for could not move out of it.
-auto getBodyAllocations(linalg::GenericOp generic)
-    -> SmallVector<memref::AllocaOp> {
-  SmallVector<memref::AllocaOp> result;
-  generic.getBody()->walk([&](memref::AllocaOp alloc) {
-    if (alloc->getNumOperands() != 0) return;
-    result.push_back(alloc);
+auto getBodyAllocations(linalg::GenericOp generic) -> SmallVector<Operation*> {
+  SmallVector<Operation*> result;
+  generic.getBody()->walk([&](Operation* op) {
+    if (!llvm::isa<memref::AllocaOp, memref::AllocOp>(op)) return;
+    if (op->getNumOperands() != 0) return;
+    result.push_back(op);
   });
   return result;
 }
@@ -161,10 +161,10 @@ auto getTileSize(linalg::GenericOp generic) -> int64_t {
 ///
 /// \p zero is the index of the lane the body's own accesses land on, made here
 /// on the first allocation that needs one.
-auto hoistAllocation(memref::AllocaOp alloc, linalg::GenericOp generic,
+auto hoistAllocation(Operation* alloc, linalg::GenericOp generic,
                      AnalysisManager analyses, Value& zero,
                      RewriterBase& rewriter) -> LogicalResult {
-  const auto type = alloc.getType();
+  const auto type = cast<MemRefType>(alloc->getResult(0).getType());
   if (type.getRank() != 0) {
     rewriter.moveOpBefore(alloc, generic);
     return success();
@@ -172,7 +172,7 @@ auto hoistAllocation(memref::AllocaOp alloc, linalg::GenericOp generic,
 
   for (auto* const user : alloc->getUsers()) {
     if (!llvm::isa<memref::StoreOp, memref::LoadOp, ktdf::OpaqueOp>(user)) {
-      return alloc.emitError("unable to hoist allocation")
+      return alloc->emitError("unable to hoist allocation")
                  .attachNote(user->getLoc())
              << "user can't be vectorized";
     }
@@ -188,7 +188,7 @@ auto hoistAllocation(memref::AllocaOp alloc, linalg::GenericOp generic,
   // number of them would leave the template reading one it never wrote.
   const auto lanes = getLaneCount(generic, element, analyses);
   if (lanes != 0 && tile % lanes != 0) {
-    return alloc.emitError("a tile of ")
+    return alloc->emitError("a tile of ")
            << tile << " does not divide into registers of " << lanes << " "
            << element;
   }
@@ -197,9 +197,17 @@ auto hoistAllocation(memref::AllocaOp alloc, linalg::GenericOp generic,
       {tile}, element, MemRefLayoutAttrInterface{}, type.getMemorySpace());
 
   rewriter.setInsertionPoint(generic);
-  auto reg = memref::AllocaOp::create(rewriter, alloc.getLoc(), register_type);
+  // The kind the body asked for is kept: what hoists a register's fill out of a
+  // loop hoists an alloc and leaves an alloca alone, so the pattern says which
+  // it wants by which one it wrote.
+  Value reg =
+      llvm::isa<memref::AllocOp>(alloc)
+          ? memref::AllocOp::create(rewriter, alloc->getLoc(), register_type)
+                .getResult()
+          : memref::AllocaOp::create(rewriter, alloc->getLoc(), register_type)
+                .getResult();
   if (!zero) {
-    zero = arith::ConstantIndexOp::create(rewriter, alloc.getLoc(), 0);
+    zero = arith::ConstantIndexOp::create(rewriter, alloc->getLoc(), 0);
   }
 
   // What the body writes and reads is one element, and it becomes lane zero of
@@ -232,7 +240,7 @@ auto hoistAllocation(memref::AllocaOp alloc, linalg::GenericOp generic,
 
   // Whoever is left takes the register as it stands -- the opaque, which reads
   // and writes the whole of it.
-  rewriter.replaceOp(alloc, reg.getResult());
+  rewriter.replaceOp(alloc, reg);
   return success();
 }
 
