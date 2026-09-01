@@ -194,7 +194,20 @@ mlir::Operation* scheduler::cloneRegionAndPruneToAnchor(
     });
   }
 
-  // Erase. Drop remaining uses first to avoid dangling-use asserts.
+  // Nothing the clone keeps may read what goes. The marking is what makes that
+  // true; this says so if a rule is ever missed, rather than leaving the clone
+  // holding a null operand.
+  for (mlir::Operation* op : erasable) {
+    for (mlir::Value result : op->getResults()) {
+      for (mlir::Operation* user : result.getUsers()) {
+        (void)user;
+        assert(!marks.keeps(user) && "pruned op is still read by a kept op");
+      }
+    }
+  }
+
+  // The rest of the uses are among the ops going, in an order erasing them one
+  // at a time does not respect.
   for (mlir::Operation* op : erasable) {
     op->dropAllUses();
   }
