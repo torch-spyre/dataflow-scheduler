@@ -50,6 +50,7 @@ void scheduler::buildKTIRFrontendPipeline(
   pm.addPass(createKTIRLegalityCheckPass());
   pm.addPass(createComputeGroupExtractionPass());
   pm.addPass(createIndirectComputeGroupSplitPass());
+  pm.addPass(createIndirectAddrBufLegalizationPass());
   {
     auto& nested = pm.nest<mlir::ModuleOp>().nest<mlir::func::FuncOp>();
     nested.addPass(mlir::createConvertElementwiseToLinalgPass());
