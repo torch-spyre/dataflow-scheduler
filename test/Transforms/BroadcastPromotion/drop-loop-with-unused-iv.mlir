@@ -1,12 +1,18 @@
 // RUN: dataflow-scheduler-opt --broadcast-promotion %s -allow-unregistered-dialect | FileCheck %s
 
 // A donor stage whose loop nest the transfer only half uses. The indices the
-// transfer reads come from %i, so the loop over it is cloned with the transfer;
-// nothing the transfer reads comes from %j, so that loop must not be.
+// transfer reads come from %i, so the loop over it is cloned with the transfer.
+// Nothing the transfer reads comes from %j, and the clone is pruned to the
+// transfer, so all that is left in that loop is the transfer and the pure ops
+// computing its indices -- every iteration the same values and the same write.
+// One run stands for all of them, and the loop goes.
 //
-// Cloning it would not merely be wasteful. Its bound is derived from the
-// induction variable of the loop just hoisted above, so a clone that keeps the
-// loop reads a value defined below itself and the module stops verifying.
+// It has to go, not merely for tidiness. Its bound is derived from the induction
+// variable of the loop just hoisted above, so a clone that keeps the loop reads a
+// value defined below itself and the module stops verifying.
+//
+// What stops this where the iterations are not all alike is in
+// no-hoist-loop-carries-a-value.mlir and keep-loop-with-side-effects.mlir.
 
 // CHECK-LABEL:   func.func @drop_loop_with_unused_iv
 // CHECK:           scf.for %[[I:.*]] = %[[C0:.*]] to %{{.*}} step %[[C1:.*]] {
