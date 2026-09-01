@@ -31,81 +31,99 @@ using namespace scheduler;
 
 namespace {
 
-/// True iff some op in `kept` reads `iv` itself.
+/// What a cloned op is kept for.
 ///
-/// Itself, rather than "has an ancestor in `kept`": a kept enclosing loop is an
-/// ancestor of everything within it, so that question answers yes for the
-/// variable of every loop inside one and no loop is ever dropped. Reaching the
-/// variable through a chain of ops is the caller's part -- it looks at a loop
-/// again each time an op inside it joins `kept`.
-bool ivUsedByKept(mlir::Value iv,
-                  const llvm::DenseSet<mlir::Operation*>& kept) {
-  return llvm::any_of(iv.getUsers(), [&](mlir::Operation* user) {
-    return kept.contains(user);
-  });
-}
+/// `required` is the anchor and everything a kept op reads. `structural` is
+/// what holds a required op in a region, and the terminator of such a region.
+/// An op in neither is erased.
+struct Marking {
+  llvm::DenseSet<mlir::Operation*> required;
+  llvm::DenseSet<mlir::Operation*> structural;
 
-/// Compute the set of cloned ops to keep, starting from `anchor` and
-/// walking transitively (a) operand-producing defs and (b) parent ops,
-/// stopping at `prune_root` (never add prune_root itself or anything
-/// above it).
+  bool keeps(mlir::Operation* op) const {
+    return required.contains(op) || structural.contains(op);
+  }
+};
+
+/// Marks what a clone rooted at \p prune_root keeps to hold \p anchor.
 ///
-/// When walking up to a parent scf.for, the loop is only added to the kept
-/// set if its induction variable is actually used by something already kept.
-/// If the IV is unused, the loop is skipped and the walk continues to the
-/// loop's parent — so irrelevant loop skeletons are not cloned. Whether a
-/// skipped loop may then go is bodyCanRunOnce()'s question, asked once the set
-/// is complete.
-void computeKeptSet(mlir::Operation* anchor, mlir::Operation* prune_root,
-                    llvm::DenseSet<mlir::Operation*>& kept) {
+/// The two sets grow together: an op joins `required` through what reads it and
+/// `structural` through what it holds, and each rule feeds the other -- a
+/// surviving loop needs its bounds, and a surviving region needs whatever its
+/// terminator hands back. So this runs to a fixpoint and nothing is decided
+/// from a half-built set. Which loops the clone can then do without is
+/// canDemote()'s question, asked once this is settled.
+Marking markClone(mlir::Operation* anchor, mlir::Operation* prune_root) {
+  Marking marks;
   llvm::SmallVector<mlir::Operation*> worklist;
-  worklist.push_back(anchor);
+
+  auto inClone = [&](mlir::Operation* op) {
+    return op != nullptr && prune_root->isProperAncestor(op);
+  };
+  auto require = [&](mlir::Operation* op) {
+    if (inClone(op) && marks.required.insert(op).second) worklist.push_back(op);
+  };
+  auto structure = [&](mlir::Operation* op) {
+    if (inClone(op) && marks.structural.insert(op).second)
+      worklist.push_back(op);
+  };
+
+  require(anchor);
   while (!worklist.empty()) {
     mlir::Operation* op = worklist.pop_back_val();
-    if (op == prune_root || op == nullptr) {
-      continue;
-    }
-    if (auto for_op = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
-      // Only keep this loop if its IV is used by something already kept.
-      // If not, skip it and walk up to its parent instead.
-      if (!ivUsedByKept(for_op.getInductionVar(), kept)) {
-        worklist.push_back(for_op->getParentOp());
-        continue;
-      }
-    }
-    if (!kept.insert(op).second) {
-      continue;
-    }
+
+    // Whatever it reads: the anchor's arithmetic, a loop's bounds, the
+    // condition of an scf.if.
     for (mlir::Value operand : op->getOperands()) {
-      if (mlir::Operation* def = operand.getDefiningOp()) {
-        worklist.push_back(def);
+      require(operand.getDefiningOp());
+    }
+
+    if (marks.required.contains(op)) {
+      for (mlir::Operation* parent = op->getParentOp(); inClone(parent);
+           parent = parent->getParentOp()) {
+        structure(parent);
       }
     }
-    if (mlir::Operation* parent = op->getParentOp()) {
-      worklist.push_back(parent);
+
+    // A region that stays keeps handing back what it did, so its terminator
+    // stays and what the terminator reads is required.
+    if (marks.structural.contains(op)) {
+      for (mlir::Region& region : op->getRegions()) {
+        for (mlir::Block& block : region) {
+          if (!block.empty()) structure(block.getTerminator());
+        }
+      }
     }
   }
+
+  return marks;
 }
 
-/// Whether the body of \p loop can run once in place of every iteration.
+/// Whether the clone can do without \p loop, its body running once in place of
+/// every iteration.
 ///
-/// The pruning leaves \p anchor and the ops it reads, and this is only asked of
-/// a loop whose variable none of those reads -- so every iteration computes the
-/// same values and performs the same transfer. Once stands for all of them
-/// where nothing else depends on there having been several: the loop carries no
-/// value out, and nothing surviving in it besides the anchor touches memory.
+/// It can where the iterations are all the same one and nothing depends on
+/// there having been several: nothing kept reads the variable, the loop carries
+/// no value out, and nothing required inside it besides \p anchor touches
+/// memory.
 ///
 /// The anchor is the exception on purpose. Collapsing repeats of one transfer
 /// is what hoisting an invariant transfer does in the first place.
-bool bodyCanRunOnce(mlir::scf::ForOp loop, mlir::Operation* anchor,
-                    const llvm::DenseSet<mlir::Operation*>& kept) {
+bool canDemote(mlir::scf::ForOp loop, mlir::Operation* anchor,
+               const Marking& marks) {
   if (loop->getNumResults() != 0) {
     return false;
   }
 
+  // Kept rather than required: an inner loop that stays may take this variable
+  // as a bound, and it is the loop rather than any result of it that reads it.
+  for (mlir::Operation* user : loop.getInductionVar().getUsers()) {
+    if (marks.keeps(user)) return false;
+  }
+
   bool once = true;
   loop.getBody()->walk([&](mlir::Operation* op) {
-    if (op == anchor || !kept.contains(op)) return;
+    if (op == anchor || !marks.required.contains(op)) return;
     if (!mlir::isMemoryEffectFree(op)) once = false;
   });
   return once;
@@ -149,34 +167,29 @@ mlir::Operation* scheduler::cloneRegionAndPruneToAnchor(
   }
   assert(cloned_anchor && "anchor not found in cloned region");
 
-  // Compute kept set rooted in the cloned anchor.
-  llvm::DenseSet<mlir::Operation*> kept;
-  computeKeptSet(cloned_anchor, prune_root, kept);
+  const Marking marks = markClone(cloned_anchor, prune_root);
 
-  // Collect erasure candidates in post-order (children before parents).
-  // For a non-kept scf.for whose body contains kept ops, inline its body
-  // into the loop's parent block before erasing — this handles skipped
-  // skeleton loops without a separate move pass.
+  // Collect erasure candidates in post-order (children before parents), so a
+  // loop is erased after whatever was inside it.
   llvm::SmallVector<mlir::Operation*> erasable;
   for (mlir::Operation* top : cloned_top_level) {
     top->walk([&](mlir::Operation* op) {
-      if (kept.contains(op)) return;
-      if (op->hasTrait<mlir::OpTrait::IsTerminator>()) return;
-
-      // For a skipped scf.for: splice its body ops (except the terminator)
-      // immediately before the loop op in its parent block, then erase. A loop
-      // whose iterations are not all the same one stays where it is, holding
-      // whatever the pruning left in it.
+      // A loop the clone can do without hands its body to the block around it
+      // and goes; one that stays holds whatever the marking left in it.
       if (auto loop = mlir::dyn_cast<mlir::scf::ForOp>(op)) {
-        if (!bodyCanRunOnce(loop, cloned_anchor, kept)) return;
-
-        mlir::Block* loop_body = &op->getRegion(0).front();
-        // Splice everything up to (but not including) the terminator.
-        op->getBlock()->getOperations().splice(
-            mlir::Block::iterator(op), loop_body->getOperations(),
-            loop_body->begin(), loop_body->getTerminator()->getIterator());
+        if (marks.structural.contains(op) &&
+            canDemote(loop, cloned_anchor, marks)) {
+          mlir::Block* body = &op->getRegion(0).front();
+          op->getBlock()->getOperations().splice(
+              mlir::Block::iterator(op), body->getOperations(), body->begin(),
+              body->getTerminator()->getIterator());
+          erasable.push_back(op);
+        }
+        return;
       }
 
+      if (marks.keeps(op)) return;
+      if (op->hasTrait<mlir::OpTrait::IsTerminator>()) return;
       erasable.push_back(op);
     });
   }
