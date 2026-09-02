@@ -179,7 +179,10 @@ struct LowerLinalgGenericPattern
 
     mlir::Block& body = generic_op.getRegion().front();
     auto yield_op = mlir::dyn_cast<mlir::linalg::YieldOp>(body.getTerminator());
-    if (!yield_op || yield_op.getNumOperands() != 1) return mlir::failure();
+    const unsigned accumulators = generic_op.getNumDpsInits();
+    if (!yield_op || yield_op.getNumOperands() != accumulators) {
+      return mlir::failure();
+    }
 
     // Replace input block arguments with their corresponding linalg ins
     // operands.
@@ -189,17 +192,25 @@ struct LowerLinalgGenericPattern
                    generic_op.getDpsInputs()))
       block_arg.replaceAllUsesWith(input);
 
-    // The output block argument represents the current accumulator value held
-    // in the output memref.  Emit an agen.vector_load to read it into a vector,
-    // then replace all uses of the output block arg with that loaded vector.
-    mlir::Value out_memref = generic_op.getDpsInitOperand(0)->get();
-    auto out_memref_type = mlir::cast<mlir::MemRefType>(out_memref.getType());
-    auto acc_vec_type =
-        getFlattenedVectorType(out_memref_type, resource_kinds_);
-    if (!acc_vec_type) return mlir::failure();
+    // Each output block argument is the accumulator value the matching memref
+    // holds. Read each into a vector and let the body read that instead. There
+    // is one per result: a compute reducing a sum and a sum of squares over one
+    // input accumulates into two.
+    llvm::SmallVector<mlir::Value> out_memrefs;
     rewriter.setInsertionPoint(generic_op);
-    body.getArguments().back().replaceAllUsesWith(
-        scheduler::emitVectorLoad(rewriter, loc, acc_vec_type, out_memref));
+    for (unsigned r = 0; r < accumulators; ++r) {
+      mlir::Value out_memref = generic_op.getDpsInitOperand(r)->get();
+      out_memrefs.push_back(out_memref);
+
+      auto out_memref_type = mlir::cast<mlir::MemRefType>(out_memref.getType());
+      auto acc_vec_type =
+          getFlattenedVectorType(out_memref_type, resource_kinds_);
+      if (!acc_vec_type) return mlir::failure();
+
+      body.getArgument(num_inputs + r)
+          .replaceAllUsesWith(scheduler::emitVectorLoad(
+              rewriter, loc, acc_vec_type, out_memref));
+    }
 
     mlir::AffineMap identity_map =
         mlir::AffineMap::getMultiDimIdentityMap(1, rewriter.getContext());
@@ -249,9 +260,11 @@ struct LowerLinalgGenericPattern
       if (mlir::failed(result)) return mlir::failure();
     }
 
-    // Write the vectorchain.binary result back to the output buffer.
-    scheduler::emitVectorStore(rewriter, loc, yield_op.getOperand(0),
-                               out_memref);
+    // Write each accumulated vector back to the buffer it came from.
+    for (unsigned r = 0; r < accumulators; ++r) {
+      scheduler::emitVectorStore(rewriter, loc, yield_op.getOperand(r),
+                                 out_memrefs[r]);
+    }
 
     rewriter.eraseOp(generic_op);
     return mlir::success();
