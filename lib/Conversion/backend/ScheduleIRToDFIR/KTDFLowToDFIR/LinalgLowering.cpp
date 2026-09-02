@@ -194,8 +194,8 @@ struct LowerLinalgGenericPattern
 
     // Each output block argument is the accumulator value the matching memref
     // holds. Read each into a vector and let the body read that instead. There
-    // is one per result: a compute reducing a sum and a sum of squares over one
-    // input accumulates into two.
+    // is one per result: a compute that accumulates more than one thing
+    // accumulates into two.
     llvm::SmallVector<mlir::Value> out_memrefs;
     rewriter.setInsertionPoint(generic_op);
     for (unsigned r = 0; r < accumulators; ++r) {

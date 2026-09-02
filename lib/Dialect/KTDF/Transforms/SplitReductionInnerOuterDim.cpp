@@ -404,7 +404,7 @@ static LogicalResult splitDim(CandidateInfo& info) {
   // ── Emit the initialisers and the two generics ───────────────────────────
   // Still two generics; it is the intermediates, the output initialisers and
   // the results of each that there is one of per result. A compute may
-  // accumulate a pair -- a sum and a sum of squares over the same input -- and
+  // accumulate a pair -- more than one thing over the same input -- and
   // then both generics carry both halves.
   const unsigned results = static_cast<unsigned>(generic_op.getNumResults());
   auto inter_tensor_type = RankedTensorType::get(inter_shape, elem_type);

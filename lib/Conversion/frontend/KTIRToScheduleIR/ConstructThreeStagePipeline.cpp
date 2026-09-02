@@ -386,8 +386,8 @@ static llvm::SmallVector<int64_t> computeTileSizesFromShape(
 
 llvm::SmallVector<int64_t> ConstructThreeStagePipelinePass::determineTileSizes(
     mlir::linalg::LinalgOp linalg_op) {
-  // Two where the compute accumulates a pair -- a sum and a sum of squares,
-  // say. They are the same shape, so either says what the tile is.
+  // Two where the compute accumulates a pair -- more than one thing, say. They
+  // are the same shape, so either says what the tile is.
   assert(linalg_op->getNumResults() >= 1 && linalg_op->getNumResults() <= 2 &&
          "linalg op expected to have one or two tensor results");
   assert(llvm::all_equal(linalg_op->getResultTypes()) &&

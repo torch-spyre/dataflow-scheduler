@@ -277,9 +277,9 @@ NestedForResult buildNestedForLoops(OpBuilder& builder, Location loc,
   scf::ForOp innermost;
   SmallVector<Value> collected_ivs;
 
-  // Recursive lambda (std::function for self-reference).
-  // As many carries as there are accumulators: a compute reducing a pair -- a
-  // sum and a sum of squares over one input -- carries one of each.
+  // Recursive lambda (std::function for self-reference). As many carries as
+  // there are accumulators: a compute reducing a pair -- more than one thing
+  // over one input -- carries one of each.
   std::function<SmallVector<Value>(OpBuilder&, Location, size_t,
                                    SmallVector<Value>)>
       build_level = [&](OpBuilder& loop_builder, Location loop_loc,

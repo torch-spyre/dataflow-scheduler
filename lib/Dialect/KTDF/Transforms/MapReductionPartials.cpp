@@ -433,8 +433,8 @@ static LogicalResult rewriteGeneric(
   OpBuilder builder(generic_op);
   Location loc = generic_op.getLoc();
 
-  // One accumulator per result: a compute reducing a sum and a sum of squares
-  // over one input has one of each, and each is buffered on its own.
+  // One accumulator per result: a compute that accumulates more than one thing
+  // has one of each, and each is buffered on its own.
   const unsigned accumulators =
       static_cast<unsigned>(generic_op.getOutputs().size());
 
@@ -640,10 +640,9 @@ static LogicalResult rewriteInnerDimGeneric(
   OpBuilder builder(generic_op);
   Location loc = generic_op.getLoc();
 
-  // ins[0] is a memref — either the outer-dim alloc from rewriteGeneric, or
-  // a memref-typed read_from_fifo emitted by the caller when no outer-dim
-  // loop exists.
-  // One input per accumulator: a compute reducing a sum and a sum of squares
+  // ins[0] is a memref — either the outer-dim alloc from rewriteGeneric, or a
+  // memref-typed read_from_fifo emitted by the caller when no outer-dim loop
+  // exists. One input per accumulator: a compute reducing more than one thing
   // has an intermediate of each, and each half reduces into its own buffer.
   // They are the same type, so one set of offsets and sizes describes every
   // subview.
@@ -718,8 +717,8 @@ static LogicalResult rewriteInnerDimGeneric(
   // into each, and use them as both ins and subview sources.
   //
   // One each rather than one shared: two accumulations cannot be reduced
-  // straight out of the fifo, since the square of a sum of squares still has to
-  // be worked out, so the second would overwrite the first.
+  // straight out of the fifo, since each element's own contribution still has
+  // to be worked out, so the second would overwrite the first.
   SmallVector<Value> effective(allocs_in);
   if (allocs_in.front().getDefiningOp<ktdf::ReadFromFifoOp>()) {
     Attribute mem_space = group_local_mem.getLocalMemoryKindForStage(stage);
