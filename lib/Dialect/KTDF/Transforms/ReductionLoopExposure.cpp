@@ -912,10 +912,11 @@ struct ReductionLoopExposurePass
     SmallVector<Operation*> to_erase;
     for (auto& op : *body) to_erase.push_back(&op);
 
-    // What the compute's body reads from the stage around it comes with it. The
-    // loops below are built at the top of the stage and the body is cloned into
-    // them, so a register materialize-registers hoisted in front of the compute
-    // would otherwise be left standing after the loops that read it.
+    // What the compute's body reads from the stage around it, noted before the
+    // body is cloned away. The loops are built at the top of the stage, so a
+    // register materialize-registers hoisted in front of the compute would be
+    // left standing after the loops that read it; it is moved in front of them
+    // once they exist.
     llvm::SmallSetVector<Operation*, 4> read_from_stage;
     generic_op.getRegion().walk([&](Operation* reader) {
       for (Value operand : reader->getOperands()) {
@@ -923,10 +924,6 @@ struct ReductionLoopExposurePass
         if (def && def->getBlock() == body) read_from_stage.insert(def);
       }
     });
-    for (Operation* def : read_from_stage) {
-      rewriter.moveOpBefore(def, body, body->begin());
-    }
-
     rewriter.setInsertionPointToStart(body);
 
     // Accumulator seed: when a partial FIFO path exists, on the first chunk
