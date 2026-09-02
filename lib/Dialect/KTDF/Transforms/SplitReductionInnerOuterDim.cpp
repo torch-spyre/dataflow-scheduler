@@ -222,17 +222,41 @@ static LogicalResult buildCombinerBody(linalg::GenericOp src,
              << r << " is not accumulated by an op over two values";
     }
 
-    const unsigned at = accumulates->getOperand(0) == running   ? 0
-                        : accumulates->getOperand(1) == running ? 1
-                                                                : 2;
-    if (at == 2) {
+    // The running value can reach the accumulation through one op rather than
+    // being an operand of it -- the abs of an absmax is over each side. So what
+    // stands in for a side is that op rebuilt over the argument where there is
+    // one, and the argument itself where there is not.
+    auto reaches = [&](Value side) {
+      if (side == running) return true;
+      Operation* through = side.getDefiningOp();
+      return through && through->getNumOperands() == 1 &&
+             through->getOperand(0) == running;
+    };
+    auto standIn = [&](Value side, Value argument) -> Value {
+      Operation* through = side.getDefiningOp();
+      if (!through || through->getNumOperands() != 1) return argument;
+      Operation* rebuilt = through->clone();
+      rebuilt->setOperand(0, argument);
+      builder.insert(rebuilt);
+      return rebuilt->getResult(0);
+    };
+
+    Value first = accumulates->getOperand(0);
+    Value second = accumulates->getOperand(1);
+    const bool running_first = reaches(first);
+    if (!running_first && !reaches(second)) {
       return src.emitError("result ")
              << r << " is not accumulated over the value running through it";
     }
 
+    Value partial = body->getArgument(r);
+    Value carried = body->getArgument(results + r);
+
     Operation* combines = accumulates->clone();
-    combines->setOperand(at, body->getArgument(results + r));
-    combines->setOperand(1 - at, body->getArgument(r));
+    combines->setOperand(
+        0, running_first ? standIn(first, carried) : standIn(first, partial));
+    combines->setOperand(
+        1, running_first ? standIn(second, partial) : standIn(second, carried));
     builder.insert(combines);
     accumulated.push_back(combines->getResult(0));
   }
@@ -378,8 +402,10 @@ static LogicalResult splitDim(CandidateInfo& info) {
   }
 
   // ── Emit the initialisers and the two generics ───────────────────────────
-  // One of each per result: a compute may accumulate a pair, a sum and a sum of
-  // squares over the same input, and each half is reduced on its own.
+  // Still two generics; it is the intermediates, the output initialisers and
+  // the results of each that there is one of per result. A compute may
+  // accumulate a pair -- a sum and a sum of squares over the same input -- and
+  // then both generics carry both halves.
   const unsigned results = static_cast<unsigned>(generic_op.getNumResults());
   auto inter_tensor_type = RankedTensorType::get(inter_shape, elem_type);
 
