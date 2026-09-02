@@ -912,6 +912,21 @@ struct ReductionLoopExposurePass
     SmallVector<Operation*> to_erase;
     for (auto& op : *body) to_erase.push_back(&op);
 
+    // What the compute's body reads from the stage around it comes with it. The
+    // loops below are built at the top of the stage and the body is cloned into
+    // them, so a register materialize-registers hoisted in front of the compute
+    // would otherwise be left standing after the loops that read it.
+    llvm::SmallSetVector<Operation*, 4> read_from_stage;
+    generic_op.getRegion().walk([&](Operation* reader) {
+      for (Value operand : reader->getOperands()) {
+        Operation* def = operand.getDefiningOp();
+        if (def && def->getBlock() == body) read_from_stage.insert(def);
+      }
+    });
+    for (Operation* def : read_from_stage) {
+      rewriter.moveOpBefore(def, body, body->begin());
+    }
+
     rewriter.setInsertionPointToStart(body);
 
     // Accumulator seed: when a partial FIFO path exists, on the first chunk
@@ -962,6 +977,13 @@ struct ReductionLoopExposurePass
     // Build the nested loops, threading each accumulator through every level.
     auto nested =
         buildNestedForLoops(rewriter, loc, ctx, dim_sizes, start, step, seeds);
+
+    // In front of them, now that they exist: the loops are built at the top of
+    // the stage, so anything the body reads from around it stands after them
+    // until moved.
+    for (Operation* def : read_from_stage) {
+      rewriter.moveOpBefore(def, nested.outermost_loop);
+    }
 
     // Now populate the innermost loop body (before its yield).
     scf::ForOp innermost = nested.innermost_loop;
