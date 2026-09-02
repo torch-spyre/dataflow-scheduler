@@ -571,7 +571,8 @@ static void widenFifoUses(Value fifo_slot, ArrayRef<int64_t> new_shape,
     // Only update the FIFO-side size on this transfer.  The alloc side (its
     // size, map, and type) is left entirely unchanged — the alloc's shape is
     // determined by its own allocation context and is shared with other
-    // transfers (e.g. the L3SU store-out) that must not be disturbed.
+    // transfers (e.g. the store-out to global memory) that must not be
+    // disturbed.
     if (xfer.isSourceFifo())
       xfer.setStaticSourceSizesAttr(new_sizes_attr);
     else if (xfer.isDestFifo())
@@ -625,7 +626,7 @@ static void widenFifoUses(Value fifo_slot, ArrayRef<int64_t> new_shape,
 // We allocate ONE local buffer (local_reg), copy the FIFO data into it, and
 // use it as BOTH ins and the subview source:
 //
-//   %local_reg = memref.alloc() : memref<D0x...xDNxf16, SFP_LRFREG>
+//   %local_reg = memref.alloc() : memref<D0x...xDNxf16, "REG">
 //   memref.copy %fifo_read_memref, %local_reg
 //   %sv = memref.subview %local_reg[0,...][..., 1, ...][...]
 //   linalg.generic ins(%local_reg) outs(%sv)   // both refer to local_reg
