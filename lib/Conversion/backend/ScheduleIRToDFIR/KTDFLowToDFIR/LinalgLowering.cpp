@@ -248,6 +248,12 @@ struct LowerLinalgGenericPattern
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
                     mlir::vectorchain::VectorChainBinaryOperator::min);
               })
+              .Case<mlir::memref::StoreOp>([&](mlir::memref::StoreOp op) {
+                return lowerMemRefStore(op, rewriter);
+              })
+              .Case<mlir::memref::LoadOp>([&](mlir::memref::LoadOp op) {
+                return lowerMemRefLoad(op, rewriter);
+              })
               .Case<mlir::arith::MaxNumFOp>([&](mlir::arith::MaxNumFOp op) {
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
