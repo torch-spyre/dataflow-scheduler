@@ -1048,9 +1048,9 @@ struct ReductionLoopExposurePass
   //   scf.for %r0 = 0 to D0
   //     scf.for %r1 = 0 to D1
   //       ...
-  //         <all original body ops except the data_transfer>
+  //         <all original body ops except the data_transfers>
   //         if (all ivs == last):
-  //           <the data_transfer>
+  //           <the data_transfers>
   // -------------------------------------------------------------------------
   void rewriteConditionalStoreStage(IRRewriter& rewriter, Location loc,
                                     MLIRContext* ctx, ktdf::StageOp stage,
@@ -1058,12 +1058,12 @@ struct ReductionLoopExposurePass
                                     Value step, ArrayRef<Value> last_vals) {
     Block* body = stage.getBody();
 
-    // Find the data_transfer that must be conditioned.
-    ktdf::DataTransferOp transfer;
-    body->walk([&](ktdf::DataTransferOp xfer) {
-      transfer = xfer;
-      return WalkResult::interrupt();
-    });
+    // Find the data_transfers that must be conditioned.  A compute stores one
+    // result per accumulator, and each store is a transfer of its own.
+    SmallVector<ktdf::DataTransferOp> transfers;
+    for (Operation& op : *body)
+      if (auto xfer = dyn_cast<ktdf::DataTransferOp>(&op))
+        transfers.push_back(xfer);
 
     // Capture an iterator to the first original op *before* the loop shell is
     // prepended.  iplist iterators survive insertions elsewhere in the list, so
@@ -1082,15 +1082,22 @@ struct ReductionLoopExposurePass
                                        body->getOperations(), first_original,
                                        body->end());
 
-    if (!transfer) return;  // no transfer found — nothing to guard
+    if (transfers.empty()) return;  // no transfer found — nothing to guard
 
-    // Wrap just the data_transfer in scf.if (all ivs == last).
-    rewriter.setInsertionPoint(transfer);
+    // Wrap the data_transfers in one scf.if (all ivs == last).  Every one of
+    // them carries a partial until the last iteration, so guarding a subset
+    // would store a partial result.
+    //
+    // The if goes at the last of them: a transfer's address may be computed
+    // between two transfers, and that has to stay in front of the if to still
+    // dominate the transfer that reads it.
+    rewriter.setInsertionPoint(transfers.back());
     Value is_last = buildAllLast(rewriter, loc, nested.ivs, last_vals);
     auto if_op = scf::IfOp::create(rewriter, loc, TypeRange{}, is_last,
                                    /*withElseRegion=*/false);
-    // Move the transfer inside the then-block.
-    transfer->moveBefore(if_op.getThenRegion().front().getTerminator());
+    // Move the transfers inside the then-block, keeping their order.
+    Operation* then_term = if_op.getThenRegion().front().getTerminator();
+    for (auto xfer : transfers) xfer->moveBefore(then_term);
   }
 };
 
