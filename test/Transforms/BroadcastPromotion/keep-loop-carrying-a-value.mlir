@@ -1,24 +1,27 @@
 // RUN: dataflow-scheduler-opt --broadcast-promotion %s -allow-unregistered-dialect | FileCheck %s
 
-// A transfer under a loop that carries a value out is not offered for hoisting.
+// A transfer under a loop that carries a value out. The loop stays in the clone,
+// carrying what it did, and what its yield hands back is kept with it.
 //
-// The clone a hoist makes is pruned to the transfer, and what the loop yields is
-// computed by ops the pruning drops -- leaving the yield with nothing to hand
-// back. So the transfer stays where it is, loop and all.
+// Neither is optional. A loop whose iterations are not interchangeable cannot be
+// collapsed into one run of its body, and a region that stays has to go on
+// answering what its terminator answered -- prune the accumulator away and the
+// clone comes out holding a yield with a null operand.
 
-// CHECK-LABEL:   func.func @loop_carries_a_value
-// CHECK-NEXT:      %[[C0:.*]] = arith.constant 0 : index
-// CHECK-NEXT:      %[[C1:.*]] = arith.constant 1 : index
-// The one pipeline is the one that was there; no sibling in front of the loop.
-// CHECK-NEXT:      scf.for
-// CHECK-NEXT:        ktdf.pipeline {
-// CHECK:               ktdf.stage
-// CHECK:                 scf.for
-// CHECK:                   %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args
-// CHECK:                     ktdf.data_transfer
+// CHECK-LABEL:   func.func @keeps_loop_carrying_a_value
+// The hoisted clone, in front of the loop it was lifted out of.
+// CHECK:           ktdf.pipeline {
+// CHECK-NEXT:        ktdf.stage
+// CHECK-NEXT:          scf.for %[[I:.*]] = %[[C0:.*]] to %{{.*}} step %[[C1:.*]] {
+// CHECK-NEXT:            %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%[[ACC:.*]] = %[[C0]]) -> (index) {
+// CHECK-NEXT:              %[[FROM:.*]] = arith.addi %[[I]], %[[C0]]
+// CHECK-NEXT:              %[[INTO:.*]] = arith.addi %[[I]], %[[C1]]
+// CHECK-NEXT:              ktdf.data_transfer from %{{.*}}{{\[}}%[[FROM]]] size [64] to %{{.*}}{{\[}}%[[INTO]]] size [64]
+// CHECK-NEXT:              %[[NEXT:.*]] = arith.addi %[[ACC]], %[[C1]]
+// CHECK-NEXT:              scf.yield %[[NEXT]] : index
 
 module {
-  func.func @loop_carries_a_value(%A: memref<?xf16, "DDR">,
+  func.func @keeps_loop_carrying_a_value(%A: memref<?xf16, "DDR">,
                                          %M: index, %N: index) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
