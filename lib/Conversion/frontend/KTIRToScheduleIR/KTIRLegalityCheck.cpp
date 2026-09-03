@@ -56,6 +56,12 @@ namespace {
     return true;
   }
 
+  // Accept a constant the body computes against: materialize-registers puts it
+  // in the register its maps_to names, so it is a value read, not an operation.
+  if (mlir::isa<mlir::arith::ConstantOp>(op)) {
+    return true;
+  }
+
   // Accept 'spyreop' intrinsics.
   if (mlir::isa<mlir::spyreop::SpyreOpDialect>(op->getDialect())) {
     return true;

@@ -22,6 +22,7 @@
 #include <llvm/Support/MathExtras.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
+#include <mlir/Dialect/Math/IR/Math.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
@@ -249,6 +250,25 @@ auto hoistAllocation(Operation* alloc, linalg::GenericOp generic,
   return success();
 }
 
+/// Whether \p reader takes a float rather than the register: arithmetic does,
+/// a template call does not.
+auto wantsTheValue(Operation* reader) -> bool {
+  Dialect* const dialect = reader->getDialect();
+  return isa_and_nonnull<arith::ArithDialect>(dialect) ||
+         isa_and_nonnull<math::MathDialect>(dialect);
+}
+
+/// Reads the first lane of \p reg in front of \p reader. The fill put the same
+/// value in every lane, so any lane would do.
+auto loadFirstLane(Value reg, Operation* reader, RewriterBase& rewriter)
+    -> Value {
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(reader);
+  Value zero = arith::ConstantIndexOp::create(rewriter, reader->getLoc(), 0);
+  return memref::LoadOp::create(rewriter, reader->getLoc(), reg,
+                                ValueRange{zero});
+}
+
 /// Makes the registers \p generic uses real in front of its body.
 auto materializeRegisters(linalg::GenericOp generic, AnalysisManager analyses,
                           RewriterBase& rewriter) -> LogicalResult {
@@ -264,10 +284,21 @@ auto materializeRegisters(linalg::GenericOp generic, AnalysisManager analyses,
     if (!reg) return failure();
 
     // Whatever read the constant reads the register now, where it stands: the
-    // body is not isolated from above.
+    // body is not isolated from above. Arithmetic reads a lane out of it.
+    SmallVector<OpOperand*> takes_the_value;
+    for (OpOperand& use : constant.getResult().getUses()) {
+      if (generic->isProperAncestor(use.getOwner()) &&
+          wantsTheValue(use.getOwner())) {
+        takes_the_value.push_back(&use);
+      }
+    }
     rewriter.replaceUsesWithIf(constant.getResult(), reg, [&](OpOperand& use) {
-      return generic->isProperAncestor(use.getOwner());
+      return generic->isProperAncestor(use.getOwner()) &&
+             !wantsTheValue(use.getOwner());
     });
+    for (OpOperand* use : takes_the_value) {
+      use->set(loadFirstLane(reg, use->getOwner(), rewriter));
+    }
   }
 
   // The scratch moves out sized to the tile, and the body goes on reading it
