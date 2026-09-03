@@ -92,7 +92,7 @@ struct LowerLinalgGenericPattern
                    generic_op.getDpsInputs())) {
       mlir::Value converted =
           convertConstTensorInputToVector(input, generic_op, rewriter);
-      block_arg.replaceAllUsesWith(converted);
+      rewriter.replaceAllUsesWith(block_arg, converted);
     }
 
     // Identity affine map used as op_specific_map for binary ops.
@@ -190,7 +190,7 @@ struct LowerLinalgGenericPattern
     for (auto [block_arg, input] :
          llvm::zip(body.getArguments().take_front(num_inputs),
                    generic_op.getDpsInputs()))
-      block_arg.replaceAllUsesWith(input);
+      rewriter.replaceAllUsesWith(block_arg, input);
 
     // Each output block argument is the accumulator value the matching memref
     // holds. Read each into a vector and let the body read that instead. There
@@ -207,9 +207,9 @@ struct LowerLinalgGenericPattern
           getFlattenedVectorType(out_memref_type, resource_kinds_);
       if (!acc_vec_type) return mlir::failure();
 
-      body.getArgument(num_inputs + r)
-          .replaceAllUsesWith(scheduler::emitVectorLoad(
-              rewriter, loc, acc_vec_type, out_memref));
+      rewriter.replaceAllUsesWith(
+          body.getArgument(num_inputs + r),
+          scheduler::emitVectorLoad(rewriter, loc, acc_vec_type, out_memref));
     }
 
     mlir::AffineMap identity_map =
