@@ -140,12 +140,65 @@ const PrivateResourceAllocation* PrivateResourceFactory::getAllocation(
 // TransferInfoFactory Implementation
 //===----------------------------------------------------------------------===//
 
+namespace {
+/// Per-operand indexing and layout metadata extracted from a template
+/// DataTransferOp or IndDataTransferOp. Used when constructing multi-hop
+/// transfers where one endpoint is an intermediate staging buffer and the other
+/// endpoint preserves the original template's source or destination (FIFO or
+/// memref).
+struct TemplateTransferSides {
+  // Indices/sizes/map for the source side of the template op.
+  llvm::SmallVector<mlir::Value> src_indices;
+  llvm::SmallVector<mlir::OpFoldResult> src_sizes;
+  mlir::AffineMap src_map;
+  // Indices/sizes/map for the dest side of the template op.
+  llvm::SmallVector<mlir::Value> dst_indices;
+  llvm::SmallVector<mlir::OpFoldResult> dst_sizes;
+  mlir::AffineMap dst_map;
+};
+
+static TemplateTransferSides extractTemplateSides(mlir::Operation* op) {
+  TemplateTransferSides s;
+  if (auto dt = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(op)) {
+    s.src_indices.append(dt.getSourceIndices().begin(),
+                         dt.getSourceIndices().end());
+    s.src_sizes = dt.getMixedSourceSizes();
+    s.src_map = dt.getSourceMapAttr() ? dt.getSourceMapAttr().getValue()
+                                      : mlir::AffineMap();
+    s.dst_indices.append(dt.getDestIndices().begin(),
+                         dt.getDestIndices().end());
+    s.dst_sizes = dt.getMixedDestSizes();
+    s.dst_map = dt.getDestMapAttr() ? dt.getDestMapAttr().getValue()
+                                    : mlir::AffineMap();
+  } else {
+    auto ind = mlir::cast<mlir::ktdf::IndDataTransferOp>(op);
+    s.src_indices.append(ind.getDirSrcIndices().begin(),
+                         ind.getDirSrcIndices().end());
+    s.src_sizes = ind.getMixedDirSrcSizes();
+    s.src_map = ind.getDirSrcMapAttr() ? ind.getDirSrcMapAttr().getValue()
+                                       : mlir::AffineMap();
+    s.dst_indices.append(ind.getDirDstIndices().begin(),
+                         ind.getDirDstIndices().end());
+    s.dst_sizes = ind.getMixedDirDstSizes();
+    s.dst_map = ind.getDirDstMapAttr() ? ind.getDirDstMapAttr().getValue()
+                                       : mlir::AffineMap();
+  }
+  return s;
+}
+}  // namespace
+
 TransferMaterializationInfo* TransferInfoFactory::createFromTemplateWithBuffer(
-    mlir::ktdf::DataTransferOp template_op,
+    mlir::Operation* template_op,
     const scheduler::arch_view::RoutingGraph::EdgeInfo& edge,
     ResourceType intermediate_resource, ResourceType current_resource,
     bool intermediate_is_source, const PrivateResourceSpec* buffer_spec,
     mlir::OpBuilder& builder) {
+  assert((mlir::isa<mlir::ktdf::DataTransferOp>(template_op) ||
+          mlir::isa<mlir::ktdf::IndDataTransferOp>(template_op)) &&
+         "template_op must be a DataTransferOp or IndDataTransferOp");
+
+  auto sides = extractTemplateSides(template_op);
+
   auto transfer = std::make_unique<TransferMaterializationInfo>();
   transfer->template_op = template_op;
   transfer->hop = edge;
@@ -154,52 +207,32 @@ TransferMaterializationInfo* TransferInfoFactory::createFromTemplateWithBuffer(
   transfer->dest_resource =
       intermediate_is_source ? current_resource : intermediate_resource;
 
-  // Copy affine maps from template operation
-  transfer->source_map = template_op.getSourceMapAttr()
-                             ? template_op.getSourceMapAttr().getValue()
-                             : mlir::AffineMap();
-  transfer->dest_map = template_op.getDestMapAttr()
-                           ? template_op.getDestMapAttr().getValue()
-                           : mlir::AffineMap();
-
-  // Set up indices and sizes based on which side is the intermediate buffer
   if (intermediate_is_source) {
-    // Source is the intermediate buffer, dest is FIFO
+    // Source is the intermediate buffer; dest side comes from the template.
     transfer->source_private_resource = buffer_spec;
-    // Source is buffer - create zero indices for it (template source was FIFO
-    // with no indices)
     createIndicesForIntermediateBuffer(buffer_spec, template_op, builder,
                                        transfer->source_indices);
-    // Source sizes: derive from buffer spec
     deriveSizesFromResourceSpec(buffer_spec, 0, builder.getContext(),
                                 transfer->source_sizes);
-    // Dest indices and sizes: copy from template (FIFO side - should be empty)
-    transfer->dest_indices.append(template_op.getDestIndices().begin(),
-                                  template_op.getDestIndices().end());
-    transfer->dest_sizes = template_op.getMixedDestSizes();
-
-    // Source is buffer (memref), so it needs an affine map
     transfer->source_map =
         createAffineMapForIntermediateBuffer(buffer_spec, builder.getContext());
-    // Dest is FIFO, so dest_map should remain null
+    // Dest: copy indices, sizes, and map from template (may be memref or FIFO;
+    // map is null for FIFO, affine map for memref).
+    transfer->dest_indices = sides.dst_indices;
+    transfer->dest_sizes = sides.dst_sizes;
+    transfer->dest_map = sides.dst_map;
   } else {
-    // Source is FIFO, dest is the intermediate buffer
+    // Dest is the intermediate buffer; source side comes from the template.
     transfer->dest_private_resource = buffer_spec;
-    // Source indices and sizes: copy from template (FIFO side - should be
-    // empty)
-    transfer->source_indices.append(template_op.getSourceIndices().begin(),
-                                    template_op.getSourceIndices().end());
-    transfer->source_sizes = template_op.getMixedSourceSizes();
-    // Dest is buffer - create zero indices for it (template dest was FIFO with
-    // no indices)
+    // Source: copy indices, sizes, and map from template (may be memref or
+    // FIFO; map is null for FIFO, affine map for memref).
+    transfer->source_indices = sides.src_indices;
+    transfer->source_sizes = sides.src_sizes;
+    transfer->source_map = sides.src_map;
     createIndicesForIntermediateBuffer(buffer_spec, template_op, builder,
                                        transfer->dest_indices);
-    // Dest sizes: derive from buffer spec
     deriveSizesFromResourceSpec(buffer_spec, 0, builder.getContext(),
                                 transfer->dest_sizes);
-
-    // Source is FIFO, so source_map should remain null
-    // Dest is buffer (memref), so it needs an affine map
     transfer->dest_map =
         createAffineMapForIntermediateBuffer(buffer_spec, builder.getContext());
   }

@@ -120,10 +120,11 @@ class PrivateResourceFactory {
 /// Owns all transfer info objects and provides factory methods
 class TransferInfoFactory {
  public:
-  /// Create transfer from template with intermediate buffer
+  /// Create transfer from template with intermediate buffer.
   /// Used when adapting an existing transfer to work with an intermediate
-  /// memory resource
-  /// @param template_op The original data transfer operation to adapt
+  /// memory resource. \p template_op must be a DataTransferOp or an
+  /// IndDataTransferOp.
+  /// @param template_op The original transfer operation to adapt
   /// @param edge The architecture edge this transfer implements
   /// @param intermediate_resource The intermediate memory resource
   /// @param current_resource The current stage's resource
@@ -132,7 +133,7 @@ class TransferInfoFactory {
   /// @param builder OpBuilder for creating attributes
   /// @return Pointer to created transfer info (owned by factory)
   TransferMaterializationInfo* createFromTemplateWithBuffer(
-      mlir::ktdf::DataTransferOp template_op,
+      mlir::Operation* template_op,
       const scheduler::arch_view::RoutingGraph::EdgeInfo& edge,
       ResourceType intermediate_resource, ResourceType current_resource,
       bool intermediate_is_source, const PrivateResourceSpec* buffer_spec,

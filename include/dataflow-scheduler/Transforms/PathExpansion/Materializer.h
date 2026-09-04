@@ -133,6 +133,13 @@ class PathExpansionMaterializer {
   bool tryAdaptDataTransferOp(mlir::ktdf::DataTransferOp transfer_op,
                               const TransferMaterializationInfo* transfer_info);
 
+  /// Helper to adapt an IndDataTransferOp, repointing the buffer-facing operand
+  /// (dir_dst for gather, dir_src for scatter) to the L1 staging buffer.
+  /// Returns true if adapted, false if should be cloned as-is.
+  bool tryAdaptIndDataTransferOp(
+      mlir::ktdf::IndDataTransferOp ind_transfer_op,
+      const TransferMaterializationInfo* transfer_info);
+
   /// Helper to adapt a ReadFromFifoOp with new FIFO slot
   /// Returns true if adapted, false if should be cloned as-is
   bool tryAdaptReadFromFifoOp(mlir::ktdf::ReadFromFifoOp read_op,

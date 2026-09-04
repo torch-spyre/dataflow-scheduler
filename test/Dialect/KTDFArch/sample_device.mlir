@@ -15,9 +15,15 @@
   kind = "L1",
   size = 1048576 //1MB
 }
+#IAB = {
+  kind = "IAB",
+  ktdf_arch.features = {
+    ktdf_arch.feature.indirect_address_buffer = { num_entries = 32, entry_type = si32 }
+  }
+}
 #MNILU = {
   kind = "MNILU",
-  ktdf_arch.features = { 
+  ktdf_arch.features = {
     ktdf_arch.feature.load = {
       word_size = #ktdf_arch.map<"DDR" = 64, "L1" = 64>,
       access_granularity = #ktdf_arch.map<
@@ -33,7 +39,7 @@
 }
 #MNISU = {
   kind = "MNISU",
-  ktdf_arch.features = { 
+  ktdf_arch.features = {
     ktdf_arch.feature.store = {
       word_size = #ktdf_arch.map<"DDR" = 64, "L1" = 64>,
       access_granularity = #ktdf_arch.map<
@@ -112,9 +118,18 @@ ktdf_arch.device @sample_device {
     // Private scratchpad memory.
     %l1 = memory #L1
 
-    // DDR <-> L1 DMA units.
-    %mnilu = exec_unit #MNILU
-    %mnisu = exec_unit #MNISU
+    // DDR <-> L1 DMA units (each wraps an IAB co-located with the unit).
+    %mnilu = group { kind = "MNILU_Block" } share() {
+      %iab = memory #IAB
+      %mnilu = exec_unit #MNILU
+      yield %mnilu
+    } -> exec_unit
+
+    %mnisu = group { kind = "MNISU_Block" } share() {
+      %iab = memory #IAB
+      %mnisu = exec_unit #MNISU
+      yield %mnisu
+    } -> exec_unit
 
     // DMA datapaths: 256B/cy read, 128B/cy write.
     datapath #DDR_MNILU %ddr to %mnilu : memory, exec_unit
