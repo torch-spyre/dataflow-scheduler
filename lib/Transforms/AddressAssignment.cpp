@@ -241,7 +241,8 @@ struct AllocOp
 ///
 /// Asked before the tracker is built, which needs the device: a module with
 /// nothing to assign need not carry one.
-[[nodiscard]] auto hasAllocations(mlir::ModuleOp module) -> bool {
+[[nodiscard]] auto hasAllocationsWithMemorySpace(mlir::ModuleOp module)
+    -> bool {
   return module
       .walk([](AllocOp alloc) {
         return alloc.getType().getMemorySpace() ? mlir::WalkResult::interrupt()
@@ -316,7 +317,7 @@ struct AddressAssignmentPass
 
     LDBG(1) << "Starting address assignment analysis";
 
-    if (!hasAllocations(module)) {
+    if (!hasAllocationsWithMemorySpace(module)) {
       LDBG(1) << "No allocations with memory space attributes";
       return;
     }
