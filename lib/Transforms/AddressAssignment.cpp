@@ -332,11 +332,21 @@ struct AddressAssignmentPass
     llvm::append_range(scopes, module.getOps<mlir::ModuleOp>());
 
     for (auto scope : scopes) {
-      tracker.reset();
-
       const auto allocs = collectAllocations(scope);
       LDBG(1) << "Found " << allocs.size()
               << " allocations with memory space attributes";
+
+      // Only the memories this program has to itself start over. Global memory
+      // is how one program hands its results to the next, so it keeps what
+      // earlier ones left in it.
+      llvm::SmallDenseSet<mlir::Attribute> reusable;
+      for (auto alloc : allocs) {
+        mlir::Attribute space = alloc.getType().getMemorySpace();
+        if (!tracker.getMemoryTree().isGlobalMemory(space)) {
+          reusable.insert(space);
+        }
+      }
+      tracker.reset(llvm::to_vector(reusable));
 
       for (auto alloc : allocs) {
         if (failed(processAllocation(alloc, tracker, builder))) {

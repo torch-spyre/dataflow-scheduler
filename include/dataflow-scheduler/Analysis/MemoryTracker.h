@@ -69,8 +69,9 @@ class MemoryTracker {
   /// @return Total bytes allocated in this memory resource
   size_t getTotalAllocated(ResourceType memory_resource) const;
 
-  /// @brief Puts every resource's next address back to the first one
-  void reset();
+  /// @brief Puts each of \p memory_resources back to its first address
+  /// @param memory_resources The memory resources to make available again
+  void reset(llvm::ArrayRef<ResourceType> memory_resources);
 
  private:
   /// Memory resource capacities (available bytes per resource)

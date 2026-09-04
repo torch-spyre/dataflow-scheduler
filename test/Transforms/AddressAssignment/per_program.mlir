@@ -3,6 +3,11 @@
 // Each program has the memories it allocates from to itself, so addresses start
 // over per program rather than accumulating across them. Only what sits outside
 // the programs shares a scope.
+//
+// Global memory is the exception: it is how one program hands its results to the
+// next, so what one put there is still live when that one runs and its addresses
+// carry on. The root of the memory tree says which resource that is, so a device
+// naming it something other than DDR is covered too.
 
 module {
   ktdf_arch.device @sample_device attributes {} import("../../Dialect/KTDFArch/sample_device.mlir")
@@ -21,20 +26,27 @@ module {
     // CHECK: builtin.unrealized_conversion_cast %[[A0]] : index to memref<128xf16, "L1">
     // CHECK: %[[A1:.*]] = arith.constant 256 : index
     // CHECK: builtin.unrealized_conversion_cast %[[A1]] : index to memref<64xf16, "L1">
+    // CHECK: %[[AG:.*]] = arith.constant 0 : index
+    // CHECK: builtin.unrealized_conversion_cast %[[AG]] : index to memref<512xf16, "DDR">
     func.func @program_a() {
       %0 = memref.alloc() : memref<128xf16, "L1">
       %1 = memref.alloc() : memref<64xf16, "L1">
+      %2 = memref.alloc() : memref<512xf16, "DDR">
       return
     }
   }
 
-  // The next program starts at zero again instead of after program_a's 384.
+  // The next program starts at zero again in L1 instead of after program_a's
+  // 384, while its global allocation carries on from program_a's 1024 bytes.
   module @program_b {
     // CHECK-LABEL: @program_b
     // CHECK: %[[B0:.*]] = arith.constant 0 : index
     // CHECK: builtin.unrealized_conversion_cast %[[B0]] : index to memref<32xf16, "L1">
+    // CHECK: %[[BG:.*]] = arith.constant 1024 : index
+    // CHECK: builtin.unrealized_conversion_cast %[[BG]] : index to memref<256xf16, "DDR">
     func.func @program_b() {
       %0 = memref.alloc() : memref<32xf16, "L1">
+      %1 = memref.alloc() : memref<256xf16, "DDR">
       return
     }
   }
