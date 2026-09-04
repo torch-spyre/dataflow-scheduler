@@ -148,12 +148,15 @@ auto getBodyAllocations(linalg::GenericOp generic) -> SmallVector<Operation*> {
 auto getTileSize(linalg::GenericOp generic) -> int64_t {
   const auto iterators = generic.getIteratorTypesArray();
 
+  // Only the parallel dimensions inside the last reduction are lanes of the
+  // register. One outside it is a loop around the whole reduction, and every
+  // turn of it writes the register's same position.
+  const auto ranges = generic.getStaticLoopRanges();
   int64_t result = 1;
-  for (const auto [dim, range] :
-       llvm::enumerate(generic.getStaticLoopRanges())) {
-    if (iterators[dim] == utils::IteratorType::reduction) continue;
-    if (ShapedType::isDynamic(range)) return 0;
-    if (llvm::MulOverflow<int64_t>(result, range, result)) return 0;
+  for (int64_t dim = static_cast<int64_t>(ranges.size()) - 1; dim >= 0; --dim) {
+    if (iterators[dim] == utils::IteratorType::reduction) break;
+    if (ShapedType::isDynamic(ranges[dim])) return 0;
+    if (llvm::MulOverflow<int64_t>(result, ranges[dim], result)) return 0;
   }
   return result;
 }
@@ -190,17 +193,24 @@ auto hoistAllocation(Operation* alloc, linalg::GenericOp generic,
     return generic.emitError("the tile is not a static number of elements");
   }
 
-  // A register holds whole lanes of the element, so a tile that is not a whole
-  // number of them would leave the template reading one it never wrote.
+  // A register holds whole lanes of the element, so a tile of more than one has
+  // to be a whole number of them: otherwise the template would read a lane it
+  // never wrote. Less than one register still gets one -- what the body works
+  // on is a position in it.
   const auto lanes = getLaneCount(generic, element, analyses);
-  if (lanes != 0 && tile % lanes != 0) {
-    return alloc->emitError("a tile of ")
-           << tile << " does not divide into registers of " << lanes << " "
-           << element;
+  int64_t held = tile;
+  if (lanes != 0) {
+    if (tile < lanes) {
+      held = lanes;
+    } else if (tile % lanes != 0) {
+      return alloc->emitError("a tile of ")
+             << tile << " does not divide into registers of " << lanes << " "
+             << element;
+    }
   }
 
   const auto register_type = MemRefType::get(
-      {tile}, element, MemRefLayoutAttrInterface{}, type.getMemorySpace());
+      {held}, element, MemRefLayoutAttrInterface{}, type.getMemorySpace());
 
   rewriter.setInsertionPoint(generic);
   // The kind the body asked for is kept: what hoists a register's fill out of a
