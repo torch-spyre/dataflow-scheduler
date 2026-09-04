@@ -118,4 +118,11 @@ size_t MemoryTracker::getTotalAllocated(ResourceType memory_resource) const {
   return getNextAvailableAddress(memory_resource) - kFirstAvailableAddress;
 }
 
+void MemoryTracker::reset(llvm::ArrayRef<ResourceType> memory_resources) {
+  for (ResourceType resource : memory_resources) {
+    auto it = next_address_.find(resource);
+    if (it != next_address_.end()) it->second = kFirstAvailableAddress;
+  }
+}
+
 // Made with Bob

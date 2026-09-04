@@ -22,6 +22,7 @@
 #include <llvm/Support/MathExtras.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
+#include <mlir/Dialect/Math/IR/Math.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinOps.h>
@@ -147,12 +148,15 @@ auto getBodyAllocations(linalg::GenericOp generic) -> SmallVector<Operation*> {
 auto getTileSize(linalg::GenericOp generic) -> int64_t {
   const auto iterators = generic.getIteratorTypesArray();
 
+  // Only the parallel dimensions inside the last reduction are lanes of the
+  // register. One outside it is a loop around the whole reduction, and every
+  // turn of it writes the register's same position.
+  const auto ranges = generic.getStaticLoopRanges();
   int64_t result = 1;
-  for (const auto [dim, range] :
-       llvm::enumerate(generic.getStaticLoopRanges())) {
-    if (iterators[dim] == utils::IteratorType::reduction) continue;
-    if (ShapedType::isDynamic(range)) return 0;
-    if (llvm::MulOverflow<int64_t>(result, range, result)) return 0;
+  for (int64_t dim = static_cast<int64_t>(ranges.size()) - 1; dim >= 0; --dim) {
+    if (iterators[dim] == utils::IteratorType::reduction) break;
+    if (ShapedType::isDynamic(ranges[dim])) return 0;
+    if (llvm::MulOverflow<int64_t>(result, ranges[dim], result)) return 0;
   }
   return result;
 }
@@ -189,17 +193,24 @@ auto hoistAllocation(Operation* alloc, linalg::GenericOp generic,
     return generic.emitError("the tile is not a static number of elements");
   }
 
-  // A register holds whole lanes of the element, so a tile that is not a whole
-  // number of them would leave the template reading one it never wrote.
+  // A register holds whole lanes of the element, so a tile of more than one has
+  // to be a whole number of them: otherwise the template would read a lane it
+  // never wrote. Less than one register still gets one -- what the body works
+  // on is a position in it.
   const auto lanes = getLaneCount(generic, element, analyses);
-  if (lanes != 0 && tile % lanes != 0) {
-    return alloc->emitError("a tile of ")
-           << tile << " does not divide into registers of " << lanes << " "
-           << element;
+  int64_t held = tile;
+  if (lanes != 0) {
+    if (tile < lanes) {
+      held = lanes;
+    } else if (tile % lanes != 0) {
+      return alloc->emitError("a tile of ")
+             << tile << " does not divide into registers of " << lanes << " "
+             << element;
+    }
   }
 
   const auto register_type = MemRefType::get(
-      {tile}, element, MemRefLayoutAttrInterface{}, type.getMemorySpace());
+      {held}, element, MemRefLayoutAttrInterface{}, type.getMemorySpace());
 
   rewriter.setInsertionPoint(generic);
   // The kind the body asked for is kept: what hoists a register's fill out of a
@@ -249,6 +260,25 @@ auto hoistAllocation(Operation* alloc, linalg::GenericOp generic,
   return success();
 }
 
+/// Whether \p reader takes a float rather than the register: arithmetic does,
+/// a template call does not.
+auto wantsTheValue(Operation* reader) -> bool {
+  Dialect* const dialect = reader->getDialect();
+  return isa_and_nonnull<arith::ArithDialect>(dialect) ||
+         isa_and_nonnull<math::MathDialect>(dialect);
+}
+
+/// Reads the first lane of \p reg in front of \p reader. The fill put the same
+/// value in every lane, so any lane would do.
+auto loadFirstLane(Value reg, Operation* reader, RewriterBase& rewriter)
+    -> Value {
+  OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(reader);
+  Value zero = arith::ConstantIndexOp::create(rewriter, reader->getLoc(), 0);
+  return memref::LoadOp::create(rewriter, reader->getLoc(), reg,
+                                ValueRange{zero});
+}
+
 /// Makes the registers \p generic uses real in front of its body.
 auto materializeRegisters(linalg::GenericOp generic, AnalysisManager analyses,
                           RewriterBase& rewriter) -> LogicalResult {
@@ -264,10 +294,21 @@ auto materializeRegisters(linalg::GenericOp generic, AnalysisManager analyses,
     if (!reg) return failure();
 
     // Whatever read the constant reads the register now, where it stands: the
-    // body is not isolated from above.
+    // body is not isolated from above. Arithmetic reads a lane out of it.
+    SmallVector<OpOperand*> takes_the_value;
+    for (OpOperand& use : constant.getResult().getUses()) {
+      if (generic->isProperAncestor(use.getOwner()) &&
+          wantsTheValue(use.getOwner())) {
+        takes_the_value.push_back(&use);
+      }
+    }
     rewriter.replaceUsesWithIf(constant.getResult(), reg, [&](OpOperand& use) {
-      return generic->isProperAncestor(use.getOwner());
+      return generic->isProperAncestor(use.getOwner()) &&
+             !wantsTheValue(use.getOwner());
     });
+    for (OpOperand* use : takes_the_value) {
+      use->set(loadFirstLane(reg, use->getOwner(), rewriter));
+    }
   }
 
   // The scratch moves out sized to the tile, and the body goes on reading it
