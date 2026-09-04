@@ -69,6 +69,9 @@ class MemoryTracker {
   /// @return Total bytes allocated in this memory resource
   size_t getTotalAllocated(ResourceType memory_resource) const;
 
+  /// @brief Puts every resource's next address back to the first one
+  void reset();
+
  private:
   /// Memory resource capacities (available bytes per resource)
   llvm::DenseMap<ResourceType, size_t> capacities_;

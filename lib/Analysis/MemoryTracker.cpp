@@ -118,4 +118,10 @@ size_t MemoryTracker::getTotalAllocated(ResourceType memory_resource) const {
   return getNextAvailableAddress(memory_resource) - kFirstAvailableAddress;
 }
 
+void MemoryTracker::reset() {
+  for (auto& entry : next_address_) {
+    entry.second = kFirstAvailableAddress;
+  }
+}
+
 // Made with Bob

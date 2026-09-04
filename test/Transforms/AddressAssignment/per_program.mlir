@@ -1,0 +1,41 @@
+// RUN: dataflow-scheduler-opt %s -address-assignment | FileCheck %s
+
+// Each program has the memories it allocates from to itself, so addresses start
+// over per program rather than accumulating across them. Only what sits outside
+// the programs shares a scope.
+
+module {
+  ktdf_arch.device @sample_device attributes {} import("../../Dialect/KTDFArch/sample_device.mlir")
+
+  // Outside the programs, and so a scope of its own.
+  // CHECK: %[[OUTER:.*]] = arith.constant 0 : index
+  // CHECK: builtin.unrealized_conversion_cast %[[OUTER]] : index to memref<256xf16, "L1">
+  func.func @outside() {
+    %0 = memref.alloc() : memref<256xf16, "L1">
+    return
+  }
+
+  module @program_a {
+    // CHECK-LABEL: @program_a
+    // CHECK: %[[A0:.*]] = arith.constant 0 : index
+    // CHECK: builtin.unrealized_conversion_cast %[[A0]] : index to memref<128xf16, "L1">
+    // CHECK: %[[A1:.*]] = arith.constant 256 : index
+    // CHECK: builtin.unrealized_conversion_cast %[[A1]] : index to memref<64xf16, "L1">
+    func.func @program_a() {
+      %0 = memref.alloc() : memref<128xf16, "L1">
+      %1 = memref.alloc() : memref<64xf16, "L1">
+      return
+    }
+  }
+
+  // The next program starts at zero again instead of after program_a's 384.
+  module @program_b {
+    // CHECK-LABEL: @program_b
+    // CHECK: %[[B0:.*]] = arith.constant 0 : index
+    // CHECK: builtin.unrealized_conversion_cast %[[B0]] : index to memref<32xf16, "L1">
+    func.func @program_b() {
+      %0 = memref.alloc() : memref<32xf16, "L1">
+      return
+    }
+  }
+}

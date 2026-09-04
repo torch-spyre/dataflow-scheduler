@@ -214,22 +214,40 @@ struct AllocOp
   }
 };
 
-/// Collect all memref.alloc operations that have a memory space attribute.
-[[nodiscard]] auto collectAllocations(mlir::ModuleOp module)
+/// Gets the allocations of \p scope that name a memory space, stopping at a
+/// nested module so each program is collected on its own.
+[[nodiscard]] auto collectAllocations(mlir::ModuleOp scope)
     -> llvm::SmallVector<AllocOp> {
   llvm::SmallVector<AllocOp> allocs;
 
-  module.walk([&](AllocOp alloc) {
-    auto memref_type = alloc.getType();
-    if (memref_type.getMemorySpace()) {
-      allocs.push_back(alloc);
-    } else {
-      LDBG(1) << "Skipping allocation with missing memory space: " << alloc;
+  scope.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* op) {
+    if (op != scope.getOperation() && llvm::isa<mlir::ModuleOp>(op)) {
+      return mlir::WalkResult::skip();
+    }
+    if (auto alloc = llvm::dyn_cast<AllocOp>(op)) {
+      if (alloc.getType().getMemorySpace()) {
+        allocs.push_back(alloc);
+      } else {
+        LDBG(1) << "Skipping allocation with missing memory space: " << alloc;
+      }
     }
     return mlir::WalkResult::advance();
   });
 
   return allocs;
+}
+
+/// Gets whether any allocation under \p module names a memory space.
+///
+/// Asked before the tracker is built, which needs the device: a module with
+/// nothing to assign need not carry one.
+[[nodiscard]] auto hasAllocations(mlir::ModuleOp module) -> bool {
+  return module
+      .walk([](AllocOp alloc) {
+        return alloc.getType().getMemorySpace() ? mlir::WalkResult::interrupt()
+                                                : mlir::WalkResult::advance();
+      })
+      .wasInterrupted();
 }
 
 /// Result of processing a single allocation.
@@ -298,11 +316,8 @@ struct AddressAssignmentPass
 
     LDBG(1) << "Starting address assignment analysis";
 
-    // Collect all allocations with memory space attributes
-    auto allocs = collectAllocations(module);
-    LDBG(1) << "Found " << allocs.size()
-            << " allocations with memory space attributes";
-    if (allocs.empty()) {
+    if (!hasAllocations(module)) {
+      LDBG(1) << "No allocations with memory space attributes";
       return;
     }
 
@@ -310,13 +325,25 @@ struct AddressAssignmentPass
     auto& tracker = getAnalysis<MemoryTrackerAnalysis>();
     mlir::OpBuilder builder(&getContext());
 
-    LDBG(1) << "Processing allocations with MemoryTracker:";
+    // A program has the memories it allocates from to itself: what one puts
+    // there is discarded before the next runs, so each starts at address zero.
+    // Whatever sits outside the programs is a scope of its own.
+    llvm::SmallVector<mlir::ModuleOp> scopes{module};
+    llvm::append_range(scopes, module.getOps<mlir::ModuleOp>());
 
-    for (auto alloc : allocs) {
-      if (failed(processAllocation(alloc, tracker, builder))) {
-        ++num_failed;
+    for (auto scope : scopes) {
+      tracker.reset();
+
+      const auto allocs = collectAllocations(scope);
+      LDBG(1) << "Found " << allocs.size()
+              << " allocations with memory space attributes";
+
+      for (auto alloc : allocs) {
+        if (failed(processAllocation(alloc, tracker, builder))) {
+          ++num_failed;
+        }
+        ++num_processed;
       }
-      ++num_processed;
     }
 
     LDBG(1) << "Allocation summary:";

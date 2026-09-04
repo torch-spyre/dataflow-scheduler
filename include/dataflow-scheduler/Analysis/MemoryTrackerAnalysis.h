@@ -51,7 +51,7 @@ namespace scheduler {
 ///
 /// Assumptions:
 /// 1. ktdf_arch::DeviceOp is immutable throughout the pipeline
-/// 2. Memory allocations are monotonic (only grow, never shrink)
+/// 2. Allocations only grow until something calls reset()
 /// 3. Passes are executed in a controlled order
 /// 4. No concurrent pass execution on the same module
 ///
@@ -83,6 +83,9 @@ class MemoryTrackerAnalysis {
 
   /// Get the total allocated size for a memory resource
   size_t getTotalAllocated(ResourceType memory_resource) const;
+
+  /// Puts every resource's next address back to the first one
+  void reset() { tracker_.reset(); }
 
   /// Get the underlying MemoryTracker (for advanced use cases)
   MemoryTracker& getTracker() { return tracker_; }
