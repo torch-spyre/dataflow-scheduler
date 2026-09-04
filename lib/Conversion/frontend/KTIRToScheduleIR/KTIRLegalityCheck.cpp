@@ -27,6 +27,7 @@
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
@@ -52,6 +53,9 @@ namespace {
 [[nodiscard]] auto isLegalGenericBodyOp(mlir::Operation* op) -> bool {
   // Accept supported arith operations and the 'linalg.yield' terminator.
   if (mlir::isa<mlir::arith::AddFOp, mlir::arith::MulFOp, mlir::arith::SubFOp,
+                mlir::arith::AddIOp, mlir::arith::MaximumFOp,
+                mlir::arith::MinimumFOp, mlir::arith::MaxNumFOp,
+                mlir::arith::MinNumFOp, mlir::math::AbsFOp,
                 mlir::linalg::YieldOp>(op)) {
     return true;
   }
@@ -143,7 +147,8 @@ struct KTIRLegalityCheckPass
           return mlir::WalkResult::skip();
         }
         if (mlir::isa<mlir::linalg::AddOp, mlir::linalg::MulOp,
-                      mlir::linalg::SubOp, mlir::linalg::YieldOp>(op)) {
+                      mlir::linalg::SubOp, mlir::linalg::MaxOp,
+                      mlir::linalg::MinOp, mlir::linalg::YieldOp>(op)) {
           return mlir::WalkResult::advance();
         }
         if (mlir::isa<mlir::linalg::ReduceOp>(op)) {

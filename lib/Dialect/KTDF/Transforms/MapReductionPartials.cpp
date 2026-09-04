@@ -90,6 +90,7 @@
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -132,16 +133,16 @@ static bool hasReductionIterator(linalg::GenericOp generic_op) {
 // The combiner is identified as the unique user of the output block argument
 // (outs[0], the last block argument) — that is the accumulation step.  Any
 // other ops in the body (e.g. element-wise pre-processing in a fused generic)
-// are irrelevant.
+// are irrelevant, except for the abs-max pattern described below.
 //
 // Neutral elements per combiner:
-//   addf / subf  →  0.0
-//   mulf         →  1.0
-//   maximumf     → -inf
-//   minimumf     → +inf
-//   maxnumf      → -inf
-//   addi / subi  →  0
-//   muli         →  1
+//   addf / subf                          →  0.0
+//   mulf                                 →  1.0
+//   maximumf                             → -inf
+//   minimumf                             → +inf
+//   maxnumf(absf(%in), absf(%out))       →  0.0   (abs-max: result is >= 0)
+//   addi / subi                          →  0
+//   muli                                 →  1
 //
 // Returns failure() (with an emitted error) if the output block argument has
 // zero or multiple users, the combiner is unrecognised, or the element type is
@@ -160,20 +161,43 @@ static FailureOr<TypedAttr> getNeutralAttr(linalg::GenericOp generic_op,
         "MapReductionPartials: output block argument of reduction "
         "linalg.generic must have exactly one user (the accumulation op)");
 
+  // ── Abs-max pattern: maxnumf(absf(%in), absf(%out)) ───────────────────────
+  // When the direct user of out_arg is math.absf (pre-processing the
+  // accumulator before combining), check whether that absf feeds a
+  // maxnumf whose other operand is also an absf.  Both inputs are
+  // non-negative after the abs, so the correct neutral element is 0.0.
+  bool is_absmax = false;
+  if (isa<math::AbsFOp>(combiner) && combiner->hasOneUse()) {
+    Operation* max_op = combiner->getUses().begin()->getOwner();
+    if (isa<arith::MaxNumFOp>(max_op)) {
+      Value abs_out_result = combiner->getResult(0);
+      for (Value operand : max_op->getOperands()) {
+        if (operand == abs_out_result) continue;
+        if (operand.getDefiningOp<math::AbsFOp>()) {
+          is_absmax = true;
+          break;
+        }
+      }
+    }
+  }
+
   // ── Floating-point combiners ───────────────────────────────────────────────
   if (auto ftype = dyn_cast<FloatType>(elem_type)) {
     const llvm::fltSemantics& sem = ftype.getFloatSemantics();
+    if (is_absmax)
+      return cast<TypedAttr>(
+          FloatAttr::get(elem_type, APFloat::getZero(sem, /*negative=*/false)));
     if (isa<arith::AddFOp, arith::SubFOp>(combiner))
       return cast<TypedAttr>(
           FloatAttr::get(elem_type, APFloat::getZero(sem, /*negative=*/false)));
     if (isa<arith::MulFOp>(combiner))
       return cast<TypedAttr>(FloatAttr::get(elem_type, APFloat(sem, 1)));
-    if (isa<arith::MaximumFOp, arith::MaxNumFOp>(combiner))
-      return cast<TypedAttr>(FloatAttr::get(
-          elem_type, APFloat::getLargest(sem, /*negative=*/true)));
+    if (isa<arith::MaximumFOp>(combiner))
+      return cast<TypedAttr>(
+          FloatAttr::get(elem_type, APFloat::getInf(sem, /*negative=*/true)));
     if (isa<arith::MinimumFOp>(combiner))
-      return cast<TypedAttr>(FloatAttr::get(
-          elem_type, APFloat::getLargest(sem, /*negative=*/false)));
+      return cast<TypedAttr>(
+          FloatAttr::get(elem_type, APFloat::getInf(sem, /*negative=*/false)));
     return combiner->emitError(
         "MapReductionPartials: unsupported floating-point reduction combiner");
   }

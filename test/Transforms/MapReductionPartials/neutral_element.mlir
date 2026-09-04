@@ -8,19 +8,19 @@
 // CHECK-NEXT:    linalg.fill
 
 // CHECK-LABEL: func.func @maximumf_reduction
-// CHECK:         arith.constant -6.550400e+04 : f16
+// CHECK:         arith.constant 0xFC00 : f16
 // CHECK-NEXT:    linalg.fill
 
 // CHECK-LABEL: func.func @minimumf_reduction
-// CHECK:         arith.constant 6.550400e+04 : f16
+// CHECK:         arith.constant 0x7C00 : f16
 // CHECK-NEXT:    linalg.fill
 
 // CHECK-LABEL: func.func @subf_reduction
 // CHECK:         arith.constant 0.000000e+00 : f16
 // CHECK-NEXT:    linalg.fill
 
-// CHECK-LABEL: func.func @maxnumf_reduction
-// CHECK:         arith.constant -6.550400e+04 : f16
+// CHECK-LABEL: func.func @absmax_reduction
+// CHECK:         arith.constant 0.000000e+00 : f16
 // CHECK-NEXT:    linalg.fill
 
 // CHECK-LABEL: func.func @addi_reduction
@@ -397,8 +397,8 @@ module {
       }
       return
     }
-    // ── maxnumf: neutral = -inf ────────────────────────────────────────────────────────────────────────────────────────
-    func.func @maxnumf_reduction() attributes {grid = [1]} {
+    // ── absmax: maxnumf(absf(%in), absf(%out)), neutral = 0.0 ─────────────────
+    func.func @absmax_reduction() attributes {grid = [1]} {
       %c0 = arith.constant 0 : index
       %c1 = arith.constant 1 : index
       %c8589934592 = arith.constant 8589934592 : index
@@ -453,7 +453,9 @@ module {
                   %6 = ktdf.read_from_fifo %3#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x64xf16>
                   %7 = linalg.generic {indexing_maps = [#map, #map1], iterator_types = ["parallel", "reduction", "parallel"]} ins(%6 : tensor<1x1x64xf16>) outs(%arg2 : tensor<1x64xf16>) {
                   ^bb0(%in: f16, %out: f16):
-                    %9 = arith.maxnumf %in, %out : f16
+                    %abs_in = math.absf %in : f16
+                    %abs_out = math.absf %out : f16
+                    %9 = arith.maxnumf %abs_in, %abs_out : f16
                     linalg.yield %9 : f16
                   } -> tensor<1x64xf16>
                   %8 = arith.cmpi eq, %arg1, %c255 : index

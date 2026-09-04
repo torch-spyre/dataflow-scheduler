@@ -36,6 +36,7 @@
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/AffineMap.h"
@@ -49,6 +50,22 @@
 using namespace scheduler;
 
 namespace {
+
+// ---------------------------------------------------------------------------
+// Returns true and sets `lhs_out`/`rhs_out` to the inputs of the abs ops when
+// `maxnum_op` implements abs_max, i.e. both operands are produced by a
+// math.absf.  The two abs ops are erased via `rewriter` after the caller
+// emits its replacement.
+// ---------------------------------------------------------------------------
+static bool matchAbsMaxOperands(mlir::arith::MaxNumFOp maxnum_op,
+                                mlir::Value& lhs_out, mlir::Value& rhs_out) {
+  auto lhs_abs = maxnum_op.getLhs().getDefiningOp<mlir::math::AbsFOp>();
+  auto rhs_abs = maxnum_op.getRhs().getDefiningOp<mlir::math::AbsFOp>();
+  if (!lhs_abs || !rhs_abs) return false;
+  lhs_out = lhs_abs.getOperand();
+  rhs_out = rhs_abs.getOperand();
+  return true;
+}
 
 /// Pattern to lower linalg.generic compute operations
 struct LowerLinalgGenericPattern
@@ -136,9 +153,36 @@ struct LowerLinalgGenericPattern
                     mlir::vectorchain::VectorChainBinaryOperator::min);
               })
               .Case<mlir::arith::MaxNumFOp>([&](mlir::arith::MaxNumFOp op) {
+                mlir::Value lhs, rhs;
+                if (matchAbsMaxOperands(op, lhs, rhs)) {
+                  // Capture abs ops before lowering replaces maxnumf (after
+                  // which the operand values are no longer reachable via op).
+                  mlir::Operation* lhs_abs = op.getLhs().getDefiningOp();
+                  mlir::Operation* rhs_abs = op.getRhs().getDefiningOp();
+                  mlir::LogicalResult res = lowerBinaryFOp(
+                      op, lhs, rhs, rewriter, identity_map,
+                      mlir::vectorchain::VectorChainBinaryOperator::abs_max);
+                  // maxnumf is now replaced; absf results are unused — safe to
+                  // erase.
+                  if (mlir::succeeded(res)) {
+                    rewriter.eraseOp(lhs_abs);
+                    rewriter.eraseOp(rhs_abs);
+                  }
+                  return res;
+                }
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::abs_max);
+                    mlir::vectorchain::VectorChainBinaryOperator::max);
+              })
+              .Case<mlir::math::AbsFOp>([&](mlir::math::AbsFOp op)
+                                            -> mlir::LogicalResult {
+                // Consumed and erased by the MaxNumFOp abs_max case above when
+                // it is an operand of a maxnumf; nothing to emit here.
+                if (op->hasOneUse() &&
+                    mlir::isa<mlir::arith::MaxNumFOp>(*op->user_begin()))
+                  return mlir::success();
+                return op->emitError(
+                    "unsupported standalone math.absf in linalg.generic body");
               })
               .Case<mlir::dataflow::OpaqueOp>([&](mlir::dataflow::OpaqueOp op) {
                 // Already DFIR, and it reads and writes registers rather than
@@ -255,9 +299,32 @@ struct LowerLinalgGenericPattern
                 return lowerMemRefLoad(op, rewriter);
               })
               .Case<mlir::arith::MaxNumFOp>([&](mlir::arith::MaxNumFOp op) {
+                mlir::Value lhs, rhs;
+                if (matchAbsMaxOperands(op, lhs, rhs)) {
+                  mlir::Operation* lhs_abs = op.getLhs().getDefiningOp();
+                  mlir::Operation* rhs_abs = op.getRhs().getDefiningOp();
+                  mlir::LogicalResult res = lowerBinaryFOp(
+                      op, lhs, rhs, rewriter, identity_map,
+                      mlir::vectorchain::VectorChainBinaryOperator::abs_max);
+                  if (mlir::succeeded(res)) {
+                    rewriter.eraseOp(lhs_abs);
+                    rewriter.eraseOp(rhs_abs);
+                  }
+                  return res;
+                }
                 return lowerBinaryFOp(
                     op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::abs_max);
+                    mlir::vectorchain::VectorChainBinaryOperator::max);
+              })
+              .Case<mlir::math::AbsFOp>([&](mlir::math::AbsFOp op)
+                                            -> mlir::LogicalResult {
+                // Consumed and erased by the MaxNumFOp abs_max case above when
+                // it is an operand of a maxnumf; nothing to emit here.
+                if (op->hasOneUse() &&
+                    mlir::isa<mlir::arith::MaxNumFOp>(*op->user_begin()))
+                  return mlir::success();
+                return op->emitError(
+                    "unsupported standalone math.absf in linalg.generic body");
               })
               .Default([](mlir::Operation* unknown_op) {
                 return unknown_op->emitError(
@@ -291,18 +358,32 @@ struct LowerLinalgGenericPattern
       mlir::PatternRewriter& rewriter) const {
     mlir::Location loc = generic_op.getLoc();
 
-    // Require exactly one body op (plus the linalg.yield terminator).
+    // Require exactly one body op (plus the linalg.yield terminator and
+    // possibly arith.constant ops).
     mlir::Block& body = generic_op.getRegion().front();
     llvm::SmallVector<mlir::Operation*> body_ops;
-    for (mlir::Operation& op : body.without_terminator())
+    for (mlir::Operation& op : body.without_terminator()) {
+      if (op.hasTrait<mlir::OpTrait::ConstantLike>()) continue;
       body_ops.push_back(&op);
-    if (body_ops.size() != 1)
+    }
+    // Allow either one compute op or the abs_max pattern:
+    //   math.absf %in  /  math.absf %out  /  arith.maxnumf %abs_in, %abs_out
+    if (body_ops.size() != 1 && body_ops.size() != 3)
       return generic_op.emitError(
           "reduction linalg.generic body must have exactly one compute op");
 
     // Map body op kind to the vectorchain binary operator.
     mlir::vectorchain::VectorChainBinaryOperator binary_kind;
-    if (mlir::isa<mlir::arith::AddFOp>(body_ops[0]))
+    if (body_ops.size() == 3) {
+      // The only supported 3-op body is abs+abs+maxnumf → abs_max.
+      auto* maxnum = body_ops[2];
+      if (!mlir::isa<mlir::arith::MaxNumFOp>(maxnum) ||
+          !mlir::isa<mlir::math::AbsFOp>(body_ops[0]) ||
+          !mlir::isa<mlir::math::AbsFOp>(body_ops[1]))
+        return generic_op.emitError(
+            "unsupported 3-op reduction body: expected absf/absf/maxnumf");
+      binary_kind = mlir::vectorchain::VectorChainBinaryOperator::abs_max;
+    } else if (mlir::isa<mlir::arith::AddFOp>(body_ops[0]))
       binary_kind = mlir::vectorchain::VectorChainBinaryOperator::add;
     else if (mlir::isa<mlir::arith::MulFOp>(body_ops[0]))
       binary_kind = mlir::vectorchain::VectorChainBinaryOperator::mul;
@@ -312,8 +393,6 @@ struct LowerLinalgGenericPattern
       binary_kind = mlir::vectorchain::VectorChainBinaryOperator::max;
     else if (mlir::isa<mlir::arith::MinimumFOp>(body_ops[0]))
       binary_kind = mlir::vectorchain::VectorChainBinaryOperator::min;
-    else if (mlir::isa<mlir::arith::MaxNumFOp>(body_ops[0]))
-      binary_kind = mlir::vectorchain::VectorChainBinaryOperator::abs_max;
     else
       return body_ops[0]->emitError(
           "unsupported reduction body op in linalg.generic");
