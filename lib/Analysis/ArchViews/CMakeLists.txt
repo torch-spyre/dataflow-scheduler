@@ -1,7 +1,6 @@
 add_dataflow_scheduler_library(DataflowSchedulerArchViews
     GroupLocalMemory.cpp
     MemoryTree.cpp
-    ResourceKinds.cpp
     RoutingGraph.cpp
 
   ADDITIONAL_HEADER_DIRS

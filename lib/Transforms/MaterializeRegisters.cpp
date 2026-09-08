@@ -31,9 +31,10 @@
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/RegionUtils.h>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
@@ -87,13 +88,16 @@ auto getLaneCount(Operation* op, Type element, AnalysisManager analyses)
 
   ktdf_arch::DeviceRef device(declaration, analyses);
   const auto& resource_kinds =
-      device.getDeviceManager().getOrCreateView<arch_view::ResourceKinds>(
+      device.getDeviceManager().getOrCreateView<mlir::ktdf_arch::ResourceKinds>(
           device);
 
-  // FIXME: Discover compute_kind from op.
-  const auto simd = resource_kinds.getFeature<ktdf_arch::feature::SIMD>(
-      resource_kinds.getComputeKind());
-  return simd.getLanes(element);
+  // FIXME: Discover compute from op.
+  auto compute = resource_kinds.getDefaultCompute();
+  if (!compute) {
+    return 1;
+  }
+
+  return getVectorLanes(element, compute);
 }
 
 /// Turns \p constant into a register in front of \p generic.

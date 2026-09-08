@@ -18,11 +18,11 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
@@ -243,7 +243,7 @@ struct LowerDataTransferPattern
     : public mlir::OpRewritePattern<mlir::ktdf::DataTransferOp> {
   LowerDataTransferPattern(mlir::MLIRContext* context,
                            const ResourceToUnits& components,
-                           arch_view::ResourceKinds& resource_kinds)
+                           mlir::ktdf_arch::ResourceKinds& resource_kinds)
       : OpRewritePattern(context),
         components_(components),
         resource_kinds_(resource_kinds) {}
@@ -393,7 +393,7 @@ struct LowerDataTransferPattern
 
  private:
   const ResourceToUnits& components_;
-  arch_view::ResourceKinds& resource_kinds_;
+  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
 
   /// Lower as CompositeLoadAndStore.
   ///
@@ -411,14 +411,15 @@ struct LowerDataTransferPattern
     auto* context = rewriter.getContext();
     const int64_t total = vector_type.getNumElements();
 
-    const auto lanes =
-        getVectorLanes(vector_type.getElementType(), resource_kinds_);
-    if (!lanes) {
-      data_transfer_op.emitError(
+    // FIXME: Discover compute from op.
+    auto compute = resource_kinds_.getDefaultCompute();
+    if (!compute) {
+      return data_transfer_op.emitError(
           "cannot determine the hardware vector width: the architecture "
-          "declares no compute resource kind");
-      return mlir::failure();
+          "declares no default compute resource");
     }
+
+    const auto lanes = getVectorLanes(vector_type.getElementType(), compute);
 
     // Sizes describing the elements covered by one AGEN vector transfer, and
     // the dimensions (if any) walked over time to cover the rest. Narrowed
@@ -432,28 +433,28 @@ struct LowerDataTransferPattern
     // loop; see below.
     std::optional<unsigned> loop_time_dim;
 
-    if (total > *lanes) {
+    if (total > lanes) {
       if (src_static_sizes.empty() || dst_static_sizes.empty()) {
         data_transfer_op.emitError()
             << "data transfer of " << total
-            << " elements exceeds the hardware vector width of " << *lanes
+            << " elements exceeds the hardware vector width of " << lanes
             << " but has no dimensions to split";
         return mlir::failure();
       }
 
-      if (src_static_sizes.back() % *lanes != 0 ||
-          dst_static_sizes.back() % *lanes != 0) {
+      if (src_static_sizes.back() % lanes != 0 ||
+          dst_static_sizes.back() % lanes != 0) {
         data_transfer_op.emitError()
             << "data transfer of " << total
-            << " elements exceeds the hardware vector width of " << *lanes
+            << " elements exceeds the hardware vector width of " << lanes
             << "; splitting requires the innermost source and destination "
                "sizes to be a multiple of the vector width, but they are "
             << src_static_sizes.back() << " and " << dst_static_sizes.back();
         return mlir::failure();
       }
 
-      src_time_dims = describeTransferTimeDims(src_static_sizes, *lanes);
-      dst_time_dims = describeTransferTimeDims(dst_static_sizes, *lanes);
+      src_time_dims = describeTransferTimeDims(src_static_sizes, lanes);
+      dst_time_dims = describeTransferTimeDims(dst_static_sizes, lanes);
 
       // Only the extents are compared, not positions or coefficients: the
       // two sides may reach the same walk through different shapes, e.g.
@@ -467,11 +468,11 @@ struct LowerDataTransferPattern
       }
 
       load_iv_type =
-          mlir::VectorType::get({*lanes}, vector_type.getElementType());
+          mlir::VectorType::get({lanes}, vector_type.getElementType());
       load_sizes.assign(src_static_sizes.size(), 1);
-      load_sizes.back() = *lanes;
+      load_sizes.back() = lanes;
       store_sizes.assign(dst_static_sizes.size(), 1);
-      store_sizes.back() = *lanes;
+      store_sizes.back() = lanes;
 
       // A time dimension is one step count shared by both sides, so it is only
       // realizable when both sides move the same distance per step: one count
@@ -698,7 +699,7 @@ struct LowerDataTransferPattern
 
 void scheduler::populateDataTransferLoweringPatterns(
     mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
-    arch_view::ResourceKinds& resource_kinds) {
+    mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   patterns.add<LowerDataTransferPattern>(patterns.getContext(), components,
                                          resource_kinds);
 }

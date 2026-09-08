@@ -20,8 +20,8 @@
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LOGICALMEMORYVIEWBUILDER_H_
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
@@ -44,7 +44,7 @@ namespace scheduler {
 mlir::LogicalResult buildLogicalMemoryViews(
     mlir::func::FuncOp func,
     const scheduler::arch_view::MemoryTree& memory_tree,
-    const scheduler::arch_view::ResourceKinds& resource_kinds,
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds,
     const scheduler::SchedulerExtContext& ext_ctx, SymbolAllocator& symbols);
 
 }  // namespace scheduler

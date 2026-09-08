@@ -18,10 +18,10 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/BufferPhaseLowering.h"
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/Utils.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseMap.h"
@@ -155,7 +155,7 @@ mlir::LogicalResult replaceBufferPhaseAndSelectInClonedLoops(
 mlir::LogicalResult processOneBufferPhasePair(
     mlir::ktdf::BufferPhaseOp buffer_phase_op,
     const ResourceToUnits& components,
-    arch_view::ResourceKinds& resource_kinds) {
+    mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   // Validate num_phases == 2
   auto num_phases_attr = buffer_phase_op.getNumPhasesAttr();
   if (!num_phases_attr || num_phases_attr.getInt() != 2) {
@@ -206,7 +206,7 @@ mlir::LogicalResult processOneBufferPhasePair(
   auto resource_opt =
       getEnclosingProgramUnitResourceType(buffer_phase_op.getOperation());
   if (resource_opt) {
-    resource = resource_kinds.getResource(*resource_opt);
+    resource = resource_kinds.getInstance(*resource_opt);
   }
   if (!resource) {
     buffer_phase_op.emitError(
@@ -317,7 +317,7 @@ mlir::LogicalResult processOneBufferPhasePair(
 
 mlir::LogicalResult scheduler::lowerDoubleBuffering(
     mlir::func::FuncOp func, const ResourceToUnits& components,
-    arch_view::ResourceKinds& resource_kinds) {
+    mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   while (true) {
     mlir::ktdf::BufferPhaseOp found = nullptr;
     func.walk([&](mlir::ktdf::BufferPhaseOp bp) {

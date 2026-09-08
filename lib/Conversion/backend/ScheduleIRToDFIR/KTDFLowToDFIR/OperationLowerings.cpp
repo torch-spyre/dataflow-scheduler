@@ -36,7 +36,6 @@
 #include <mlir/Transforms/DialectConversion.h>
 #include <mlir/Transforms/GreedyPatternRewriteDriver.h>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Conversion/Utils/Utils.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/BufferPhaseLowering.h"
@@ -51,6 +50,7 @@
 #include "dataflow-scheduler/Dialect/Dataflow/DataflowDialect.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/Dataflow/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
@@ -66,7 +66,7 @@ namespace {
 struct LowerReadFromFifoPattern
     : public mlir::OpRewritePattern<mlir::ktdf::ReadFromFifoOp> {
   LowerReadFromFifoPattern(mlir::MLIRContext* context,
-                           arch_view::ResourceKinds& resource_kinds,
+                           mlir::ktdf_arch::ResourceKinds& resource_kinds,
                            const ResourceToUnits& components)
       : OpRewritePattern(context),
         resource_kinds_(resource_kinds),
@@ -79,9 +79,14 @@ struct LowerReadFromFifoPattern
     auto fifo_slot_type =
         llvm::cast<mlir::ktdf::FifoSlotType>(read_op.getFifoSlot().getType());
 
+    // FIXME: Discover compute from op.
+    auto compute = resource_kinds_.getDefaultCompute();
+    if (!compute) {
+      return llvm::failure();
+    }
+
     // Convert result type (tensor or memref) to flattened vector type
-    auto vector_type =
-        getFlattenedVectorType(read_op.getType(), resource_kinds_);
+    auto vector_type = getFlattenedVectorType(read_op.getType(), compute);
     if (!vector_type) {
       return mlir::failure();
     }
@@ -115,14 +120,14 @@ struct LowerReadFromFifoPattern
   }
 
  private:
-  arch_view::ResourceKinds& resource_kinds_;
+  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
   const ResourceToUnits& components_;
 };
 
 struct LowerWriteToFifoPattern
     : public mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
   LowerWriteToFifoPattern(mlir::MLIRContext* context,
-                          arch_view::ResourceKinds& resource_kinds,
+                          mlir::ktdf_arch::ResourceKinds& resource_kinds,
                           const ResourceToUnits& components)
       : OpRewritePattern(context),
         resource_kinds_(resource_kinds),
@@ -135,9 +140,16 @@ struct LowerWriteToFifoPattern
     auto fifo_slot_type =
         llvm::cast<mlir::ktdf::FifoSlotType>(write_op.getFifoSlot().getType());
 
+    // FIXME: Discover compute from op.
+    auto compute = resource_kinds_.getDefaultCompute();
+    if (!compute) {
+      return write_op.emitError(
+          "the architecture declares no default compute resource");
+    }
+
     // Convert data type (tensor or vector) to flattened vector type
     auto vector_type =
-        getFlattenedVectorType(write_op.getData().getType(), resource_kinds_);
+        getFlattenedVectorType(write_op.getData().getType(), compute);
     if (!vector_type) {
       return mlir::failure();
     }
@@ -178,7 +190,7 @@ struct LowerWriteToFifoPattern
   }
 
  private:
-  arch_view::ResourceKinds& resource_kinds_;
+  mlir::ktdf_arch::ResourceKinds& resource_kinds_;
   const ResourceToUnits& components_;
 };
 
@@ -581,8 +593,9 @@ struct LowerSignalPattern
 /// Lowers the copy to agen.vector_store of the source value into the dest.
 struct LowerMemRefCopyFromFifoPattern
     : public mlir::OpRewritePattern<mlir::memref::CopyOp> {
-  LowerMemRefCopyFromFifoPattern(mlir::MLIRContext* context,
-                                 arch_view::ResourceKinds& /*resource_kinds*/)
+  LowerMemRefCopyFromFifoPattern(
+      mlir::MLIRContext* context,
+      mlir::ktdf_arch::ResourceKinds& /*resource_kinds*/)
       : OpRewritePattern(context, /*benefit=*/2) {}
 
   mlir::LogicalResult matchAndRewrite(
@@ -842,8 +855,8 @@ struct LowerOpaquePattern : mlir::OpRewritePattern<mlir::ktdf::OpaqueOp> {
 mlir::LogicalResult scheduler::runOperationLowerings(
     mlir::func::FuncOp func,
     const scheduler::SchedulerExtContext& scheduler_ctx,
-    const ResourceToUnits& components, arch_view::ResourceKinds& resource_kinds,
-    SymbolAllocator& symbols) {
+    const ResourceToUnits& components,
+    mlir::ktdf_arch::ResourceKinds& resource_kinds, SymbolAllocator& symbols) {
   // Lower linalg.generic compute operations and FIFO operations
   mlir::RewritePatternSet patterns(func.getContext());
   populateLinalgLoweringPatterns(patterns, resource_kinds, symbols);

@@ -27,7 +27,6 @@
 
 #include <map>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Analysis/WriteSetScan.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/ComponentClassifier.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/PipelineExecutionTransform.h"
@@ -41,6 +40,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
@@ -313,7 +313,7 @@ struct KTDFToKTDFLoweringPass
       return;
     }
     auto& resource_kinds =
-        device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
+        device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
     module_op.walk([&](mlir::func::FuncOp func) {

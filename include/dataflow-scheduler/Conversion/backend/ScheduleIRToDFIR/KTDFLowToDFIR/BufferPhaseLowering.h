@@ -19,8 +19,8 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_BUFFERPHASELOWERING_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_BUFFERPHASELOWERING_H_
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
 
@@ -31,7 +31,7 @@ namespace scheduler {
 /// remain.
 mlir::LogicalResult lowerDoubleBuffering(
     mlir::func::FuncOp func, const ResourceToUnits& components,
-    arch_view::ResourceKinds& resource_kinds);
+    mlir::ktdf_arch::ResourceKinds& resource_kinds);
 
 }  // namespace scheduler
 

@@ -31,11 +31,11 @@
 
 #include <memory>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
@@ -106,7 +106,7 @@ struct Hop {
   mlir::ktdf_arch::Link via;
 };
 
-auto getHop(const arch_view::ResourceKinds& resource_kinds,
+auto getHop(const mlir::ktdf_arch::ResourceKinds& resource_kinds,
             mlir::ktdf::DataTransferOp transfer,
             llvm::SmallVectorImpl<Hop>& hops) -> llvm::LogicalResult {
   // Find the source and target resources.
@@ -115,8 +115,8 @@ auto getHop(const arch_view::ResourceKinds& resource_kinds,
   if (!source_kind || !target_kind) {
     return llvm::failure();
   }
-  auto source = resource_kinds.getResource<mlir::ktdf_arch::Node>(source_kind);
-  auto target = resource_kinds.getResource<mlir::ktdf_arch::Node>(target_kind);
+  auto source = resource_kinds.getInstance<mlir::ktdf_arch::Node>(source_kind);
+  auto target = resource_kinds.getInstance<mlir::ktdf_arch::Node>(target_kind);
   if (!source || !target) {
     return llvm::failure();
   }
@@ -125,7 +125,7 @@ auto getHop(const arch_view::ResourceKinds& resource_kinds,
   mlir::ktdf_arch::Node load_store;
   if (auto stage = transfer->getParentOfType<mlir::ktdf::StageOp>(); stage) {
     if (const auto kind = getResourceKind(stage); kind) {
-      load_store = resource_kinds.getResource<mlir::ktdf_arch::Node>(kind);
+      load_store = resource_kinds.getInstance<mlir::ktdf_arch::Node>(kind);
     }
   }
 
@@ -151,8 +151,8 @@ auto getHop(const arch_view::ResourceKinds& resource_kinds,
   return llvm::success();
 }
 
-auto getHop(const arch_view::ResourceKinds& resource_kinds, mlir::Value value,
-            bool is_load, llvm::SmallVectorImpl<Hop>& hops)
+auto getHop(const mlir::ktdf_arch::ResourceKinds& resource_kinds,
+            mlir::Value value, bool is_load, llvm::SmallVectorImpl<Hop>& hops)
     -> llvm::FailureOr<mlir::Value> {
   // Find the single ktdf.data_transfer targeting the value.
   mlir::ktdf::DataTransferOp transfer;
@@ -195,9 +195,9 @@ auto getHop(const arch_view::ResourceKinds& resource_kinds, mlir::Value value,
   return transfer.getDestination();
 }
 
-auto getHops(const arch_view::ResourceKinds& resource_kinds, mlir::Value value,
-             bool is_load, llvm::SmallVectorImpl<Hop>& result)
-    -> llvm::LogicalResult {
+auto getHops(const mlir::ktdf_arch::ResourceKinds& resource_kinds,
+             mlir::Value value, bool is_load,
+             llvm::SmallVectorImpl<Hop>& result) -> llvm::LogicalResult {
   if (auto read = value.getDefiningOp<mlir::ktdf::ReadFromFifoOp>(); read) {
     value = read.getFifoSlot();
   }
@@ -262,7 +262,7 @@ static bool isBroadcastOverVectorDim(mlir::AffineMap m) {
 static mlir::LogicalResult collectSites(
     mlir::ktdf::PipelineOp pipeline,
     llvm::SmallVector<BroadcastLegalizationSite>& sites,
-    arch_view::ResourceKinds& resource_kinds) {
+    mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   const auto walk_result = pipeline.walk([&](mlir::linalg::GenericOp
                                                  generic_op) {
     auto stage = generic_op->getParentOfType<mlir::ktdf::StageOp>();
@@ -271,7 +271,7 @@ static mlir::LogicalResult collectSites(
     if (!compute_kind) {
       return mlir::WalkResult::advance();
     }
-    auto compute = resource_kinds.getResource(compute_kind);
+    auto compute = resource_kinds.getInstance(compute_kind);
     if (!compute) {
       return mlir::WalkResult::advance();
     }
@@ -541,7 +541,7 @@ struct ScalarBroadcastLegalizationPass
       return;
     }
     auto& resource_kinds =
-        device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
+        device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
     const auto walk_result =
         module_op.walk([&](mlir::ktdf::PipelineOp pipeline) {

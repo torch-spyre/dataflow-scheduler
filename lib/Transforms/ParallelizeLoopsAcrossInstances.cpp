@@ -28,12 +28,12 @@
 
 #include <optional>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/ApplicableUnits.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/PipelineScope.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeEndpoints.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
@@ -118,7 +118,7 @@ struct Candidate {
 
 [[nodiscard]] auto findEnclosingGroup(
     llvm::ArrayRef<mlir::Attribute> resources,
-    const arch_view::ResourceKinds& resource_kinds)
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds)
     -> mlir::ktdf_arch::GroupOp {
   if (resources.empty()) {
     return nullptr;
@@ -126,7 +126,7 @@ struct Candidate {
 
   mlir::ktdf_arch::GroupOp result;
   for (auto kind : resources) {
-    auto resource = resource_kinds.getResource(kind);
+    auto resource = resource_kinds.getInstance(kind);
     if (!resource) {
       return nullptr;
     }
@@ -161,7 +161,7 @@ struct Candidate {
 
 [[nodiscard]] auto findEnclosingGroup(
     mlir::ktdf::PipelineOp pipeline,
-    const arch_view::ResourceKinds& resource_kinds)
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds)
     -> mlir::ktdf_arch::GroupOp {
   return findEnclosingGroup(
       mlir::ktdf::collectPipelineApplicableUnits(pipeline).getArrayRef(),
@@ -233,7 +233,7 @@ std::optional<mlir::scf::ForOp> selectLoop(
 
 std::optional<Candidate> findCandidate(
     mlir::ktdf::PipelineOp pipeline,
-    const arch_view::ResourceKinds& resource_kinds) {
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   // Step 1+2: applicable_units.
   auto enclosing_group = findEnclosingGroup(pipeline, resource_kinds);
   if (!enclosing_group) {
@@ -372,7 +372,7 @@ struct ParallelizeLoopsAcrossInstancesPass
       return;
     }
     auto& resource_kinds =
-        device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
+        device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
     // Pre-order walk over pipelines. Collect candidates first, then rewrite,
     // so the walk's iterator is not invalidated by op erasure.

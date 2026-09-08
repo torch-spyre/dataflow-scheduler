@@ -24,9 +24,9 @@
 #ifndef DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_OPERATIONLOWERINGS_H_
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_OPERATIONLOWERINGS_H_
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Support/LogicalResult.h"
@@ -38,8 +38,8 @@ namespace scheduler {
 mlir::LogicalResult runOperationLowerings(
     mlir::func::FuncOp func,
     const scheduler::SchedulerExtContext& scheduler_ctx,
-    const ResourceToUnits& components, arch_view::ResourceKinds& resource_kinds,
-    SymbolAllocator& symbols);
+    const ResourceToUnits& components,
+    mlir::ktdf_arch::ResourceKinds& resource_kinds, SymbolAllocator& symbols);
 
 }  // namespace scheduler
 

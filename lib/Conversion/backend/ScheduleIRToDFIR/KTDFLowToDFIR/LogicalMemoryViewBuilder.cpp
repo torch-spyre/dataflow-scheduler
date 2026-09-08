@@ -21,7 +21,6 @@
 #include <mlir/IR/Matchers.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/UniformInfra.h"
@@ -29,6 +28,7 @@
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "llvm/ADT/DenseMap.h"
@@ -180,7 +180,7 @@ mlir::AffineMap buildLinearizationMap(mlir::MLIRContext* ctx,
 /// mean one address in two granularities, which is reported.
 mlir::FailureOr<int64_t> wordSizeOf(
     mlir::dataflow::ProgramUnitOp pu, ResourceType memory_space,
-    const scheduler::arch_view::ResourceKinds& resource_kinds) {
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   std::optional<int64_t> word_size;
   for (mlir::Value unit : pu.getUnits()) {
     auto get_unit = unit.getDefiningOp<mlir::dataflow::GetUnitOp>();
@@ -228,7 +228,7 @@ mlir::FailureOr<int64_t> wordSizeOf(
 mlir::LogicalResult replaceSourceAChains(
     mlir::dataflow::ProgramUnitOp pu,
     const llvm::DenseMap<ResourceType, mlir::Value>& resolved_units,
-    const scheduler::arch_view::ResourceKinds& resource_kinds,
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds,
     llvm::DenseMap<mlir::Value, mlir::Value>& replacements,
     SymbolAllocator& symbols, mlir::OpBuilder& definitions,
     mlir::OpBuilder& builder) {
@@ -617,7 +617,7 @@ mlir::LogicalResult propagateTypes(
 mlir::LogicalResult scheduler::buildLogicalMemoryViews(
     mlir::func::FuncOp func,
     const scheduler::arch_view::MemoryTree& memory_tree,
-    const scheduler::arch_view::ResourceKinds& resource_kinds,
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds,
     const SchedulerExtContext& ext_ctx, SymbolAllocator& symbols) {
   LDBG(1) << "buildLogicalMemoryViews on " << func.getName();
 

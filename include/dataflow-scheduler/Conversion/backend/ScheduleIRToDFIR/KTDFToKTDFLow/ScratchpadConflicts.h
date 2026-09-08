@@ -21,10 +21,10 @@
 
 #include <map>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFToKTDFLow/StageToUnitsMap.h"
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/GlobalStageDAG.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -34,7 +34,7 @@ namespace scheduler {
 mlir::LogicalResult computeScratchpadConflicts(
     const StageToUnitsMap& stage_to_units,
     const mlir::ktdf::StageDependencyDAG& dag,
-    const arch_view::ResourceKinds& resource_kinds,
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds,
     std::map<std::pair<mlir::Operation*, mlir::Operation*>,
              llvm::SmallVector<scheduler::ResourceType, 2>>& conflicts);
 

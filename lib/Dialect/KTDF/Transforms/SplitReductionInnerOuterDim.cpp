@@ -20,10 +20,10 @@
 
 #include <memory>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
@@ -478,8 +478,7 @@ struct SplitReductionInnerOuterDimPass
       return;
     }
     auto& resource_kinds =
-        device_manager.getOrCreateView<scheduler::arch_view::ResourceKinds>(
-            *device);
+        device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
     // Collect eligible linalg.generic ops: at least two reduction iterator
     // types, with one reduction dim mapping to the rightmost non-1 input dim.
@@ -494,9 +493,17 @@ struct SplitReductionInnerOuterDimPass
       return;
     }
 
-    auto simd_feature =
-        resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(
-            resource_kinds.getComputeKind());
+    // FIXME: Discover compute from op.
+    auto compute = resource_kinds.getDefaultCompute();
+    if (!compute) {
+      getOperation().emitError(
+          "cannot determine the hardware vector width: the architecture "
+          "declares no default compute resource");
+      signalPassFailure();
+      return;
+    }
+
+    auto simd_feature = compute.getFeature<mlir::ktdf_arch::feature::SIMD>();
 
     for (linalg::GenericOp generic_op : candidates) {
       // Derive the element type from the first output (the accumulator).

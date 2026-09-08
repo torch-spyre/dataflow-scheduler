@@ -21,9 +21,10 @@
 
 #include <optional>
 
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
@@ -55,14 +56,12 @@ std::optional<scheduler::ResourceType> getEnclosingProgramUnitResourceType(
     mlir::Operation* op);
 
 /// Helper to get flattened vector type from tensor or vector type.
-/// Returns nullptr if the type is neither a RankedTensorType nor VectorType.
 mlir::VectorType getFlattenedVectorType(
-    mlir::Type type, arch_view::ResourceKinds& resource_kinds);
+    mlir::ShapedType type, mlir::ktdf_arch::ExecutionUnitOp compute);
 
 /// Number of vector lanes the compute resource provides for `elem_type`.
-/// std::nullopt when the architecture declares no compute resource kind.
-std::optional<int64_t> getVectorLanes(mlir::Type elem_type,
-                                      arch_view::ResourceKinds& resource_kinds);
+int64_t getVectorLanes(mlir::Type elem_type,
+                       mlir::ktdf_arch::ExecutionUnitOp compute);
 
 /// Match units by core ID between program_unit operands and target units,
 /// create a def_immutable_mapping + query_map, and return the query result.

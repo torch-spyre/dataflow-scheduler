@@ -25,7 +25,6 @@
 #include <mlir/Transforms/RegionUtils.h>
 
 #include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
-#include "dataflow-scheduler/Analysis/ArchViews/ResourceKinds.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/LogicalMemoryViewBuilder.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/OperationLowerings.h"
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/PreludeWorkPartition.h"
@@ -37,6 +36,7 @@
 #include "dataflow-scheduler/Dialect/Dataflow/Dataflow.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
@@ -100,7 +100,7 @@ struct KTDFLowToDFIRPass
     auto& memory_tree =
         device_manager.getOrCreateView<arch_view::MemoryTree>(*device);
     auto& resource_kinds =
-        device_manager.getOrCreateView<arch_view::ResourceKinds>(*device);
+        device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
     // The run's symbols, numbered once for the whole module: nothing sets a
     // range of ids aside, so two functions cannot each start from the top. This
