@@ -38,20 +38,6 @@
 
 using namespace scheduler;
 
-bool scheduler::isTargetConstant(int target, mlir::Value val) {
-  if (auto const_op = val.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
-    return const_op.value() == target;
-  }
-  return false;
-}
-
-std::optional<int64_t> scheduler::getConstantIndexValue(mlir::Value value) {
-  if (auto const_op = value.getDefiningOp<mlir::arith::ConstantIndexOp>()) {
-    return const_op.value();
-  }
-  return std::nullopt;
-}
-
 std::optional<int64_t> scheduler::getStaticTripCount(mlir::scf::ForOp loop) {
   if (auto tc = loop.getStaticTripCount()) return tc->getSExtValue();
   return std::nullopt;

@@ -27,7 +27,6 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
-#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/DebugLog.h"
@@ -97,8 +96,7 @@ void collectAssociatedLoops(
       }
 
       // Get the total size (LHS of ceildiv)
-      auto total_size_opt =
-          scheduler::getConstantIndexValue(ceildiv_op.getLhs());
+      auto total_size_opt = getConstantIntValue(ceildiv_op.getLhs());
       if (!total_size_opt.has_value()) {
         logUnresolved(ts_info.reserve_size_op,
                       "non-constant total size in arith.ceildivui");

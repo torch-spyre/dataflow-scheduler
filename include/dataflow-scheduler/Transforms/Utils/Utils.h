@@ -38,15 +38,6 @@
 
 namespace scheduler {
 
-/// Check if a value is a constant with a specific target value.
-/// Returns true if the value is defined by an arith.constant operation
-/// with an integer value equal to target.
-bool isTargetConstant(int target, mlir::Value val);
-
-/// Returns the constant index value carried by `value` iff it is defined by
-/// arith.constant index.
-std::optional<int64_t> getConstantIndexValue(mlir::Value value);
-
 /// Returns the static trip count of `loop` iff lb, ub, step are all
 /// arith.constant index ops. step must be positive.
 std::optional<int64_t> getStaticTripCount(mlir::scf::ForOp loop);

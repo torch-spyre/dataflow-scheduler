@@ -40,4 +40,5 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFTransforms
     MLIRPass
     MLIRSCFDialect
     MLIRTensorDialect
+    MLIRDialectUtils
 )

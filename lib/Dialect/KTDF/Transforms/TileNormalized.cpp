@@ -18,8 +18,9 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/TileNormalized.h"
 
+#include <mlir/Dialect/Utils/StaticValueUtils.h>
+
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
-#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/SCF/Utils/Utils.h"
@@ -37,8 +38,8 @@ FailureOr<TileNestResult> mlir::ktdf::customTileNormalizedPerfectlyNested(
     return failure();
 
   for (scf::ForOp loop : nested_loops) {
-    auto lb = scheduler::getConstantIndexValue(loop.getLowerBound());
-    auto step = scheduler::getConstantIndexValue(loop.getStep());
+    auto lb = getConstantIntValue(loop.getLowerBound());
+    auto step = getConstantIntValue(loop.getStep());
     if (!lb || *lb != 0 || !step || *step != 1) return failure();
   }
 

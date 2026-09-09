@@ -31,6 +31,7 @@
 
 #include <llvm/ADT/ArrayRef.h>
 #include <llvm/Support/LogicalResult.h>
+#include <mlir/Dialect/Utils/StaticValueUtils.h>
 #include <mlir/Support/LLVM.h>
 
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
@@ -1236,7 +1237,7 @@ mlir::Value ConstructThreeStagePipelinePass::computeReinterpretCastOffset(
   // - Skip addition if index is constant 0
   llvm::SmallVector<mlir::Value> terms;
   for (size_t i = 0; i < num_indices; ++i) {
-    if (isTargetConstant(0, indices[i])) {
+    if (mlir::isZeroInteger(indices[i])) {
       continue;
     }
 
