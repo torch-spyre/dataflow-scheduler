@@ -72,7 +72,7 @@ jobs:
           LLVM_MAJOR="${{ steps.llvm-version.outputs.major }}"
 
           # clang-format-${LLVM_MAJOR} from the LLVM apt repository
-          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key \
+          wget -qO- --max-redirect=0 https://apt.llvm.org/llvm-snapshot.gpg.key \
             | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
           sudo add-apt-repository \
             "deb https://apt.llvm.org/jammy/ llvm-toolchain-jammy-${LLVM_MAJOR} main"
