@@ -51,14 +51,6 @@ std::optional<int64_t> getConstantIndexValue(mlir::Value value);
 /// arith.constant index ops. step must be positive.
 std::optional<int64_t> getStaticTripCount(mlir::scf::ForOp loop);
 
-/// Rebuild a ktdf.private op with only the results that are used and the
-/// operations needed to produce the corresponding yield operands.
-mlir::LogicalResult cleanupPrivateOp(mlir::ktdf::PrivateOp private_op);
-
-/// Apply cleanupPrivateOp to all immediate private ops in the given pipeline.
-mlir::LogicalResult cleanupPrivateOpsInPipeline(
-    mlir::ktdf::PipelineOp pipeline_op);
-
 /// Extract and validate grid size from function attributes
 /// Grid is a 1D array attribute containing a single integer
 mlir::LogicalResult extractGridSize(mlir::func::FuncOp func, int& grid_size);

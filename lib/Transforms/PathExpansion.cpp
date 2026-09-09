@@ -176,11 +176,8 @@ mlir::LogicalResult PathExpansionPass::processPipeline(
     return mlir::failure();
   }
 
-  if (mlir::failed(cleanupPrivateOpsInPipeline(new_pipeline))) {
-    new_pipeline->emitError(
-        "path-expansion: failed to clean up private ops in expanded pipeline");
-    return mlir::failure();
-  }
+  mlir::IRRewriter rewriter(new_pipeline);
+  mlir::ktdf::PipelinePrivatizer::canonicalize(rewriter, new_pipeline);
 
   // Erase the original pipeline
   pipeline_op.erase();

@@ -710,10 +710,8 @@ LogicalResult StageCoarseningPass::GenerateTransformedIR(
   }
 
   LDBG(1) << "\n--- Cleaning Up Private Ops ---";
-  if (failed(scheduler::cleanupPrivateOpsInPipeline(new_outer_pipeline_op))) {
-    return new_outer_pipeline_op->emitError(
-        "failed to clean up private ops in pipeline after stage coarsening");
-  }
+  mlir::IRRewriter rewriter(new_outer_pipeline_op);
+  mlir::ktdf::PipelinePrivatizer::canonicalize(rewriter, new_outer_pipeline_op);
 
   LDBG_OS(1, [&](llvm::raw_ostream& os) {
     os << "IR after private cleanup:\n";
