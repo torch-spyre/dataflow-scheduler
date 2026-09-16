@@ -33,6 +33,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -118,13 +119,18 @@ struct LowerLinalgGenericPattern
     }
 
     // ReductionLoopExposure and MapReductionPartials run before this pass and
-    // rewrites every tensor-semantics linalg.generic with reduction dims into
-    // explicit scf.for loops, leaving only parallel iterators here.
-    for (auto iter_type : generic_op.getIteratorTypesArray()) {
-      assert(iter_type == mlir::utils::IteratorType::parallel &&
-             "tensor-semantics linalg.generic with reduction reached "
-             "KTDFLowToDFIR; ReductionLoopExposure+MapReductionPartials should "
-             "have eliminated it");
+    // rewrite every tensor-semantics linalg.generic with reduction dims into
+    // explicit scf.for loops, leaving only parallel iterators here. Nothing
+    // below lowers a reduction, and the elementwise path would take one for an
+    // elementwise op and give a wrong answer, so say so rather than assert it:
+    // an assert is gone in a release build and the fall-through is silent.
+    if (llvm::any_of(generic_op.getIteratorTypesArray(), [](auto iter_type) {
+          return iter_type != mlir::utils::IteratorType::parallel;
+        })) {
+      return generic_op->emitError(
+          "tensor-semantics linalg.generic with a reduction dimension reached "
+          "the DataflowIR lowering; ReductionLoopExposure and "
+          "MapReductionPartials run before it and should have rewritten it");
     }
 
     mlir::Block& body = generic_op.getRegion().front();
