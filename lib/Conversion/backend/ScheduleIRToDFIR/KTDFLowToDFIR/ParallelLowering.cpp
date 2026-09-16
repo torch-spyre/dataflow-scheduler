@@ -30,6 +30,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -99,10 +100,17 @@ static llvm::FailureOr<int64_t> getLayoutMapCoeff(mlir::Operation* vector_op,
 /// of the get_logical_memory_view with start_addr + offset, where offset is a
 /// query_map that maps each unit to: 0 if corelet=0, or layout_map_coeff *
 /// parallel_op_ub / num_instances if corelet=1
-static mlir::LogicalResult updateStartAddress(mlir::Operation* vector_op,
-                                              mlir::BlockArgument loop_iv,
-                                              int64_t parallel_op_ub,
-                                              int64_t num_instances) {
+///
+/// The offset belongs to the view rather than to the operation, and several
+/// operations can share one view -- a result written in two pieces, say. So
+/// \p adjusted records the offset each view has already been given, and a view
+/// is only moved once. A second operation over the same view must agree on the
+/// offset; where it does not, the view would need one address per operation and
+/// this cannot give it one, so it issues an error.
+static mlir::LogicalResult updateStartAddress(
+    mlir::Operation* vector_op, mlir::BlockArgument loop_iv,
+    int64_t parallel_op_ub, int64_t num_instances,
+    llvm::DenseMap<mlir::Operation*, int64_t>& adjusted) {
   // Get the coefficient of loop_iv from getLayoutMapCoeff
   auto coeff_result = getLayoutMapCoeff(vector_op, loop_iv);
   if (mlir::failed(coeff_result)) {
@@ -153,6 +161,18 @@ static mlir::LogicalResult updateStartAddress(mlir::Operation* vector_op,
   assert(parallel_op_ub % num_instances == 0 &&
          "parallel_op_ub must be evenly divisible by num_instances");
   int64_t offset_value = layout_map_coeff * (parallel_op_ub / num_instances);
+
+  // Already moved, by another operation over the same view.
+  auto [record, fresh] = adjusted.try_emplace(mem_view_op, offset_value);
+  if (!fresh) {
+    if (record->second != offset_value) {
+      return vector_op->emitError(
+                 "operations over one memory view disagree on "
+                 "the offset for a corelet, ")
+             << record->second << " and " << offset_value;
+    }
+    return mlir::success();
+  }
 
   // Build the query_map: map each program_unit operand to 0 or offset_value
   // based on corelet
@@ -340,14 +360,17 @@ mlir::LogicalResult lowerParallelOps(mlir::func::FuncOp func) {
                         parallel_ops_list, parallel_ops_list.begin(),
                         std::prev(parallel_ops_list.end()));
 
-    // Update start addresses for all vector load/store operations
+    // Update start addresses for all vector load/store operations. Keyed by the
+    // view, since that is what carries the address and two operations can share
+    // one.
+    llvm::DenseMap<mlir::Operation*, int64_t> adjusted;
     for (auto* user : for_iv.getUsers()) {
       assert(
           (mlir::isa<mlir::agen::VectorLoadOp, mlir::agen::VectorStoreOp>(
               user)) &&
           "loop_iv should only be used in agen.vector_load/store operations");
       if (mlir::failed(updateStartAddress(user, for_iv, parallel_op_ub,
-                                          num_instances))) {
+                                          num_instances, adjusted))) {
         return mlir::failure();
       }
     }
