@@ -28,6 +28,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Operation.h"
@@ -74,6 +75,11 @@ namespace {
   // Accept an index cast. A kernel holds a runtime scalar as index and casts it
   // where it is used -- the base and the stride of an address computation, say.
   if (mlir::isa<mlir::arith::IndexCastUIOp>(op)) {
+    return true;
+  }
+
+  if (mlir::isa<mlir::memref::AllocaOp, mlir::memref::StoreOp,
+                mlir::memref::LoadOp>(op)) {
     return true;
   }
 
