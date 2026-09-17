@@ -57,7 +57,7 @@
 #set2 = affine_set<(d0, d1, d2, d3) : (d0 >= 0, -d0 + 1 >= 0, d1 >= 0, -d1 + 31 >= 0, d2 >= 0, -d2 + 1 >= 0, d3 >= 0, -d3 + 63 >= 0)>
 
 module {
-  ktdf_arch.device @iab_device import("Inputs/iab_device.mlir")
+  ktdf_arch.device @sample_device import("../../../../Dialect/KTDFArch/sample_device.mlir")
 
   module {
     // (%count, %row_stride, %base_addr): neither the arity nor the order lines

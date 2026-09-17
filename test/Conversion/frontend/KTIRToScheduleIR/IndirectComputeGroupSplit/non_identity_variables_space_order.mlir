@@ -44,7 +44,7 @@
 // -- lowered indirect op: per_dim_subscript_maps[0] is zero'd out ("(0)"),
 //    and variables_space_order is forwarded unchanged (the transposed map).
 // CHECK:           ktdp_lowering.construct_indirect_access_tile
-// CHECK-SAME:        (0)
+// CHECK-SAME:        [0, %{{.*}} + %{{.*}}, %{{.*}}]
 // CHECK-SAME:        variables_space_order = {{#map[0-9]+|(d0, d1, d2, d3) -> \(d1, d0, d2, d3\)}}
 
 // ============================================================================
@@ -62,7 +62,7 @@
 #set2 = affine_set<(d0, d1, d2, d3) : (d0 >= 0, -d0 + 1 >= 0, d1 >= 0, -d1 + 31 >= 0, d2 >= 0, -d2 + 1 >= 0, d3 >= 0, -d3 + 63 >= 0)>
 
 module {
-  ktdf_arch.device @iab_device import("Inputs/iab_device.mlir")
+  ktdf_arch.device @sample_device import("../../../../Dialect/KTDFArch/sample_device.mlir")
 
   module {
     func.func @orchestrator() attributes {grid = [1]} {

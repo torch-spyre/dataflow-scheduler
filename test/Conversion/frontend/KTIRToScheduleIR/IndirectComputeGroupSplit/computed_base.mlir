@@ -52,11 +52,16 @@
 
 // CHECK-LABEL: module @local_schedule_0
 // CHECK:         func.func @local_schedule_0
-// CHECK:           ktdp_lowering.construct_memory_view {{.*}}, sizes: [2, 32]
+// CHECK:           %[[C0:.*]] = arith.constant 0 : index
+// CHECK:           %[[IABC0:.*]] = arith.constant 0 : index
+// CHECK:           %[[IAB:.*]] = ktdp_lowering.construct_memory_view %[[IABC0]], sizes: [2, 32], strides: [32, 1]
 // CHECK-SAME:        "IAB"
-// CHECK:           ktdp.construct_memory_view {{.*}}, sizes: [64, 2, 64]
+// CHECK:           %[[DATAC0:.*]] = arith.constant 0 : index
+// CHECK:           %[[DATA:.*]] = ktdp.construct_memory_view %[[DATAC0]], sizes: [64, 2, 64]
 // CHECK:           ktdp_lowering.construct_indirect_access_tile
-// CHECK-SAME:        base_ptr =
+// CHECK-SAME:        intermediate_variables(%[[A5:[^,]*]], %[[A6:[^,]*]], %[[A7:[^,]*]], %[[A8:[^)]*]])
+// CHECK-SAME:        base_ptr = %[[IAB]][%[[A5]], %[[A6]]]
+// CHECK-SAME:        %[[DATA]][0, %[[C0]] + %[[A7]], %[[A8]]]
 
 // ============================================================================
 // Input IR — $base CMV offset is computed via arith.addi
@@ -68,7 +73,7 @@
 #set2 = affine_set<(d0, d1, d2, d3) : (d0 >= 0, -d0 + 1 >= 0, d1 >= 0, -d1 + 31 >= 0, d2 >= 0, -d2 + 1 >= 0, d3 >= 0, -d3 + 63 >= 0)>
 
 module {
-  ktdf_arch.device @iab_device import("Inputs/iab_device.mlir")
+  ktdf_arch.device @sample_device import("../../../../Dialect/KTDFArch/sample_device.mlir")
 
   module {
     // Orchestrator takes a byte offset to add to the base address.

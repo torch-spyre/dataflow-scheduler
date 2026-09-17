@@ -151,10 +151,8 @@ ParseResult ConstructIndirectAccessTileOp::parse(OpAsmParser& parser,
         SmallVector<OpAsmParser::UnresolvedOperand> dimOps;
         SmallVector<OpAsmParser::UnresolvedOperand> symOps;
         AffineExpr expr;
-        (void)parser.parseOptionalLParen();
         if (parser.parseAffineExprOfSSAIds(dimOps, symOps, expr))
           return failure();
-        (void)parser.parseOptionalRParen();
 
         SmallVector<OpAsmParser::UnresolvedOperand> mapOps(dimOps);
         mapOps.append(symOps.begin(), symOps.end());
@@ -292,14 +290,12 @@ void ConstructIndirectAccessTileOp::print(OpAsmPrinter& p) {
   });
   p << "]";
 
-  // %base[(affine-expr), ...]
+  // %base[affine-expr, ...]
   p << " " << getBase() << "[";
   auto maps = getPerDimSubscriptMaps();
   for (unsigned i = 0, e = maps.size(); i < e; ++i) {
     if (i > 0) p << ", ";
-    p << "(";
     p.printAffineMapOfSSAIds(llvm::cast<AffineMapAttr>(maps[i]), allVars);
-    p << ")";
   }
   p << "]";
 

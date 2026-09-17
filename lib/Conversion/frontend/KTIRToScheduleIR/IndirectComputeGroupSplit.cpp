@@ -322,14 +322,15 @@ static Value createFullAccessTile(OpBuilder& builder, Location loc,
 
 /// What the device description says about the indirect address buffer, resolved
 /// once per pass run rather than once per candidate.
-struct AddressBufferLayout {
+struct AddressBufferInfo {
   /// IAB entry type as declared by the arch spec, e.g. si32.  The index
   /// memref's element type must match it exactly.
   Type entry_type;
   /// Signless form of `entry_type`, e.g. i32: the type the generated address
   /// arithmetic and the address buffer's own elements use.
   IntegerType compute_type;
-  /// Memory resource the address buffer is allocated from.
+  /// Memory resource the address buffer is allocated from: the root
+  /// ancestor of the node that carries the indirect_address_buffer feature.
   ResourceType global_resource;
 };
 
@@ -401,57 +402,49 @@ static bool isOrchestratorModule(ModuleOp child) {
   return !child.getSymName().has_value();
 }
 
-/// Collects the indirect access tile of every extracted child module of @p top.
+/// Collects the indirect access tile of every function defined in every
+/// extracted child module of @p top.  A child module may define more than one
+/// function; each is considered independently.
 ///
-/// Modules without one are skipped silently: the pass is a no-op on them.
+/// Functions without one are skipped silently: the pass is a no-op on them.
 static LogicalResult collectCandidateOps(
     ModuleOp top,
     SmallVectorImpl<ktdp::ConstructIndirectAccessTilesOp>& candidate_ops) {
   for (auto child : top.getOps<ModuleOp>()) {
     if (isOrchestratorModule(child)) continue;
 
-    // Each extracted child module contains exactly one FuncOp definition
-    // (forward declarations are not counted).
-    auto funcs = child.getOps<func::FuncOp>();
-    unsigned defined_count = 0;
-    func::FuncOp func;
-    for (auto f : funcs) {
-      if (!f.getBody().empty()) {
-        defined_count++;
-        func = f;
-      }
+    for (auto func : child.getOps<func::FuncOp>()) {
+      // Forward declarations carry no body to search.
+      if (func.getBody().empty()) continue;
+
+      // At most one indirect op per function is supported, so the walk stops
+      // as soon as a second is seen rather than collecting every op only to
+      // reject the function.
+      ktdp::ConstructIndirectAccessTilesOp indirect_op;
+      bool multiple_indirect_ops = false;
+      func.walk([&](ktdp::ConstructIndirectAccessTilesOp op) {
+        if (indirect_op) {
+          multiple_indirect_ops = true;
+          return WalkResult::interrupt();
+        }
+        indirect_op = op;
+        return WalkResult::advance();
+      });
+
+      if (multiple_indirect_ops)
+        return func->emitError(PASS_NAME
+                               ": more than one indirect tensor in function '")
+               << func.getName() << "' is not supported";
+
+      if (indirect_op) candidate_ops.push_back(indirect_op);
     }
-    if (defined_count != 1)
-      return child->emitError(PASS_NAME
-                              ": child modules should have one function");
-
-    // At most one indirect op per function is supported, so the walk stops as
-    // soon as a second is seen rather than collecting every op only to reject
-    // the function.
-    ktdp::ConstructIndirectAccessTilesOp indirect_op;
-    bool multiple_indirect_ops = false;
-    func.walk([&](ktdp::ConstructIndirectAccessTilesOp op) {
-      if (indirect_op) {
-        multiple_indirect_ops = true;
-        return WalkResult::interrupt();
-      }
-      indirect_op = op;
-      return WalkResult::advance();
-    });
-
-    if (multiple_indirect_ops)
-      return func->emitError(PASS_NAME
-                             ": more than one indirect tensor in function '")
-             << func.getName() << "' is not supported";
-
-    if (indirect_op) candidate_ops.push_back(indirect_op);
   }
   return success();
 }
 
 /// Resolves the address buffer's element type and home memory from the device
 /// description.
-static FailureOr<AddressBufferLayout> resolveAddressBufferLayout(
+static FailureOr<AddressBufferInfo> resolveAddressBufferInfo(
     ModuleOp top, const arch_view::MemoryTree& memory_tree,
     ktdf_arch::DeviceManager& device_manager) {
   const auto* device = device_manager.getOrImportDevice();
@@ -462,31 +455,19 @@ static FailureOr<AddressBufferLayout> resolveAddressBufferLayout(
   const auto& resource_kinds =
       device_manager.getOrCreateView<ktdf_arch::ResourceKinds>(*device);
 
-  // The address buffer is allocated from global memory, the root of the memory
-  // tree.  A device that imported successfully always describes one.
-  SmallVector<arch_view::MemoryTree::NodeId> nodes = memory_tree.getRootNodes();
-  assert(!nodes.empty() &&
-         "MemoryTree has no root node; device specification is incomplete");
-  auto global_node = memory_tree.getNode(nodes[0]);
-  assert(global_node.has_value() &&
-         "MemoryTree root node ID has no corresponding MemoryNode");
-
-  // Walk the tree breadth-first — `nodes` already holds the roots — and stop at
-  // the first (topmost) node that carries the indirect_address_buffer feature.
-  //
-  // Following each node's children is both cheaper and more predictable than
-  // querying getNodesAtDepth() per level: that helper rescans every node and
-  // re-derives its depth by walking up to the root, and it reports nodes in
-  // DenseMap order rather than in tree order.
+  // Find the first node (in MemoryTree's iteration order) that carries the
+  // indirect_address_buffer feature. There may be more than one such node;
+  // for now we just take the first.
   ktdf_arch::feature::IndirectAddressBuffer iab_feature;
-  for (unsigned i = 0; i < nodes.size(); ++i) {
-    auto node = memory_tree.getNode(nodes[i]);
-    if (!node) continue;
+  std::optional<arch_view::MemoryTree::MemoryNode> iab_node;
+  for (const auto& node : memory_tree) {
     iab_feature =
         resource_kinds.getFeature<ktdf_arch::feature::IndirectAddressBuffer>(
-            node->memory_resource);
-    if (iab_feature) break;
-    nodes.append(node->children.begin(), node->children.end());
+            node.memory_resource);
+    if (iab_feature) {
+      iab_node = node;
+      break;
+    }
   }
 
   if (!iab_feature)
@@ -516,8 +497,8 @@ static FailureOr<AddressBufferLayout> resolveAddressBufferLayout(
   LDBG(1) << "IAB entry type " << entry_type << ", address arithmetic in "
           << compute_type;
 
-  return AddressBufferLayout{entry_type, compute_type,
-                             global_node->memory_resource};
+  return AddressBufferInfo{entry_type, compute_type,
+                           iab_node->getRoot(memory_tree).memory_resource};
 }
 
 /// Locates the orchestrator module, its function and every call that function
@@ -687,7 +668,7 @@ static SmallVector<Value> collectForwardedArgs(
 /// were.
 static FailureOr<SplitCandidate> analyzeCandidate(
     ktdp::ConstructIndirectAccessTilesOp indirect_op,
-    const AddressBufferLayout& layout, const OrchestratorInfo& orchestrator) {
+    const AddressBufferInfo& layout, const OrchestratorInfo& orchestrator) {
   SplitCandidate candidate;
   candidate.indirect_op = indirect_op;
   candidate.func = indirect_op->getParentOfType<func::FuncOp>();
@@ -1192,20 +1173,20 @@ static void eraseNowDeadOp(Operation* op) {
 /// before the first mutation; analyzeCandidate() has already rejected
 /// everything else, so nothing past that point needs an escape route.
 static LogicalResult splitCandidate(const SplitCandidate& candidate,
-                                    const AddressBufferLayout& layout,
+                                    const AddressBufferInfo& addr_info,
                                     OrchestratorInfo& orchestrator,
                                     SymbolTable& top_sym_table,
                                     MemoryTrackerAnalysis& memory_tracker) {
   func::FuncOp func = candidate.func;
 
   // One address-buffer entry per index, aligned to an entry: an entry's byte
-  // width doubles as its alignment requirement.  resolveAddressBufferLayout()
+  // width doubles as its alignment requirement.  resolveAddressBufferInfo()
   // rejected any non-integer entry type, so the size is known here.
-  const size_t entry_bytes = *tryGetSizeInBytes(layout.compute_type);
+  const size_t entry_bytes = *tryGetSizeInBytes(addr_info.compute_type);
   const size_t size_bytes =
       static_cast<size_t>(candidate.idx_type.getNumElements()) * entry_bytes;
-  auto addr_buf_base =
-      memory_tracker.allocate(layout.global_resource, size_bytes, entry_bytes);
+  auto addr_buf_base = memory_tracker.allocate(addr_info.global_resource,
+                                               size_bytes, entry_bytes);
   if (!addr_buf_base) {
     std::string reason;
     llvm::handleAllErrors(addr_buf_base.takeError(),
@@ -1240,11 +1221,11 @@ static LogicalResult splitCandidate(const SplitCandidate& candidate,
 
   std::string idx_to_addr_func_name = buildIdxToAddrModule(
       candidate.module, top_sym_table, candidate.idx_view, candidate.base_addr,
-      stride, candidate.forwarded_args, *addr_buf_base, layout.compute_type);
+      stride, candidate.forwarded_args, *addr_buf_base, addr_info.compute_type);
 
   rewriteGatherScatterModule(candidate.indirect_op, candidate.idx_view,
                              *addr_buf_base, candidate.indir_dim,
-                             layout.compute_type,
+                             addr_info.compute_type,
                              candidate.ind_addr_buf_dim_positions);
 
   assert(candidate.call_site &&
@@ -1288,9 +1269,9 @@ struct IndirectComputeGroupSplitPass
 
     auto& memory_tracker = getAnalysis<MemoryTrackerAnalysis>();
     auto& device_manager = getAnalysis<ktdf_arch::DeviceManager>();
-    FailureOr<AddressBufferLayout> layout = resolveAddressBufferLayout(
+    FailureOr<AddressBufferInfo> addr_info = resolveAddressBufferInfo(
         top, memory_tracker.getMemoryTree(), device_manager);
-    if (failed(layout)) return signalPassFailure();
+    if (failed(addr_info)) return signalPassFailure();
 
     FailureOr<OrchestratorInfo> orchestrator_or_err = resolveOrchestrator(top);
     if (failed(orchestrator_or_err)) return signalPassFailure();
@@ -1302,9 +1283,9 @@ struct IndirectComputeGroupSplitPass
 
     for (ktdp::ConstructIndirectAccessTilesOp indirect_op : candidate_ops) {
       FailureOr<SplitCandidate> candidate =
-          analyzeCandidate(indirect_op, *layout, orchestrator);
+          analyzeCandidate(indirect_op, *addr_info, orchestrator);
       if (failed(candidate)) return signalPassFailure();
-      if (failed(splitCandidate(*candidate, *layout, orchestrator,
+      if (failed(splitCandidate(*candidate, *addr_info, orchestrator,
                                 top_sym_table, memory_tracker)))
         return signalPassFailure();
     }

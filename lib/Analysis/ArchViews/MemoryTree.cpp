@@ -155,6 +155,18 @@ std::optional<MemoryTree::MemoryNode> MemoryTree::getNode(
   return getNode(it->second);
 }
 
+MemoryTree::MemoryNode MemoryTree::MemoryNode::getRoot(
+    const MemoryTree& tree) const {
+  MemoryNode current = *this;
+  while (current.parent.has_value()) {
+    auto parent_node = tree.getNode(*current.parent);
+    assert(parent_node.has_value() &&
+           "MemoryTree node has parent ID with no corresponding MemoryNode");
+    current = *parent_node;
+  }
+  return current;
+}
+
 std::optional<MemoryTree::NodeId> MemoryTree::getNodeIdForResource(
     ResourceType memory_resource) const {
   // First check direct mapping (canonical resource)

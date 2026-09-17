@@ -107,7 +107,7 @@
 module {
   // Inline device declaration with indirect_address_buffer feature (entry_type = si32).
   // The pass reads the IAB entry type from this node to derive computeType = i32.
-  ktdf_arch.device @iab_device import("Inputs/iab_device.mlir")
+  ktdf_arch.device @sample_device import("../../../../Dialect/KTDFArch/sample_device.mlir")
 
   module {
     // Orchestrator child module (no sym_name → identified as orchestrator).

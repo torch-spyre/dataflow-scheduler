@@ -114,7 +114,7 @@
    d6 >= 0, -d6 + 31 >= 0)>
 
 module {
-  ktdf_arch.device @iab_device import("Inputs/iab_device.mlir")
+  ktdf_arch.device @sample_device import("../../../../Dialect/KTDFArch/sample_device.mlir")
 
   module {
     // Orchestrator child module (no sym_name).
