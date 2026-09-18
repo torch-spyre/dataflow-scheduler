@@ -48,6 +48,7 @@ void scheduler::buildKTIRFrontendPipeline(
 
   pm.addPass(createKTIRLegalityCheckPass());
   pm.addPass(createComputeGroupExtractionPass());
+  pm.addPass(createIndirectComputeGroupSplitPass());
   pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
 }
 

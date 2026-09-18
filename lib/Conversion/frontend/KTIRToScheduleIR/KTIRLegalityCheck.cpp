@@ -115,13 +115,6 @@ struct KTIRLegalityCheckPass
         failed = true;
         return mlir::WalkResult::interrupt();
       }
-      if (mlir::isa<mlir::ktdp::ConstructIndirectAccessTilesOp>(op)) {
-        op->emitError(
-            "V1 does not support ktdp.construct_indirect_access_tile");
-        failed = true;
-        return mlir::WalkResult::interrupt();
-      }
-
       // Rule 2: compute ops.
       // 2a: named linalg ops (anything in the linalg dialect that is not a
       // generic/yield). Allow add/mul/sub/reduce; reject other named ops.

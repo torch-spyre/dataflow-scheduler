@@ -19,6 +19,7 @@
 // CHECK-NEXT:   ensure-device-declaration
 // CHECK-NEXT:   ktir-legality-check
 // CHECK-NEXT:   compute-group-extraction
+// CHECK-NEXT:   indirect-compute-group-split
 // CHECK-NEXT:   construct-three-stage-pipeline
 // CHECK-NEXT:   builtin.module(
 // CHECK-NEXT:   func.func(

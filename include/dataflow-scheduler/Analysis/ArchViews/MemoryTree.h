@@ -56,10 +56,53 @@ class MemoryTree : public mlir::ktdf_arch::DeviceView {
     llvm::SmallVector<NodeId> children;  // Child memories in the hierarchy
     std::optional<size_t> capacity_in_bytes;
     std::optional<size_t> reserved_in_bytes;
+
+    /// Climbs @p tree from this node up through its ancestors and returns
+    /// the root node (the ancestor with no parent). Returns a copy of this
+    /// node if it is itself a root.
+    MemoryNode getRoot(const MemoryTree& tree) const;
   };
 
   /// Construct a MemoryTree for @p device .
   explicit MemoryTree(const mlir::ktdf_arch::Device& device);
+
+  /// Iterator over all memory nodes in the tree.
+  ///
+  /// Iteration order is unspecified (it follows the underlying node
+  /// storage, not parent/child order) — use this to visit every node
+  /// without caring about tree structure.
+  class const_iterator {
+   public:
+    explicit const_iterator(
+        llvm::DenseMap<NodeId, MemoryNode>::const_iterator it)
+        : it_(it) {}
+
+    const MemoryNode& operator*() const { return it_->second; }
+    const MemoryNode* operator->() const { return &it_->second; }
+
+    const_iterator& operator++() {
+      ++it_;
+      return *this;
+    }
+    const_iterator operator++(int) {
+      const_iterator tmp = *this;
+      ++(*this);
+      return tmp;
+    }
+
+    bool operator==(const const_iterator& other) const {
+      return it_ == other.it_;
+    }
+    bool operator!=(const const_iterator& other) const {
+      return !(*this == other);
+    }
+
+   private:
+    llvm::DenseMap<NodeId, MemoryNode>::const_iterator it_;
+  };
+
+  const_iterator begin() const { return const_iterator(nodes_.begin()); }
+  const_iterator end() const { return const_iterator(nodes_.end()); }
 
   /// Get a memory node by its ID
   std::optional<MemoryNode> getNode(NodeId node_id) const;
