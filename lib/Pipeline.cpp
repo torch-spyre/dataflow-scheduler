@@ -23,6 +23,7 @@
 #include "dataflow-scheduler/Pipeline.h"
 
 #include <mlir/Dialect/Func/IR/FuncOps.h>
+#include <mlir/Dialect/Linalg/Passes.h>
 #include <mlir/IR/BuiltinOps.h>
 #include <mlir/Pass/PassManager.h>
 #include <mlir/Transforms/Passes.h>
@@ -48,6 +49,13 @@ void scheduler::buildKTIRFrontendPipeline(
 
   pm.addPass(createKTIRLegalityCheckPass());
   pm.addPass(createComputeGroupExtractionPass());
+  {
+    auto& nested = pm.nest<mlir::ModuleOp>().nest<mlir::func::FuncOp>();
+    nested.addPass(mlir::createConvertElementwiseToLinalgPass());
+    nested.addPass(mlir::createLinalgMorphOpsPass(
+        {.categoryToGeneric = true, .namedToGeneric = true}));
+    nested.addPass(createFuseLinalgPass());
+  }
   pm.addPass(createConstructThreeStagePipelinePass(scheduler_ctx));
 }
 

@@ -61,4 +61,25 @@ def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
   ];
 }
 
+def FuseLinalgPass : Pass<"fuse-linalg", ""> {
+  let summary = "Fuses `linalg.generic` operations";
+  let description = [{
+    Performs mapping-aware fusion of `linalg.generic` operations. Currently,
+    only elementiwse operations are considered for fusion.
+
+    Mapping awareness means that `linalg.generic` operations which are mapped,
+    or imply a mapping based on their contents, will only be fused with other
+    ops that have compatible mappings. Mappings are compatible if they refer to
+    the exact same resources.
+
+    As a result of this pass, implied mappings will be propagated upwards
+    directly onto the `linalg.generic` operations that have them.
+  }];
+  let dependentDialects = [
+    "mlir::ktdf_arch::KTDFArchDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::tensor::TensorDialect"
+  ];
+}
+
 #endif // DATAFLOW_SCHEDULER_CONVERSION_KTIRTOSCHEDULEIR_PASSES_TD

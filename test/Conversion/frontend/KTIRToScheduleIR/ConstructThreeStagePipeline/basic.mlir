@@ -1,4 +1,4 @@
-// RUN: dataflow-scheduler-opt --construct-three-stage-pipeline %s | FileCheck %s
+// RUN: dataflow-scheduler-opt --convert-elementwise-to-linalg --linalg-morph-ops="category-to-generic=true named-to-generic=true" --fuse-linalg --construct-three-stage-pipeline %s | FileCheck %s
 
 // CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1) -> (d0, d1)>
 // CHECK: #[[$ATTR_1:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>

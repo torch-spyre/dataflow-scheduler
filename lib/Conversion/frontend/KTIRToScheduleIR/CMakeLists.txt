@@ -1,6 +1,7 @@
 add_dataflow_scheduler_library(DataflowSchedulerKTIRToScheduleIR
     ComputeGroupExtraction.cpp
     ConstructThreeStagePipeline.cpp
+    FuseLinalg.cpp
     KTIRLegalityCheck.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -32,5 +33,6 @@ add_dataflow_scheduler_library(DataflowSchedulerKTIRToScheduleIR
     MLIRMathDialect
     MLIRPass
     MLIRSCFDialect
+    MLIRTensorDialect
     MLIRTransformUtils
 )

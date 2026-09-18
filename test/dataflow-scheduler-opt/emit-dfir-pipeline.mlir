@@ -19,6 +19,13 @@
 // CHECK-NEXT:   ensure-device-declaration
 // CHECK-NEXT:   ktir-legality-check
 // CHECK-NEXT:   compute-group-extraction
+// CHECK-NEXT:   builtin.module(
+// CHECK-NEXT:   func.func(
+// CHECK-NEXT:   convert-elementwise-to-linalg,
+// CHECK-NEXT:   linalg-morph-ops{category-to-generic=true generic-to-named=false named-to-category=false named-to-generic=true},
+// CHECK-NEXT:   fuse-linalg
+// CHECK-NEXT:   )
+// CHECK-NEXT:   )
 // CHECK-NEXT:   construct-three-stage-pipeline
 // CHECK-NEXT:   builtin.module(
 // CHECK-NEXT:   func.func(
