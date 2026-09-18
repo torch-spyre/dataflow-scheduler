@@ -57,8 +57,6 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDFTypes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/NodeLinks.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Utils/CustomLinalgTiling.h"
@@ -772,23 +770,6 @@ void ConstructThreeStagePipelinePass::createPipeline(
   // Create ktdf.pipeline operation at the start of the loop body.
   mlir::OpBuilder builder(innermost_loop.getBodyRegion());
 
-  auto incoming = mlir::ktdf_arch::getLink(
-      mlir::ktdf_arch::LinkDirection::Incoming, compute);
-  auto outgoing = mlir::ktdf_arch::getLink(
-      mlir::ktdf_arch::LinkDirection::Outgoing, compute);
-  assert(incoming && outgoing);
-
-  // Query the interface type from memory to the compute unit
-  if (!incoming.getFeature<mlir::ktdf_arch::feature::Queue>().isOrdered() ||
-      !outgoing.getFeature<mlir::ktdf_arch::feature::Queue>().isOrdered()) {
-    innermost_loop.emitError(
-        "ConstructThreeStagePipeline: compute unit link does not use an "
-        "ordered "
-        "queue; only ordered queues are supported");
-    signalPassFailure();
-    return;
-  }
-
   mlir::ktdf::PipelineOp::create(
       builder, innermost_loop.getLoc(),
       [&](mlir::OpBuilder& builder, mlir::Location loc) {
@@ -982,39 +963,6 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
 
   // Get the appropriate operation list
   size_t op_count = is_load ? load_ops_.size() : store_ops_.size();
-
-  auto incoming = mlir::ktdf_arch::getLink(
-      mlir::ktdf_arch::LinkDirection::Incoming, compute);
-  auto outgoing = mlir::ktdf_arch::getLink(
-      mlir::ktdf_arch::LinkDirection::Outgoing, compute);
-  if (!incoming || !outgoing) {
-    getOperation()->emitError(
-        "ConstructThreeStagePipeline: compute resource has no incoming or "
-        "outgoing link in device description");
-    signalPassFailure();
-    return;
-  }
-  const auto granularity_in =
-      incoming.getProperty<mlir::ktdf_arch::TransferGranularityAttr>();
-  const auto granularity_out =
-      outgoing.getProperty<mlir::ktdf_arch::TransferGranularityAttr>();
-  if (!granularity_in || !granularity_out) {
-    getOperation()->emitError(
-        "ConstructThreeStagePipeline: compute resource link is missing a "
-        "TransferGranularity property");
-    signalPassFailure();
-    return;
-  }
-  const auto max_in = maxOrDefault(granularity_in.asArrayRef());
-  const auto max_out = maxOrDefault(granularity_out.asArrayRef());
-  if (max_in != max_out) {
-    getOperation()->emitError(
-        "ConstructThreeStagePipeline: incoming and outgoing transfer "
-        "granularities differ (")
-        << max_in << " vs " << max_out << ")";
-    signalPassFailure();
-    return;
-  }
 
   // The post-fusion linalg op whose indexing_maps describe how each
   // load/store operand maps onto the iteration space.
