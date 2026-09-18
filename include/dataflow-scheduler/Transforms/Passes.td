@@ -325,6 +325,35 @@ def ScalarBroadcastLegalizationPass
   let constructor = "::scheduler::createScalarBroadcastLegalizationPass()";
 }
 
+def IndirectAddrBufFillLegalizationPass
+    : Pass<"indirect-addr-buf-fill-legalization", "mlir::ModuleOp"> {
+  let summary = "Stage indirect address buffer fills through a reachable memory";
+  let description = [{
+    Runs after path expansion. A `ktdf.data_transfer` that fills an indirect
+    address buffer (a memory node carrying
+    `ktdf_arch.feature.indirect_address_buffer`) is executed by the unit its
+    stage is mapped to, so it can only read from a memory that has a datapath
+    into that unit. A store unit, for instance, reads from L1 and cannot fill
+    the buffer straight from global memory.
+
+    For every illegal fill this pass:
+      1. Allocates a buffer in the memory the filling unit does read from,
+         adding it to the pipeline's `ktdf.private` resources.
+      2. Copies the index data into that buffer from an earlier stage whose
+         unit has a datapath from the original memory to the staging memory,
+         under the same guard the fill carries.
+      3. Repoints the fill at the staging buffer.
+
+    Fills whose source memory already feeds the filling unit are left alone.
+  }];
+  let constructor =
+      "::scheduler::createIndirectAddrBufFillLegalizationPass()";
+  let dependentDialects = [
+    "mlir::memref::MemRefDialect",
+    "mlir::scf::SCFDialect"
+  ];
+}
+
 def EnsureDeviceDeclarationPass
     : Pass<"ensure-device-declaration", "mlir::ModuleOp"> {
   let summary = "Ensure that there is a ktdf_arch.device declaration";

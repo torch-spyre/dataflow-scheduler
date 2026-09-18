@@ -74,6 +74,9 @@ void scheduler::buildSchedulerOptimizationPipeline(
     nested.addPass(createHoistConstantStoragePass());
   }
   pm.addPass(createPathExpansionPass(scheduler_ctx));
+  // Path expansion materializes the stages and their units, which is what says
+  // whether an indirect address buffer fill is on a memory its unit can read.
+  pm.addPass(createIndirectAddrBufFillLegalizationPass());
   pm.addPass(createScalarBroadcastLegalizationPass());
   pm.addPass(createNormalizeSCFForLoopsPass());
   // Canonicalize to get rid of intervening code and single iteration loops
