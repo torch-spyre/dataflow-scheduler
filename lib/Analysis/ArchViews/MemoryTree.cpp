@@ -155,11 +155,10 @@ std::optional<MemoryTree::MemoryNode> MemoryTree::getNode(
   return getNode(it->second);
 }
 
-MemoryTree::MemoryNode MemoryTree::MemoryNode::getRoot(
-    const MemoryTree& tree) const {
-  MemoryNode current = *this;
+MemoryTree::MemoryNode MemoryTree::getRootOf(const MemoryNode& node) const {
+  MemoryNode current = node;
   while (current.parent.has_value()) {
-    auto parent_node = tree.getNode(*current.parent);
+    auto parent_node = getNode(*current.parent);
     assert(parent_node.has_value() &&
            "MemoryTree node has parent ID with no corresponding MemoryNode");
     current = *parent_node;

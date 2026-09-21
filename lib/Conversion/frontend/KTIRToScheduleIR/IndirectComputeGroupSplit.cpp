@@ -340,7 +340,6 @@ struct AddressBufferInfo {
 /// orchestrator at all, which is how a bare test input arrives.
 struct OrchestratorInfo {
   ModuleOp module;
-  func::FuncOp func;
   /// Call site keyed by callee — each function can only be called once.
   DenseMap<StringAttr, func::CallOp> call_sites;
   /// Symbol table of `module`, kept alive so that the forward declaration added
@@ -415,7 +414,7 @@ static LogicalResult collectCandidateOps(
 
     for (auto func : child.getOps<func::FuncOp>()) {
       // Forward declarations carry no body to search.
-      if (func.getBody().empty()) continue;
+      if (func.isExternal()) continue;
 
       // At most one indirect op per function is supported, so the walk stops
       // as soon as a second is seen rather than collecting every op only to
@@ -498,7 +497,7 @@ static FailureOr<AddressBufferInfo> resolveAddressBufferInfo(
           << compute_type;
 
   return AddressBufferInfo{entry_type, compute_type,
-                           iab_node->getRoot(memory_tree).memory_resource};
+                           memory_tree.getRootOf(*iab_node).memory_resource};
 }
 
 /// Locates the orchestrator module, its function and every call that function
@@ -518,24 +517,10 @@ static FailureOr<OrchestratorInfo> resolveOrchestrator(ModuleOp top) {
     return orchestrator;
   }
 
-  // The orchestrator has exactly one FuncOp definition (forward declarations
-  // are not counted).
-  auto funcs = orchestrator.module.getOps<func::FuncOp>();
-  unsigned defined_count = 0;
-  for (auto f : funcs) {
-    if (!f.getBody().empty()) {
-      defined_count++;
-      orchestrator.func = f;
-    }
-  }
-  if (defined_count != 1)
-    return orchestrator.module->emitError(
-        PASS_NAME ": orchestrator module should have one function");
-
   // Each function can only be called once, as the address buffer is filled by a
   // single @<name>_idx_to_addr call placed before that call site.
   LogicalResult walk_status = success();
-  orchestrator.func.walk([&](func::CallOp call_op) {
+  orchestrator.module.walk([&](func::CallOp call_op) {
     StringAttr callee = call_op.getCalleeAttr().getAttr();
     if (orchestrator.call_sites.contains(callee)) {
       call_op->emitError(PASS_NAME ": the orchestrator calls '")
@@ -1228,10 +1213,12 @@ static LogicalResult splitCandidate(const SplitCandidate& candidate,
                              addr_info.compute_type,
                              candidate.ind_addr_buf_dim_positions);
 
-  assert(candidate.call_site &&
-         "Candidate must have a call site in the orchestrator function");
-  updateOrchestrator(*orchestrator.symbol_table, candidate.call_site, func,
-                     idx_to_addr_func_name, candidate.forwarded_args);
+  if (candidate.call_site)
+    updateOrchestrator(*orchestrator.symbol_table, candidate.call_site, func,
+                       idx_to_addr_func_name, candidate.forwarded_args);
+  else
+    LDBG(1) << "no orchestrator call site for @" << func.getName()
+            << "; skipping orchestrator update";
 
   // Drop the scaffolding this candidate no longer needs: the stride constant,
   // which lives on in the orchestrator's clone, and the index memory view,
