@@ -62,6 +62,28 @@ int findOutermostLegalTargetDepth(::DataTransferOp transfer,
   return best;
 }
 
+/// Collect the indirect-address-buffer memrefs addressed by the
+/// `ind_data_transfer` ops in @p stage .
+///
+/// A `data_transfer` writing into one of them is the IAB fill for that
+/// indirect transfer. The fill must stay in the same stage as the transfer it
+/// feeds -- the buffer is local state of the hardware unit running the stage
+/// and does not survive a stage boundary -- so it is never a hoist candidate.
+/// Naming the buffer rather than the stage keeps unrelated transfers that
+/// StageCoarsening merges into this stage hoistable.
+llvm::SmallPtrSet<Value, 2> getIndAddrBufs(::StageOp stage) {
+  llvm::SmallPtrSet<Value, 2> bufs;
+  stage.walk([&](::IndDataTransferOp transfer) {
+    if (Value src = transfer.getIndSrcMemref()) {
+      bufs.insert(src);
+    }
+    if (Value dst = transfer.getIndDstMemref()) {
+      bufs.insert(dst);
+    }
+  });
+  return bufs;
+}
+
 }  // namespace
 
 auto mlir::ktdf::reuse::findFirstCandidate(::PipelineOp pipeline)
@@ -83,8 +105,10 @@ auto mlir::ktdf::reuse::findFirstCandidate(::PipelineOp pipeline)
     if (!stage) {
       continue;
     }
+    const llvm::SmallPtrSet<Value, 2> ind_addr_bufs = getIndAddrBufs(stage);
     stage.walk([&](::DataTransferOp transfer) {
-      if (transfer.isDestFifo()) {
+      if (transfer.isDestFifo() ||
+          ind_addr_bufs.contains(transfer.getDestination())) {
         return WalkResult::advance();
       }
       int depth = findOutermostLegalTargetDepth(transfer, scope);

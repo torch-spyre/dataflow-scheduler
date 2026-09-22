@@ -96,6 +96,14 @@ llvm::FailureOr<mlir::Value> resolveUnitFromFifoAttr(
 mlir::IntegerSet buildIntegerSetFromSizes(mlir::MLIRContext* ctx,
                                           llvm::ArrayRef<int64_t> sizes);
 
+/// Extract the per-dimension extents from a box-form IntegerSet -- the inverse
+/// of buildIntegerSetFromSizes. Each dimension must be constrained either by an
+/// equality `d_i == 0` (extent 1) or by the pair `d_i >= 0`, `(N-1) - d_i >= 0`
+/// (extent N). Fails if @p set is not in that form, so callers can diagnose
+/// rather than assert.
+llvm::FailureOr<llvm::SmallVector<int64_t>> getSizesFromIntegerSet(
+    mlir::IntegerSet set);
+
 /// Emit an agen.vector_load that reads all elements of `memref` into a flat
 /// vector.  The insertion point of `rewriter` must be set by the caller.
 mlir::Value emitVectorLoad(mlir::OpBuilder& builder, mlir::Location loc,

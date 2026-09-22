@@ -64,6 +64,96 @@ mlir::IntegerSet scheduler::buildIntegerSetFromSizes(
   return mlir::IntegerSet::get(sizes.size(), 0, exprs, eq_flags);
 }
 
+namespace {
+
+/// Decompose @p expr into `coeff * d_dim + constant`, which is the shape every
+/// constraint of a box-form set has. Returns false for anything else: a second
+/// dimension, a symbol, a non-unit coefficient, or a non-affine term.
+bool decomposeSingleDim(mlir::AffineExpr expr, int64_t& coeff, unsigned& dim,
+                        int64_t& constant) {
+  coeff = 0;
+  constant = 0;
+  bool seen_dim = false;
+
+  // (sub-expression, sign it carries) pairs, flattening sums and +/-1 products.
+  llvm::SmallVector<std::pair<mlir::AffineExpr, int64_t>, 4> worklist{
+      {expr, 1}};
+  while (!worklist.empty()) {
+    auto [sub, sign] = worklist.pop_back_val();
+
+    if (auto constant_expr = mlir::dyn_cast<mlir::AffineConstantExpr>(sub)) {
+      constant += sign * constant_expr.getValue();
+      continue;
+    }
+    if (auto dim_expr = mlir::dyn_cast<mlir::AffineDimExpr>(sub)) {
+      if (seen_dim && dim != dim_expr.getPosition()) return false;
+      dim = dim_expr.getPosition();
+      seen_dim = true;
+      coeff += sign;
+      continue;
+    }
+
+    auto binary = mlir::dyn_cast<mlir::AffineBinaryOpExpr>(sub);
+    if (!binary) return false;
+    if (binary.getKind() == mlir::AffineExprKind::Add) {
+      worklist.emplace_back(binary.getLHS(), sign);
+      worklist.emplace_back(binary.getRHS(), sign);
+      continue;
+    }
+    if (binary.getKind() != mlir::AffineExprKind::Mul) return false;
+    auto factor = mlir::dyn_cast<mlir::AffineConstantExpr>(binary.getRHS());
+    if (!factor || (factor.getValue() != 1 && factor.getValue() != -1))
+      return false;
+    worklist.emplace_back(binary.getLHS(), sign * factor.getValue());
+  }
+
+  return seen_dim;
+}
+
+}  // namespace
+
+llvm::FailureOr<llvm::SmallVector<int64_t>> scheduler::getSizesFromIntegerSet(
+    mlir::IntegerSet set) {
+  if (set.getNumSymbols() != 0) return llvm::failure();
+
+  // 0 marks a dimension whose extent has not been established yet.
+  llvm::SmallVector<int64_t> sizes(set.getNumDims(), 0);
+  llvm::SmallVector<bool> has_lower_bound(set.getNumDims(), false);
+
+  for (unsigned i = 0, e = set.getNumConstraints(); i < e; ++i) {
+    int64_t coeff = 0;
+    int64_t constant = 0;
+    unsigned dim = 0;
+    if (!decomposeSingleDim(set.getConstraint(i), coeff, dim, constant))
+      return llvm::failure();
+
+    if (set.isEq(i)) {
+      // d_i == 0 pins the dimension to a single point.
+      if (coeff != 1 || constant != 0 || sizes[dim] != 0)
+        return llvm::failure();
+      sizes[dim] = 1;
+      has_lower_bound[dim] = true;
+    } else if (coeff == 1) {
+      // d_i >= 0
+      if (constant != 0 || has_lower_bound[dim]) return llvm::failure();
+      has_lower_bound[dim] = true;
+    } else if (coeff == -1) {
+      // (N-1) - d_i >= 0
+      if (constant < 0 || sizes[dim] != 0) return llvm::failure();
+      sizes[dim] = constant + 1;
+    } else {
+      return llvm::failure();
+    }
+  }
+
+  // Every dimension needs both halves of its box; a missing one would leave the
+  // extent unbounded rather than merely unknown.
+  for (unsigned i = 0, e = sizes.size(); i < e; ++i)
+    if (sizes[i] == 0 || !has_lower_bound[i]) return llvm::failure();
+
+  return sizes;
+}
+
 mlir::Value scheduler::emitVectorLoad(mlir::OpBuilder& builder,
                                       mlir::Location loc,
                                       mlir::VectorType vec_type,
