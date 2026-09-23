@@ -48,6 +48,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IntegerSet.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 
 #define PASS_NAME "indirect-addr-buf-legalization"
@@ -187,18 +188,75 @@ static llvm::SmallVector<IabFillChain> findIabFillChains(
   return chains;
 }
 
+/// Recursive helper for hoistAboveEnclosingForOps.  Appends `cur`, preceded by
+/// every transitive operand definition that lives strictly inside
+/// `dest_region` (i.e. inside the loop nest being escaped), to `ordered` so
+/// that a definition always comes before its users.  `root` is only used for
+/// diagnostics.
+static mlir::LogicalResult collectHoistableDefs(
+    mlir::Operation* cur, mlir::Region* dest_region,
+    llvm::SmallPtrSetImpl<mlir::Operation*>& visited,
+    llvm::SmallVectorImpl<mlir::Operation*>& ordered, mlir::Operation* root) {
+  if (!visited.insert(cur).second) return mlir::success();
+
+  for (mlir::Value operand : cur->getOperands()) {
+    // Values defined at or above dest_region already dominate the hoist
+    // point: anything in dest_region itself must precede the loop nest in
+    // order to have dominated the original use inside it.
+    if (!dest_region->isProperAncestor(operand.getParentRegion())) continue;
+
+    mlir::Operation* def = operand.getDefiningOp();
+    if (!def)
+      return root->emitError()
+             << "cannot hoist above the enclosing loop nest: operand is a "
+                "block argument (e.g. an induction variable) of a loop in the "
+                "nest";
+    if (!mlir::isMemoryEffectFree(def))
+      return root->emitError()
+             << "cannot hoist above the enclosing loop nest: operand is "
+                "defined inside the nest by '"
+             << def->getName() << "', which is not side-effect free";
+    if (mlir::failed(
+            collectHoistableDefs(def, dest_region, visited, ordered, root)))
+      return mlir::failure();
+  }
+
+  ordered.push_back(cur);
+  return mlir::success();
+}
+
 /// Moves `op` to just before the outermost `scf.for` that currently encloses
 /// it (a no-op if none does). Used for the IAB memory view: every one of its
 /// operands (offset, static shape/stride attrs) is loop-invariant by
 /// construction, so once built it can always be relocated to dominate the
 /// whole loop nest rather than being reconstructed or threaded per
 /// iteration.
-static void hoistAboveEnclosingForOps(mlir::Operation* op) {
+///
+/// Being loop-invariant is not the same as being *defined* outside the nest:
+/// the offset operand is typically an `arith.constant` that was spliced into
+/// a loop body together with the rest of the original code.  Leaving such a
+/// definition behind would break dominance both for the hoisted op and for
+/// its other in-nest users (which may later be relocated into the entry
+/// loop's scf.if guard), so every transitive in-nest definition is hoisted
+/// along with `op`.  Fails if one of them cannot be hoisted, rather than
+/// producing invalid IR.
+static mlir::LogicalResult hoistAboveEnclosingForOps(mlir::Operation* op) {
   mlir::Operation* hoist_point = op;
   while (auto parent_for = mlir::dyn_cast_if_present<mlir::scf::ForOp>(
              hoist_point->getParentOp()))
     hoist_point = parent_for.getOperation();
-  if (hoist_point != op) op->moveBefore(hoist_point);
+  if (hoist_point == op) return mlir::success();
+
+  mlir::Region* dest_region = hoist_point->getParentRegion();
+  llvm::SmallPtrSet<mlir::Operation*, 8> visited;
+  llvm::SmallVector<mlir::Operation*> ordered;
+  if (mlir::failed(collectHoistableDefs(op, dest_region, visited, ordered, op)))
+    return mlir::failure();
+
+  // `ordered` lists definitions before users, so moving each in turn to
+  // immediately before hoist_point preserves that relative order.
+  for (mlir::Operation* hoisted : ordered) hoisted->moveBefore(hoist_point);
+  return mlir::success();
 }
 
 /// For one ConstructIndirectAccessTileOp, materialise all window scf.for
@@ -753,7 +811,8 @@ static mlir::LogicalResult materializeEntryLoop(
   // rebuilds a narrower view inside each window loop while the shape is
   // being reduced; only the final, fully-narrowed view reaching this
   // function gets hoisted.)
-  hoistAboveEnclosingForOps(cur_iab_mv.getOperation());
+  if (mlir::failed(hoistAboveEnclosingForOps(cur_iab_mv.getOperation())))
+    return mlir::failure();
   LDBG(1) << "materializeEntryLoop: hoisted IAB memory view to "
           << cur_iab_mv.getLoc();
 
@@ -1009,27 +1068,32 @@ struct IndirectAddrBufLegalizationPass
     llvm::SmallVector<mlir::ktdp_lowering::ConstructIndirectAccessTileOp, 4>
         indirect_ops;
 
+    // Walk the entire module to find all non-external func.funcs regardless of
+    // nesting depth (direct children, inside child modules, etc.).
     unsigned num_funcs = 0;
-    for (auto func : module.getOps<mlir::func::FuncOp>()) {
-      ++num_funcs;
-      mlir::ktdp_lowering::ConstructIndirectAccessTileOp func_indirect_op;
-      mlir::WalkResult walk_res =
-          func.walk([&](mlir::ktdp_lowering::ConstructIndirectAccessTileOp op) {
-            if (func_indirect_op) {
-              op->emitError(
-                  "multiple construct_indirect_access_tile ops in the same "
-                  "func.func are not supported");
-              return mlir::WalkResult::interrupt();
-            }
-            func_indirect_op = op;
-            return mlir::WalkResult::advance();
-          });
-
-      if (walk_res.wasInterrupted()) {
-        signalPassFailure();
-        return;
-      }
-      if (func_indirect_op) indirect_ops.push_back(func_indirect_op);
+    mlir::WalkResult outer_walk =
+        module.walk([&](mlir::func::FuncOp func) -> mlir::WalkResult {
+          if (func.isExternal()) return mlir::WalkResult::advance();
+          ++num_funcs;
+          mlir::ktdp_lowering::ConstructIndirectAccessTileOp func_indirect_op;
+          mlir::WalkResult walk_res = func.walk(
+              [&](mlir::ktdp_lowering::ConstructIndirectAccessTileOp op) {
+                if (func_indirect_op) {
+                  op->emitError(
+                      "multiple construct_indirect_access_tile ops in the same "
+                      "func.func are not supported");
+                  return mlir::WalkResult::interrupt();
+                }
+                func_indirect_op = op;
+                return mlir::WalkResult::advance();
+              });
+          if (walk_res.wasInterrupted()) return mlir::WalkResult::interrupt();
+          if (func_indirect_op) indirect_ops.push_back(func_indirect_op);
+          return mlir::WalkResult::advance();
+        });
+    if (outer_walk.wasInterrupted()) {
+      signalPassFailure();
+      return;
     }
 
     LDBG(1) << "found " << indirect_ops.size()
