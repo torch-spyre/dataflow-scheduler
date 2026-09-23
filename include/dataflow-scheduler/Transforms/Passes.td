@@ -544,4 +544,16 @@ def HoistConstantStoragePass : Pass<"hoist-constant-storage", "mlir::func::FuncO
   ];
 }
 
+def DataTransferAlignmentPass : Pass<"data-transfer-alignment", "mlir::ModuleOp"> {
+  let summary = "Align ktdf.data_transfer ops to hardware requirements";
+  let description = [{
+    Reads word size and access alignment constraints from the ktdf_arch.device
+    spec and rewrites any transfers that violate those constraints, resizing
+    staging buffers and transfer shapes until all transfers are legal.
+
+    Must run after stage-coarsening + canonicalize and before double-buffering.
+  }];
+  let constructor = "::scheduler::createDataTransferAlignmentPass()";
+}
+
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD
