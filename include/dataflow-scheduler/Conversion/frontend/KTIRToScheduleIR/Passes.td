@@ -33,19 +33,6 @@ def ComputeGroupExtractionPass : Pass<"compute-group-extraction", "mlir::ModuleO
   let constructor = "::scheduler::createComputeGroupExtractionPass()";
 }
 
-def ConstructThreeStagePipelinePass : Pass<"construct-three-stage-pipeline", "mlir::ModuleOp"> {
-  let summary = "Construct a three-stage pipeline";
-  let description = [{
-    This pass constructs a three-stage pipeline.
-  }];
-  let constructor = "::scheduler::createConstructThreeStagePipelinePass()";
-  let dependentDialects = [
-    "mlir::arith::ArithDialect",
-    "mlir::ktdf::KTDFDialect",
-    "mlir::scf::SCFDialect"
-  ];
-}
-
 def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
   let summary = "Reject KTIR constructs V1 cannot lower yet";
   let description = [{
@@ -58,6 +45,51 @@ def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
   let dependentDialects = [
     "mlir::scf::SCFDialect",
     "mlir::linalg::LinalgDialect"
+  ];
+}
+
+def KTIRMapAndTilePass : Pass<"ktir-map-and-tile", "mlir::func::FuncOp"> {
+  let summary = "Maps and tiles KTIR programs";
+  let description = [{
+    Performs device-specific mapping and tiling transformations on a normalized
+    KTIR input program, leading to parallel loop nests with their load/store
+    operations having been sunk/hoisted.
+  }];
+  let dependentDialects = [
+    "mlir::ktdf_arch::KTDFArchDialect",
+    "mlir::ktdp_lowering::KTDPLoweringDialect",
+    "mlir::linalg::LinalgDialect",
+    "mlir::scf::SCFDialect",
+    "mlir::tensor::TensorDialect"
+  ];
+}
+
+def KTIRBufferizePass : Pass<"ktir-bufferize", "mlir::func::FuncOp"> {
+  let summary = "Converts value-like accesses to memory load/store";
+  let description = [{
+    Performs lowering transformations that replace tensors and access tiles
+    with actual backing memory and `memref`s where needed.
+
+    The following ops are bufferized by this pass:
+      - `ktdp.(load|store)`
+  }];
+  let dependentDialects = [
+    "mlir::arith::ArithDialect",
+    "mlir::memref::MemRefDialect"
+  ];
+}
+
+def KTIRPipelinePass : Pass<"ktir-pipeline", "mlir::func::FuncOp"> {
+  let summary = "Constructs pipelines in bufferized KTIR programs";
+  let description = [{
+    Detects all top-level loop nests and attempts to construct a pipeline
+    within them. The pipeline will be initialized with all the 
+    `ktdp_lowering.store` found inside the loop body, growing by inserting
+    producers inside the loop body while possible.
+  }];
+  let dependentDialects = [
+    "mlir::ktdf::KTDFDialect",
+    "mlir::ktdf_arch::KTDFArchDialect"
   ];
 }
 
