@@ -4,6 +4,7 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     PathExpansion/Materializer.cpp
     PathExpansion/Planner.cpp
     PathExpansion/PlannerFactories.cpp
+    CustomSchedulerBufferization.cpp
     AddressAssignment.cpp
     IndirectAddrBufLegalization.cpp
     AffineMinCanonicalization.cpp
@@ -19,6 +20,7 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     ParallelizeLoopsAcrossInstances.cpp
     PathExpansion.cpp
     ScalarBroadcastLegalization.cpp
+    SplatLegalizationPass.cpp
     StripMineSCFForLoops.cpp
     TileSCFForLoops.cpp
 
@@ -35,7 +37,9 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     KTIR::KtdpDialect
     DataflowScheduler::Analysis
     DataflowScheduler::ArchViews
+    DataflowScheduler::ConversionUtils
     DataflowScheduler::KTDFAnalysis
+    DataflowScheduler::KTDFLoweringDialect
     DataflowSchedulerDialects::KTDFDialect
     DataflowSchedulerDialects::KTDFArchAnalysis
     DataflowSchedulerDialects::KTDFArchTransforms
@@ -47,9 +51,12 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
 
   LINK_MLIR_LIBS
     MLIRIR
+    MLIRAffineDialect
     MLIRArithDialect
+    MLIRBufferizationDialect
     MLIRLinalgDialect
     MLIRMathDialect
+    MLIRMemRefDialect
     MLIRSCFDialect
     MLIRTensorDialect
     MLIRPass
