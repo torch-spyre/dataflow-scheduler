@@ -77,9 +77,12 @@ struct RemoveOutsDependency : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
     for (auto& init : generic.getDpsInitsMutable()) {
       const auto type =
           llvm::dyn_cast<mlir::RankedTensorType>(init.get().getType());
+      // An init from a 'linalg.fill' is the value an accumulator starts from,
+      // so it stays connected.
       if (!generic.payloadUsesValueFromOperand(&init) || !type ||
           type.getEncoding() ||
-          init.get().getDefiningOp<mlir::tensor::EmptyOp>()) {
+          init.get().getDefiningOp<mlir::tensor::EmptyOp>() ||
+          init.get().getDefiningOp<mlir::linalg::FillOp>()) {
         continue;
       }
 

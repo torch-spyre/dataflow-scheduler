@@ -963,6 +963,15 @@ void ConstructThreeStagePipelinePass::createDataTransfers(
 
 }  // namespace
 
+// The linalg.fill a tiled compute's init is sliced from, or null. Tiling
+// leaves the init as a tensor.extract_slice of the untiled one.
+static mlir::linalg::FillOp getFillInitializer(mlir::Value init) {
+  if (auto slice = init.getDefiningOp<mlir::tensor::ExtractSliceOp>()) {
+    init = slice.getSource();
+  }
+  return init.getDefiningOp<mlir::linalg::FillOp>();
+}
+
 void ConstructThreeStagePipelinePass::createComputeOps(
     mlir::OpBuilder& builder, mlir::Location loc,
     mlir::ktdf::PrivateOp private_op) {
@@ -1034,14 +1043,24 @@ void ConstructThreeStagePipelinePass::createComputeOps(
   // A dummy tensor.empty per output operand, with the tiled tensor type. One
   // each: a compute accumulating a pair has an init per half, and mapping only
   // the first would leave the clone reading the other from outside the stage.
+  // An init sliced from a linalg.fill carries the value the accumulator starts
+  // from, so the fill is rebuilt on the tile in the stage too. The original
+  // becomes dead once the tiled compute is cleaned up.
   auto linalg_op =
       mlir::dyn_cast<mlir::linalg::LinalgOp>(compute_op.getOperation());
   if (linalg_op) {
     for (mlir::OpOperand& init : linalg_op.getDpsInitsMutable()) {
-      auto empty_tensor = mlir::tensor::EmptyOp::create(
-          builder, loc, tiled_tensor_type.getShape(),
-          tiled_tensor_type.getElementType());
-      mapper.map(init.get(), empty_tensor.getResult());
+      mlir::Value tile = mlir::tensor::EmptyOp::create(
+                             builder, loc, tiled_tensor_type.getShape(),
+                             tiled_tensor_type.getElementType())
+                             .getResult();
+      if (auto fill_op = getFillInitializer(init.get())) {
+        tile = mlir::linalg::FillOp::create(builder, fill_op.getLoc(),
+                                            mlir::ValueRange{fill_op.value()},
+                                            mlir::ValueRange{tile})
+                   .getResult(0);
+      }
+      mapper.map(init.get(), tile);
     }
   }
 

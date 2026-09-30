@@ -410,12 +410,24 @@ static LogicalResult splitDim(CandidateInfo& info) {
   const unsigned results = static_cast<unsigned>(generic_op.getNumResults());
   auto inter_tensor_type = RankedTensorType::get(inter_shape, elem_type);
 
+  // An original init from a linalg.fill is the value the accumulator starts
+  // from. G1 is where the accumulation starts, so its intermediate is filled
+  // with that value -- on its own shape, which need not be the output's.
   SmallVector<Type> inter_types(results, inter_tensor_type);
   SmallVector<Value> inter_inits;
   for (unsigned r = 0; r < results; ++r) {
-    inter_inits.push_back(
+    Value inter_init =
         tensor::EmptyOp::create(builder, loc, inter_shape, elem_type)
-            .getResult());
+            .getResult();
+    if (auto fill_op = generic_op.getDpsInitOperand(r)
+                           ->get()
+                           .getDefiningOp<linalg::FillOp>()) {
+      inter_init = linalg::FillOp::create(builder, fill_op.getLoc(),
+                                          ValueRange{fill_op.value()},
+                                          ValueRange{inter_init})
+                       .getResult(0);
+    }
+    inter_inits.push_back(inter_init);
   }
 
   SmallVector<AffineMap> g1_maps(generic_op.getNumDpsInputs(), g1_in_map);
@@ -486,7 +498,14 @@ static LogicalResult splitDim(CandidateInfo& info) {
   generic_op.erase();
   for (Value init : orig_inits) {
     if (!init.use_empty()) continue;
-    if (auto* def = init.getDefiningOp()) def->erase();
+    Operation* def = init.getDefiningOp();
+    if (!def) continue;
+    // A fill init leaves the tensor it filled dead too.
+    Value filled;
+    if (auto fill_op = dyn_cast<linalg::FillOp>(def)) filled = fill_op.output();
+    def->erase();
+    if (filled && filled.use_empty())
+      if (auto* filled_def = filled.getDefiningOp()) filled_def->erase();
   }
   return success();
 }

@@ -881,11 +881,12 @@ struct ReductionLoopExposurePass
   // Rewrite the compute stage with N nested scf.for loops (one per
   // reduction dim), each carrying the accumulator tensor as iter_arg.
   //
-  // The accumulator is always seeded with tensor.empty before the outermost
-  // loop.  Cross-chunk partial accumulation is the responsibility of the
-  // combine scf.if already present in the stage body.
+  // The accumulator is seeded with tensor.empty before the outermost loop, or
+  // with the generic's init when that is a linalg.fill.  Cross-chunk partial
+  // accumulation is the responsibility of the combine scf.if already present
+  // in the stage body.
   //
-  //   %seed = tensor.empty()
+  //   %seed = tensor.empty()   (or the init's linalg.fill)
   //   scf.for %r0 = 0 to D0 iter_args(%a0 = %seed) {loop_type = reduction}
   //     ...
   //       %slice = ktdf.read_from_fifo fifo_in
@@ -915,11 +916,19 @@ struct ReductionLoopExposurePass
     // already in front of the loops, and what reads its result is behind them.
     rewriter.setInsertionPoint(generic_op);
 
-    // Accumulator seed: always initialize with tensor.empty.
+    // Accumulator seed: tensor.empty, unless the generic's init is a
+    // linalg.fill -- the value the accumulator starts from -- which then seeds
+    // the loops itself. It already stands in front of the generic, and being
+    // used, it outlives the erasure below.
     const unsigned results = static_cast<unsigned>(generic_op.getNumResults());
 
     SmallVector<Value> seeds;
     for (unsigned r = 0; r < results; ++r) {
+      Value init = generic_op.getOutputs()[r];
+      if (init.getDefiningOp<linalg::FillOp>()) {
+        seeds.push_back(init);
+        continue;
+      }
       seeds.push_back(
           tensor::EmptyOp::create(rewriter, loc, output_tensor_type.getShape(),
                                   output_tensor_type.getElementType())
