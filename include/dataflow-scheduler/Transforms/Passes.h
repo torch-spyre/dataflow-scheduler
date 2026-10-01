@@ -62,6 +62,7 @@ std::unique_ptr<mlir::Pass> createSplatLegalizationPass();
 std::unique_ptr<mlir::Pass> createCustomLinalgBufferizationPass();
 std::unique_ptr<mlir::Pass> createEnsureDeviceDeclarationPass();
 std::unique_ptr<mlir::Pass> createIndirectAddrBufLegalizationPass();
+std::unique_ptr<mlir::Pass> createDataTransferAlignmentPass();
 
 #define GEN_PASS_DECL
 #define GEN_PASS_REGISTRATION
