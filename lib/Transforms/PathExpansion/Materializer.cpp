@@ -695,7 +695,8 @@ bool PathExpansionMaterializer::tryAdaptReadFromFifoOp(
       transfer_info->source_private_resource, transfer_info->source_slot_index);
 
   auto new_read = mlir::ktdf::ReadFromFifoOp::create(
-      builder_, read_op.getLoc(), read_op.getResult().getType(), new_fifo_slot);
+      builder_, read_op.getLoc(), mlir::Type(read_op.getResult().getType()),
+      new_fifo_slot);
   value_map_.map(read_op.getResult(), new_read.getResult());
 
   return true;

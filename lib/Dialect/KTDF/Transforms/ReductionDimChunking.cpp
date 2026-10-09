@@ -493,7 +493,8 @@ struct ReductionDimChunkingPass
     // After this block, inner_builder is positioned at the innermost loop
     // body (or at the original insertion point if no loops were generated).
     SmallVector<Value> dim_ivs(n_dims);
-    OpBuilder inner_builder = rewriter;  // copy: same insertion point
+    OpBuilder inner_builder =
+        static_cast<const OpBuilder&>(rewriter);  // copy: same insertion point
 
     // c0_loop / c1_loop: loop-bound constants emitted at scf.for scope.
     // StageFactory emits its own c0/c1 inside each stage body where they

@@ -172,15 +172,15 @@ void SchedulerOptMainConfig::registerCLOptions(
 }
 
 SchedulerOptMainConfig& SchedulerOptMainConfig::createFromCLOptions() {
-  clOptionsConfig->inputFileName = schedulerInputFilename;
-  clOptionsConfig->outputFileName = schedulerOutputFilename;
+  clOptionsConfig->inputFileName = schedulerInputFilename.getValue();
+  clOptionsConfig->outputFileName = schedulerOutputFilename.getValue();
   clOptionsConfig->allowUnregisteredDialectsFlag =
       schedulerAllowUnregisteredDialects;
   clOptionsConfig->showDialectsFlag = schedulerShowDialects;
   clOptionsConfig->verifyPassesFlag = schedulerVerifyPasses;
   clOptionsConfig->printFinalIRFlag = schedulerPrintFinalIr;
-  clOptionsConfig->splitInputFileFlag = schedulerSplitInputFile;
-  clOptionsConfig->outputSplitMarkerFlag = schedulerOutputSplitMarker;
+  clOptionsConfig->splitInputFileFlag = schedulerSplitInputFile.getValue();
+  clOptionsConfig->outputSplitMarkerFlag = schedulerOutputSplitMarker.getValue();
   clOptionsConfig->setDebugConfig(tracing::DebugConfig::createFromCLOptions());
   return *clOptionsConfig;
 }
