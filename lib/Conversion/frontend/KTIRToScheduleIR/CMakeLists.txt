@@ -1,6 +1,7 @@
 add_dataflow_scheduler_library(DataflowSchedulerKTIRToScheduleIR
     ComputeGroupExtraction.cpp
     FuseLinalg.cpp
+    GeneralizeLinalgOps.cpp
     IndirectComputeGroupSplit.cpp
     KTIRBufferize.cpp
     KTIRLegalityCheck.cpp

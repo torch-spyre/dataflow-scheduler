@@ -220,6 +220,26 @@ static FailureOr<TypedAttr> getNeutralAttr(linalg::GenericOp generic_op,
 }
 
 // ---------------------------------------------------------------------------
+// Initialise the accumulator `alloc_val` with the scalar `fill_value`, emitting
+// at the builder's insertion point.
+//
+// The value goes to a buffer of its own, which the accumulator is then copied
+// from. Filling the accumulator directly would put the value in the copy
+// instruction's immediate, and that field is too narrow for a 32-bit one. A
+// buffer written once and never read back is invariant, so what hoists such a
+// write can lift it to where a register is initialised instead -- which carries
+// the whole value.
+// ---------------------------------------------------------------------------
+static void fillThroughIdentityBuffer(OpBuilder& builder, Location loc,
+                                      Value fill_value, Value alloc_val) {
+  auto identity = memref::AllocOp::create(
+      builder, loc, cast<MemRefType>(alloc_val.getType()));
+  linalg::FillOp::create(builder, loc, ValueRange{fill_value},
+                         ValueRange{identity.getResult()});
+  memref::CopyOp::create(builder, loc, identity.getResult(), alloc_val);
+}
+
+// ---------------------------------------------------------------------------
 // Transform the initializer `init_val` of a loop-carried accumulator in-place,
 // emitting linalg.fill (or memref.copy) into `alloc_val` wherever the original
 // tensor value was produced.  `alloc_val` is a memref.alloc already emitted at
@@ -228,11 +248,16 @@ static FailureOr<TypedAttr> getNeutralAttr(linalg::GenericOp generic_op,
 // `generic_op` is the reduction linalg.generic whose combiner determines the
 // correct neutral element for the fill.
 //
-// Three leaf cases are handled; scf.if recurses into both branches:
+// Four leaf cases are handled; scf.if recurses into both branches:
 //
 //   tensor.empty()
 //     → linalg.fill(%neutral, %alloc) inserted just before the tensor.empty,
 //       then the tensor.empty is erased.
+//
+//   linalg.fill ins(%cst) outs(%empty) -> tensor<...>
+//     → linalg.fill(%cst, %alloc) + memref.copy inserted just before the
+//       fill, then the linalg.fill and its tensor.empty outs operand are
+//       erased.
 //
 //   ktdf.read_from_fifo ... -> tensor<...>
 //     → emit memref-typed read_from_fifo + memref.copy into %alloc just
@@ -259,20 +284,26 @@ static LogicalResult lowerIterArgInitializer(Value init_val, Value alloc_val,
     Location loc = empty_op.getLoc();
     Value neutral_val =
         arith::ConstantOp::create(builder, loc, neutral.value());
-
-    // The identity goes to a buffer of its own, which the accumulator is then
-    // copied from. Filling the accumulator directly would put the value in the
-    // copy instruction's immediate, and that field is too narrow for a 32-bit
-    // one. A buffer written once and never read back is invariant, so what
-    // hoists such a write can lift it to where a register is initialised
-    // instead -- which carries the whole value.
-    auto identity = memref::AllocOp::create(
-        builder, loc, cast<MemRefType>(alloc_val.getType()));
-    linalg::FillOp::create(builder, loc, ValueRange{neutral_val},
-                           ValueRange{identity.getResult()});
-    memref::CopyOp::create(builder, loc, identity.getResult(), alloc_val);
+    fillThroughIdentityBuffer(builder, loc, neutral_val, alloc_val);
 
     empty_op->erase();
+    return success();
+  }
+
+  // ── Case: linalg.fill with a user-specified initializer ───────────────────
+  if (auto fill_op = dyn_cast<linalg::FillOp>(defining_op)) {
+    // The caller redirects every use of the initializer to the accumulator
+    // before lowering it, so the fill can be erased outright.
+    assert(fill_op->use_empty() &&
+           "lowerIterArgInitializer: linalg.fill initializer still has uses");
+
+    Operation* empty_op = fill_op.output().getDefiningOp();
+    OpBuilder builder(fill_op);
+    fillThroughIdentityBuffer(builder, fill_op.getLoc(), fill_op.value(),
+                              alloc_val);
+
+    fill_op->erase();
+    if (empty_op && empty_op->use_empty()) empty_op->erase();
     return success();
   }
 
@@ -322,7 +353,7 @@ static LogicalResult lowerIterArgInitializer(Value init_val, Value alloc_val,
 
   return defining_op->emitError(
       "lowerIterArgInitializer: unrecognised initializer form — expected "
-      "tensor.empty, ktdf.read_from_fifo, or scf.if");
+      "tensor.empty, linalg.fill, ktdf.read_from_fifo, or scf.if");
 }
 
 // ---------------------------------------------------------------------------

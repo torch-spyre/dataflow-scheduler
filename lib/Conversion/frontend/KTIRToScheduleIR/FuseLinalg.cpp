@@ -77,7 +77,7 @@ struct RemoveOutsDependency : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
     for (auto& init : generic.getDpsInitsMutable()) {
       const auto type =
           llvm::dyn_cast<mlir::RankedTensorType>(init.get().getType());
-      if (!generic.payloadUsesValueFromOperand(&init) || !type ||
+      if (generic.payloadUsesValueFromOperand(&init) || !type ||
           type.getEncoding() ||
           init.get().getDefiningOp<mlir::tensor::EmptyOp>()) {
         continue;

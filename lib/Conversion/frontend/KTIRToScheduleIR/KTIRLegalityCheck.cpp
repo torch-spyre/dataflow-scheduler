@@ -141,7 +141,8 @@ struct KTIRLegalityCheckPass
         }
         if (mlir::isa<mlir::linalg::AddOp, mlir::linalg::MulOp,
                       mlir::linalg::SubOp, mlir::linalg::MaxOp,
-                      mlir::linalg::MinOp, mlir::linalg::YieldOp>(op)) {
+                      mlir::linalg::MinOp, mlir::linalg::FillOp,
+                      mlir::linalg::YieldOp>(op)) {
           return mlir::WalkResult::advance();
         }
         if (mlir::isa<mlir::linalg::ReduceOp>(op)) {
