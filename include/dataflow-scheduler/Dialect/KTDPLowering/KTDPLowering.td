@@ -405,4 +405,150 @@ def KTDPLowering_StoreOp : KTDPLowering_Op<"store", [
   }];
 }
 
+//===----------------------------------------------------------------------===//
+// IndLoadOp / IndStoreOp
+//===----------------------------------------------------------------------===//
+
+def KTDPLowering_IndLoadOp : KTDPLowering_Op<"ind_load", [
+    AttrSizedOperandSegments,
+    OffsetSizeAndStrideOpInterface,
+    MemoryEffectsOpInterface]> {
+  let summary = "Indirect gather: read a rank-reduced slice from a memref at "
+                "an address driven by an IAB entry";
+  let description = [{
+    `ktdp_lowering.ind_load` describes one indirect (gather) data transfer.
+    The contribution of the indirect dimension is the element offset stored at
+    `$ind_addr_buf[$ind_addr_buf_index]`; the direct dimensions form a box
+    slice of `$base` given by `offsets / sizes / strides`, exactly like
+    `tensor.extract_slice`.
+
+    Example:
+    ```mlir
+    %v = ktdp_lowering.ind_load %iab[%idx] %base[0, %o1, 0] [1, 1, 64] [1, 1, 1]
+        : memref<32xi32, strided<[1], offset: ?>, "IBR">,
+          memref<64x2x64xf16, strided<[64, 4096, 1], offset: ?>, "DDR">
+        -> tensor<64xf16>
+    ```
+  }];
+
+  let arguments = (ins
+    Arg<AnyMemRef, "", [MemRead]>:$ind_addr_buf,
+    Index:$ind_addr_buf_index,
+    Arg<AnyMemRef, "", [MemRead]>:$base,
+    Variadic<Index>:$offsets,
+    Variadic<Index>:$sizes,
+    Variadic<Index>:$strides,
+    DenseI64ArrayAttr:$static_offsets,
+    DenseI64ArrayAttr:$static_sizes,
+    DenseI64ArrayAttr:$static_strides
+  );
+  let results = (outs AnyRankedTensor:$result);
+
+  let assemblyFormat = [{
+    $ind_addr_buf `[` $ind_addr_buf_index `]` $base ``
+    custom<DynamicIndexList>($offsets, $static_offsets)
+    custom<DynamicIndexList>($sizes, $static_sizes)
+    custom<DynamicIndexList>($strides, $static_strides)
+    attr-dict `:` type($ind_addr_buf) `,` type($base) `->` type($result)
+  }];
+
+  let hasVerifier = 1;
+
+  let builders = [
+    OpBuilder<(ins
+      "RankedTensorType":$result_type,
+      "Value":$ind_addr_buf,
+      "Value":$ind_addr_buf_index,
+      "Value":$base,
+      "ArrayRef<OpFoldResult>":$mixed_offsets,
+      "ArrayRef<OpFoldResult>":$mixed_sizes,
+      "ArrayRef<OpFoldResult>":$mixed_strides)>
+  ];
+
+  let extraClassDeclaration = [{
+    //===------------------------------------------------------------------===//
+    // OffsetSizeAndStrideOpInterface
+    //===------------------------------------------------------------------===//
+
+    auto getArrayAttrMaxRanks() -> std::array<unsigned, 3> {
+      unsigned rank =
+          ::mlir::cast<::mlir::MemRefType>(getBase().getType()).getRank();
+      return {rank, rank, rank};
+    }
+
+    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 3; }
+  }];
+}
+
+def KTDPLowering_IndStoreOp : KTDPLowering_Op<"ind_store", [
+    AttrSizedOperandSegments,
+    OffsetSizeAndStrideOpInterface,
+    MemoryEffectsOpInterface]> {
+  let summary = "Indirect scatter: write a ranked tensor into a memref slice "
+                "at an address driven by an IAB entry";
+  let description = [{
+    `ktdp_lowering.ind_store` describes one indirect (scatter) data transfer.
+    The contribution of the indirect dimension is the element offset stored at
+    `$ind_addr_buf[$ind_addr_buf_index]`; the direct dimensions form a box
+    slice of `$base` given by `offsets / sizes / strides`, exactly like
+    `tensor.insert_slice`.
+
+    Example:
+    ```mlir
+    ktdp_lowering.ind_store %t into %iab[%idx] %base[0, 0, 0] [1, 2, 64] [1, 1, 1]
+        : tensor<2x64xf16>,
+          memref<32xi32, strided<[1], offset: ?>, "IBR">,
+          memref<64x2x64xf16, strided<[4096, 64, 1], offset: ?>, "DDR">
+    ```
+  }];
+
+  let arguments = (ins
+    AnyRankedTensor:$source,
+    Arg<AnyMemRef, "", [MemRead]>:$ind_addr_buf,
+    Index:$ind_addr_buf_index,
+    Arg<AnyMemRef, "", [MemWrite]>:$base,
+    Variadic<Index>:$offsets,
+    Variadic<Index>:$sizes,
+    Variadic<Index>:$strides,
+    DenseI64ArrayAttr:$static_offsets,
+    DenseI64ArrayAttr:$static_sizes,
+    DenseI64ArrayAttr:$static_strides
+  );
+
+  let assemblyFormat = [{
+    $source `into` $ind_addr_buf `[` $ind_addr_buf_index `]` $base ``
+    custom<DynamicIndexList>($offsets, $static_offsets)
+    custom<DynamicIndexList>($sizes, $static_sizes)
+    custom<DynamicIndexList>($strides, $static_strides)
+    attr-dict `:` type($source) `,` type($ind_addr_buf) `,` type($base)
+  }];
+
+  let hasVerifier = 1;
+
+  let builders = [
+    OpBuilder<(ins
+      "Value":$source,
+      "Value":$ind_addr_buf,
+      "Value":$ind_addr_buf_index,
+      "Value":$base,
+      "ArrayRef<OpFoldResult>":$mixed_offsets,
+      "ArrayRef<OpFoldResult>":$mixed_sizes,
+      "ArrayRef<OpFoldResult>":$mixed_strides)>
+  ];
+
+  let extraClassDeclaration = [{
+    //===------------------------------------------------------------------===//
+    // OffsetSizeAndStrideOpInterface
+    //===------------------------------------------------------------------===//
+
+    auto getArrayAttrMaxRanks() -> std::array<unsigned, 3> {
+      unsigned rank =
+          ::mlir::cast<::mlir::MemRefType>(getBase().getType()).getRank();
+      return {rank, rank, rank};
+    }
+
+    static unsigned getOffsetSizeAndStrideStartOperandIndex() { return 4; }
+  }];
+}
+
 #endif // DATAFLOW_SCHEDULER_DIALECT_KTDPLOWERING_KTDPLOWERING_TD

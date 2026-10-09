@@ -583,3 +583,99 @@ void StoreOp::build(OpBuilder& builder, OperationState& state, Value source,
 
   build(builder, state, source, dest, sizes, static_sizes);
 }
+
+//===----------------------------------------------------------------------===//
+// IndLoadOp
+//===----------------------------------------------------------------------===//
+
+/// Shared helper: verify the ind_addr_buf, strides, rank-reduction, and
+/// element-type constraints common to ind_load and ind_store.
+///
+/// Parameters:
+///   iab        - the ind_addr_buf memref value
+///   base       - the base memref value
+///   staticSizes   - static_sizes attribute of the op
+///   staticStrides - static_strides attribute of the op
+///   tensorType    - the RankedTensorType (result for ind_load, source for
+///   ind_store) op         - the Operation* for error reporting
+static LogicalResult verifyIndOpCommon(Value iab, Value base,
+                                       ArrayRef<int64_t> staticSizes,
+                                       ArrayRef<int64_t> staticStrides,
+                                       RankedTensorType tensorType,
+                                       Operation* op) {
+  // 1. IAB must be rank-1 with integer or index element type.
+  auto iabType = cast<MemRefType>(iab.getType());
+  if (iabType.getRank() != 1)
+    return op->emitOpError("ind_addr_buf must have rank 1 but has rank ")
+           << iabType.getRank();
+  Type iabElem = iabType.getElementType();
+  if (!iabElem.isIntOrIndex())
+    return op->emitOpError(
+               "ind_addr_buf element type must be integer or index, got ")
+           << iabElem;
+
+  // 2. All strides must be statically 1.
+  for (auto [idx, s] : llvm::enumerate(staticStrides)) {
+    if (s != 1)
+      return op->emitOpError("all strides must be statically 1, but stride[")
+             << idx << "] = " << s;
+  }
+
+  // 3. Tensor shape must be a rank reduction of static_sizes.
+  ArrayRef<int64_t> tensorShape = tensorType.getShape();
+  if (!mlir::computeRankReductionMask(staticSizes, tensorShape))
+    return op->emitOpError(
+               "tensor shape is not a rank reduction of static_sizes; "
+               "static_sizes = [")
+           << staticSizes << "], tensor shape = [" << tensorShape << "]";
+
+  // 4. Element types must match.
+  auto baseElem = cast<MemRefType>(base.getType()).getElementType();
+  if (baseElem != tensorType.getElementType())
+    return op->emitOpError("base element type ")
+           << baseElem << " does not match tensor element type "
+           << tensorType.getElementType();
+
+  return success();
+}
+
+auto IndLoadOp::verify() -> LogicalResult {
+  return verifyIndOpCommon(
+      getIndAddrBuf(), getBase(), getStaticSizes(), getStaticStrides(),
+      cast<RankedTensorType>(getResult().getType()), getOperation());
+}
+
+void IndLoadOp::build(OpBuilder& builder, OperationState& state,
+                      RankedTensorType result_type, Value ind_addr_buf,
+                      Value ind_addr_buf_index, Value base,
+                      ArrayRef<OpFoldResult> mixed_offsets,
+                      ArrayRef<OpFoldResult> mixed_sizes,
+                      ArrayRef<OpFoldResult> mixed_strides) {
+  const auto [static_offsets, offsets] = decomposeMixedValues(mixed_offsets);
+  const auto [static_sizes, sizes] = decomposeMixedValues(mixed_sizes);
+  const auto [static_strides, strides] = decomposeMixedValues(mixed_strides);
+  build(builder, state, result_type, ind_addr_buf, ind_addr_buf_index, base,
+        offsets, sizes, strides, static_offsets, static_sizes, static_strides);
+}
+
+//===----------------------------------------------------------------------===//
+// IndStoreOp
+//===----------------------------------------------------------------------===//
+
+auto IndStoreOp::verify() -> LogicalResult {
+  return verifyIndOpCommon(
+      getIndAddrBuf(), getBase(), getStaticSizes(), getStaticStrides(),
+      cast<RankedTensorType>(getSource().getType()), getOperation());
+}
+
+void IndStoreOp::build(OpBuilder& builder, OperationState& state, Value source,
+                       Value ind_addr_buf, Value ind_addr_buf_index, Value base,
+                       ArrayRef<OpFoldResult> mixed_offsets,
+                       ArrayRef<OpFoldResult> mixed_sizes,
+                       ArrayRef<OpFoldResult> mixed_strides) {
+  const auto [static_offsets, offsets] = decomposeMixedValues(mixed_offsets);
+  const auto [static_sizes, sizes] = decomposeMixedValues(mixed_sizes);
+  const auto [static_strides, strides] = decomposeMixedValues(mixed_strides);
+  build(builder, state, source, ind_addr_buf, ind_addr_buf_index, base, offsets,
+        sizes, strides, static_offsets, static_sizes, static_strides);
+}

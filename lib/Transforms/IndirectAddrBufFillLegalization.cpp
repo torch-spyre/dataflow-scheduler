@@ -228,6 +228,25 @@ mlir::Value recreateOutside(mlir::Value value, mlir::ktdf::StageOp stage,
   return clone->getResult(mlir::cast<mlir::OpResult>(value).getResultNumber());
 }
 
+/// Erases the ops inside \p stage that define \p values once nothing uses them,
+/// following their operands back. Cleans up what a moved transfer leaves behind
+/// once recreateOutside has copied it elsewhere.
+void eraseDeadDefs(mlir::ValueRange values, mlir::ktdf::StageOp stage) {
+  llvm::SetVector<mlir::Operation*> worklist;
+  auto push = [&](mlir::Value value) {
+    mlir::Operation* def = value.getDefiningOp();
+    if (def && stage->isProperAncestor(def)) worklist.insert(def);
+  };
+  llvm::for_each(values, push);
+  // An op still in use is dropped here; erasing its last user re-pushes it.
+  while (!worklist.empty()) {
+    mlir::Operation* op = worklist.pop_back_val();
+    if (!mlir::isOpTriviallyDead(op)) continue;
+    llvm::for_each(op->getOperands(), push);
+    op->erase();
+  }
+}
+
 //===----------------------------------------------------------------------===//
 // Legalization
 //===----------------------------------------------------------------------===//
@@ -378,6 +397,15 @@ mlir::LogicalResult legalizeFillSite(const FillSite& site,
     builder.setInsertionPointToStart(staged_guard.thenBlock());
   }
 
+  // The source view may itself be built inside the fill stage, e.g. under the
+  // same guard as the fill.
+  mlir::Value source = recreateOutside(fill.getSource(), stage, builder, map);
+  if (!source) {
+    return fill.emitError()
+           << PASS_NAME
+           << ": fill source cannot be recreated in the staging stage";
+  }
+
   llvm::SmallVector<mlir::Value> source_indices;
   for (mlir::Value index : fill.getSourceIndices()) {
     mlir::Value recreated = recreateOutside(index, stage, builder, map);
@@ -392,7 +420,7 @@ mlir::LogicalResult legalizeFillSite(const FillSite& site,
 
   llvm::SmallVector<mlir::OpFoldResult> sizes = fill.getMixedSourceSizes();
   mlir::ktdf::DataTransferOp::create(
-      builder, fill.getLoc(), fill.getSource(),
+      builder, fill.getLoc(), source,
       fill.getSourceMap().value_or(mlir::AffineMap()), source_indices, sizes,
       buffer, buffer_subscript, /*dest_indices=*/mlir::ValueRange{}, sizes);
 
@@ -403,7 +431,9 @@ mlir::LogicalResult legalizeFillSite(const FillSite& site,
       /*source_indices=*/mlir::ValueRange{}, sizes, fill.getDestination(),
       fill.getDestMap().value_or(mlir::AffineMap()), fill.getDestIndices(),
       fill.getMixedDestSizes());
+  llvm::SmallVector<mlir::Value> old_operands(fill->getOperands());
   fill.erase();
+  eraseDeadDefs(old_operands, stage);
 
   return mlir::success();
 }

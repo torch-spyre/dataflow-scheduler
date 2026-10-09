@@ -30,6 +30,10 @@ namespace scheduler {
 ///  - Converts `ktdf.write_to_fifo(ktdp_lowering.load)`
 ///  - Converts `ktdp_lowering.store(ktdf.read_from_fifo)`
 ///  - Converts `ktdp_lowering.store(ktdp_lowering.load)`
+///  - Converts `ktdf.write_to_fifo(ktdp_lowering.ind_load)` to
+///    `ktdf.ind_data_transfer`
+///  - Converts `ktdp_lowering.ind_store(ktdf.read_from_fifo)` to
+///    `ktdf.ind_data_transfer`
 void populateConvertToDataTransferPatterns(mlir::RewritePatternSet& patterns);
 
 }  // namespace scheduler
