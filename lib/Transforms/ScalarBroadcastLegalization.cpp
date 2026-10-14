@@ -132,7 +132,8 @@ auto getHop(const mlir::ktdf_arch::ResourceKinds& resource_kinds,
     }
   }
 
-  if (!load_store || source == load_store || target == load_store) {
+  if (!load_store || source.getOperation() == load_store.getOperation() ||
+      target.getOperation() == load_store.getOperation()) {
     // There must be an unambiguous direct link.
     const auto link = mlir::ktdf_arch::getLink(source, target);
     if (!link) {

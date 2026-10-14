@@ -161,7 +161,8 @@ struct AllocOp
             *maybe_shape, strides, offset)) ||
         offset < 0 ||
         llvm::any_of(strides, [](int64_t stride) { return stride < 0; })) {
-      LDBG() << "unsupported layout: " << getType().getLayout();
+      LDBG() << "unsupported layout: "
+             << mlir::Attribute(getType().getLayout());
       return llvm::failure();
     }
 
