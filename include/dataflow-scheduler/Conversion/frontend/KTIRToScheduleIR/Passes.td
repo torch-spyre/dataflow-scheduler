@@ -181,6 +181,22 @@ def IndirectComputeGroupSplitPass
   ];
 }
 
+def GeneralizeLinalgOpsPass
+    : Pass<"generalize-linalg-ops", "mlir::func::FuncOp"> {
+  let summary = "Rewrites named and category linalg ops as `linalg.generic`, "
+                "except `linalg.fill`";
+  let description = [{
+    Applies the upstream named-to-generic rewrite (the one behind
+    `--linalg-morph-ops="named-to-generic=true category-to-generic=true"`) to
+    every linalg op except `linalg.fill`.
+
+    A `linalg.fill` that initialises a reduction's accumulator carries the
+    user-supplied initial value. Keeping it named lets later passes recognise
+    it as an initializer, rather than as a compute op of its own.
+  }];
+  let dependentDialects = ["mlir::linalg::LinalgDialect"];
+}
+
 def FuseLinalgPass : Pass<"fuse-linalg", "mlir::func::FuncOp"> {
   let summary = "Fuses `linalg.generic` operations";
   let description = [{

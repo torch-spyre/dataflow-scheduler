@@ -55,8 +55,9 @@ void scheduler::buildKTIRFrontendPipeline(
   {
     auto& nested = pm.nest<mlir::ModuleOp>().nest<mlir::func::FuncOp>();
     nested.addPass(mlir::createConvertElementwiseToLinalgPass());
-    nested.addPass(mlir::createLinalgMorphOpsPass(
-        {.categoryToGeneric = true, .namedToGeneric = true}));
+    // Like 'linalg-morph-ops' with named- and category-to-generic, but keeps a
+    // 'linalg.fill' named so a reduction's user-supplied initializer survives.
+    nested.addPass(createGeneralizeLinalgOpsPass());
     nested.addPass(createFuseLinalgPass());
     nested.addPass(createKTIRMapAndTilePass());
     nested.addPass(createKTIRBufferizePass());
