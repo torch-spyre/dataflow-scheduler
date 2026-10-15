@@ -140,6 +140,9 @@ void scheduler::buildSchedulerOptimizationPipeline(
   // consumer as a tensor, so the consumer is rebuilt on buffers here, before
   // addresses are assigned to the buffers themselves.
   pm.addPass(createCustomLinalgBufferizationPass());
+  // With the consumers in their final form, write each FIFO's slots in the
+  // order the consumer uses them, as the FIFO delivers them in that order.
+  pm.addPass(createOrderFifoSlotsByUsePass());
 
   pm.addPass(createAddressAssignmentPass(scheduler_ctx));
   // TODO: position of cross-instance parallelization is TBD
