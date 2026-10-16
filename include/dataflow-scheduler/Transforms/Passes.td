@@ -689,6 +689,54 @@ def FoldFifoRelayStagesPass
   ];
 }
 
+def OrderFifoSlotsByUsePass
+    : Pass<"order-fifo-slots-by-use", "mlir::ModuleOp"> {
+  let summary = "Write and read the slots of a FIFO in the order they are used";
+  let description = [{
+    The slots one stage writes and another reads between the same pair of ends
+    share one physical FIFO, which delivers in the order it was filled. The
+    lowering below makes each read a receive the consumer takes the value from
+    at the op using it, so the slots have to be written in the order the
+    consumer uses them, not merely read in the order they are written.
+
+    For each such group of slots, this pass orders the writes in the producer
+    and the reads in the consumer by where the consumer first uses each value:
+    the position of the consuming op in the stage, then, for a linalg.generic,
+    the position in its body of the first op using the operand.
+
+    A group is left alone when a slot is not written and read exactly once, a
+    value is used outside the consumer's block, or a write would have to move
+    above the definition of one of its operands or above an op between the
+    writes that touches memory.
+
+    Example, where the consumer copies %b into a register before it adds %a:
+    ```mlir
+    ktdf.stage depends_in(none) depends_out(%t) {
+      ktdf.data_transfer from %a_mem[...] to %slots#0 ...
+      ktdf.data_transfer from %b_mem[...] to %slots#1 ...
+    }
+    ktdf.stage depends_in(%t) depends_out(none) {
+      %a = ktdf.read_from_fifo %slots#0 ...
+      %b = ktdf.read_from_fifo %slots#1 ...
+      memref.copy %b, %reg ...
+      linalg.generic ins(%a, %reg ...) ...
+    }
+    ```
+
+    The write and the read of %slots#1 are moved in front of those of
+    %slots#0.
+  }];
+
+  let dependentDialects = [
+    "mlir::ktdf::KTDFDialect"
+  ];
+
+  let statistics = [
+    Statistic<"num_reordered", "num-reordered",
+              "Number of FIFOs whose slots were reordered">,
+  ];
+}
+
 def IndirectAddrBufLegalizationPass
     : Pass<"indirect-addr-buf-legalization", "mlir::ModuleOp"> {
   let summary = "Legalize indirect address buffer usage";
