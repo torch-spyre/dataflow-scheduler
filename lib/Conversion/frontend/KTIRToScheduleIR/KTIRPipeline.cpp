@@ -399,9 +399,15 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
   };
 
   // Insert all the stores and their dependencies.
-  rewriter.getInsertionBlock()->walk([&](mlir::ktdp_lowering::StoreOp store) {
+  // The builder prepends every op to its stage, so insert the stores in reverse
+  // program order to get program order in the stage. Stores to one memory space
+  // share a stage and are paired with their consumers by position.
+  llvm::SmallVector<mlir::Operation*> stores;
+  rewriter.getInsertionBlock()->walk(
+      [&](mlir::ktdp_lowering::StoreOp store) { stores.push_back(store); });
+  for (auto* store : llvm::reverse(stores)) {
     builder.insert({store}, place, dominance);
-  });
+  }
 
   auto result = builder.build();
   LDBG() << "created " << result;
