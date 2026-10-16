@@ -260,7 +260,7 @@ struct EraseStageMapping : mlir::OpRewritePattern<mlir::ktdf::StageOp> {
       break;
     }
 
-    auto inner = llvm::cast<mlir::scf::ForOp>(&*body.begin());
+    auto inner = llvm::dyn_cast<mlir::scf::ForOp>(&*body.begin());
     if (!inner) {
       break;
     }
