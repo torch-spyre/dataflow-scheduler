@@ -465,12 +465,27 @@ def MaterializeRegistersPass : Pass<"materialize-registers", "mlir::ModuleOp"> {
     with a `ktdf_arch.maps_to` attribute, which needs an allocation and a fill
     of its own.
 
+    A constant without a `ktdf_arch.maps_to` attribute is given one first, if
+    an `arith` or `math` operation or a `ktdf.opaque` in the body reads it and
+    its type is not `index`. It names the memory local to the execution unit
+    the `linalg.generic` is mapped to, and it is an error if there is no such
+    memory. A constant read by several generics is mapped by the first that
+    reads it. A `ktdf.opaque` in the body reads the register, an `arith` or
+    `math` operation reads its first element, and any other reader keeps the
+    constant.
+
     This requires the cardinality of the `linalg.generic` iteration domain to
     be statically known, and all consumers of the registers to be either
     `memref.load`, `memref.store` or `ktdf.opaque`. Register sizes are
     increased to match the iteration domain, but scalar users remain fixed to
     the first element of the allocated segment. A store of a value the body
     does not compute per element fills every element instead.
+
+    Such a fill stays where the allocation is. A constant a pattern stores into
+    an `alloca` of the body is therefore written in the stage, inside any loop
+    around it, and `hoist-constant-storage` does not move it: only a constant
+    the body reads directly gets an `alloc` that is filled once, outside the
+    loop.
 
     Example:
     ```mlir
