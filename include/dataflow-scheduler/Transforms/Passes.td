@@ -318,7 +318,7 @@ def ScalarBroadcastLegalizationPass
     the compute unit does not support scalar broadcast semantics natively,
     this pass legalizes the path by:
       1. Widening memref-side transfers to the full vector granularity.
-      2. Marking the L1->FIFO transfer with transfer_mode="splat".
+      2. Marking the L1->FIFO transfer as a splat.
       3. Updating read_from_fifo result type and linalg.generic indexing map
          to use the full vector identity map.
   }];
@@ -360,7 +360,7 @@ def SplatLegalizationPass : Pass<"splat-legalization", "mlir::ModuleOp"> {
     Runs after ScalarBroadcastLegalizationPass and records, in the IR, that a
     splat the hardware cannot perform in one step has been left half done.
 
-    For each ktdf.data_transfer with transfer_mode="splat" whose destination is
+    For each ktdf.data_transfer with a splat transfer mode whose destination is
     a FIFO:
 
       1. Validates that the load unit's SIMD feature declares the splat

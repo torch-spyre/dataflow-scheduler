@@ -20,12 +20,15 @@
 
 #include <llvm/Support/ErrorHandling.h>
 
+#include <cstddef>
 #include <tuple>
 
 #include "dataflow-scheduler/Analysis/ArchViews/RoutingGraph.h"
 #include "dataflow-scheduler/Analysis/PipelineTree.h"
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDF/KTDFEnums.h"
+#include "dataflow-scheduler/Dialect/KTDF/KTDFTypes.h"
 #include "ktir/Dialect/KTDP/KTDPAttrs.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/DenseMap.h"
@@ -124,6 +127,23 @@ static void debugPrintResourceSpecs(llvm::raw_ostream& os,
   }
   os << "  Memory buffers: " << mem_count << "\n";
   os << "  FIFOs: " << fifo_count << "\n";
+}
+
+using MemRef = mlir::TypedValue<mlir::MemRefType>;
+
+[[nodiscard]] auto getOnlyBufferSide(mlir::ktdf::DataTransferOp transfer)
+    -> std::pair<MemRef, bool> {
+  const auto src_buffer = llvm::dyn_cast<MemRef>(transfer.getSource());
+  const auto dst_buffer = llvm::dyn_cast<MemRef>(transfer.getDestination());
+
+  if (src_buffer && !dst_buffer) {
+    return {src_buffer, false};
+  }
+  if (dst_buffer && !src_buffer) {
+    return {dst_buffer, true};
+  }
+
+  return {nullptr, false};
 }
 
 }  // anonymous namespace
@@ -1202,28 +1222,24 @@ static mlir::LogicalResult classifyOriginalStages(
     // Skip entirely if an IndDataTransferOp already classified this stage.
     if (stage_info.kind != StageMaterializationInfo::Kind::kAdaptTransfer) {
       stage_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
-        mlir::Type src_type = transfer.getSource().getType();
-        mlir::Type dest_type = transfer.getDestination().getType();
+        const auto [memref, is_dest] = getOnlyBufferSide(transfer);
+        if (!memref) {
+          return;
+        }
+        const auto fifo =
+            is_dest ? transfer.getSource() : transfer.getDestination();
 
-        bool src_is_memref = mlir::isa<mlir::MemRefType>(src_type);
-        bool dest_is_memref = mlir::isa<mlir::MemRefType>(dest_type);
-
-        if (src_is_memref == dest_is_memref) return mlir::WalkResult::advance();
-
-        mlir::MemRefType memref_type =
-            src_is_memref ? mlir::cast<mlir::MemRefType>(src_type)
-                          : mlir::cast<mlir::MemRefType>(dest_type);
-        llvm::SmallVector<mlir::OpFoldResult> tile_sizes =
-            src_is_memref ? transfer.getMixedSourceSizes()
-                          : transfer.getMixedDestSizes();
-        mlir::Value fifo_side =
-            src_is_memref ? transfer.getDestination() : transfer.getSource();
-
+        // When this transfer is a broadcast, we obtain the size from the fifo
+        // side instead.
+        const auto size_from_dest = is_dest ^ (transfer.getTransferMode() !=
+                                               mlir::ktdf::TransferMode::Copy);
+        const auto tile_sizes = size_from_dest ? transfer.getMixedDestSizes()
+                                               : transfer.getMixedSourceSizes();
         classifyTransferStage(transfer.getOperation(),
-                              memref_type.getElementType(), tile_sizes,
-                              fifo_side,
-                              /*intermediate_is_source=*/!src_is_memref);
-        return mlir::WalkResult::advance();
+                              memref.getType().getElementType(), tile_sizes,
+                              fifo,
+                              /*intermediate_is_source=*/is_dest);
+        return;
       });
     }
 

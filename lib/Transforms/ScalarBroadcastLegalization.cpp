@@ -48,6 +48,7 @@
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/PatternMatch.h"
 #include "mlir/Pass/Pass.h"
 
 #define PASS_NAME "scalar-broadcast-legalization"
@@ -309,6 +310,29 @@ static mlir::LogicalResult collectSites(
       }
       std::reverse(hops.begin(), hops.end());
 
+      llvm::SmallVector<mlir::AffineExpr> new_results(m.getResults().begin(),
+                                                      m.getResults().end());
+      new_results.back() =
+          mlir::getAffineDimExpr(m.getNumDims() - 1, generic_op.getContext());
+      mlir::AffineMap new_map =
+          mlir::AffineMap::get(m.getNumDims(), m.getNumSymbols(), new_results,
+                               generic_op.getContext());
+
+      // If one of the transfer hops performs the broadcast already, we don't
+      // need to legalize it further and can just update the map.
+      auto* const bcast_hop = llvm::find_if(hops, [](Hop hop) {
+        return hop.transfer.getTransferMode() != mlir::ktdf::TransferMode::Copy;
+      });
+      if (bcast_hop != hops.end() &&
+          mlir::cast<mlir::RankedTensorType>(input.getType())
+                  .getShape()
+                  .back() != vector_width) {
+        generic_op.emitWarning()
+            << "scalar broadcast operand " << i
+            << " is filled by a transfer narrower than the compute — skipping";
+        continue;
+      }
+
       Hop* load_hop = nullptr;
       Hop* fifo_hop = nullptr;
       if (!hops.empty()) {
@@ -356,14 +380,7 @@ static mlir::LogicalResult collectSites(
         return mlir::WalkResult::interrupt();
       }
 
-      llvm::SmallVector<mlir::AffineExpr> new_results(m.getResults().begin(),
-                                                      m.getResults().end());
-      new_results.back() =
-          mlir::getAffineDimExpr(m.getNumDims() - 1, generic_op.getContext());
-      mlir::AffineMap new_map =
-          mlir::AffineMap::get(m.getNumDims(), m.getNumSymbols(), new_results,
-                               generic_op.getContext());
-
+      hops.erase(bcast_hop, hops.end());
       sites.push_back({generic_op, i, std::move(hops), vector_width, new_map});
     }
     return mlir::WalkResult::advance();
@@ -372,85 +389,9 @@ static mlir::LogicalResult collectSites(
   return mlir::success(!walk_result.wasInterrupted());
 }
 
-/// Widen the last dimension of the memref alloc backing `private_result`
-/// to `new_last_dim`. Creates a new alloc, replaces all uses, updates the
-/// ktdf.private result type, erases old alloc.
-static mlir::Value widenMemrefAlloc(mlir::Value private_result,
-                                    int64_t new_last_dim,
-                                    mlir::OpBuilder& builder) {
-  auto priv_op = private_result.getDefiningOp<mlir::ktdf::PrivateOp>();
-  assert(priv_op && "private_result must come from ktdf.private");
-  auto result_idx =
-      mlir::cast<mlir::OpResult>(private_result).getResultNumber();
-  mlir::ktdf::PrivateYieldOp yield = priv_op.getYieldOp();
-  mlir::Value alloc_val = yield.getOperand(result_idx);
-  auto alloc_op = alloc_val.getDefiningOp<mlir::memref::AllocOp>();
-  assert(alloc_op && "must trace back to memref.alloc");
-
-  auto orig_type = alloc_op.getType();
-  llvm::SmallVector<int64_t> new_shape(orig_type.getShape());
-  new_shape.back() = new_last_dim;
-  auto new_type = mlir::MemRefType::get(new_shape, orig_type.getElementType(),
-                                        mlir::MemRefLayoutAttrInterface(),
-                                        orig_type.getMemorySpace());
-
-  builder.setInsertionPoint(alloc_op);
-  auto new_alloc =
-      mlir::memref::AllocOp::create(builder, alloc_op.getLoc(), new_type);
-
-  alloc_op.getResult().replaceAllUsesWith(new_alloc.getResult());
-  alloc_op.erase();
-
-  // Update the ktdf.private result type in-place.
-  private_result.setType(new_type);
-
-  return private_result;
-}
-
-/// Widens the slot \p private_result hands out to \p new_num_elements, and
-/// returns it.
-///
-/// A slot's width is part of its type, carried by the allocation it comes from
-/// and by the result the pipeline hands it out as, so both are re-typed. What
-/// arrives is still one element -- the transfer splats it -- but the read that
-/// takes it is the compute's width, and a read has to match the slot it reads.
-static mlir::Value widenFifoSlot(mlir::Value private_result,
-                                 int64_t new_num_elements,
-                                 mlir::OpBuilder& builder) {
-  auto priv_op = private_result.getDefiningOp<mlir::ktdf::PrivateOp>();
-  if (!priv_op) return private_result;
-
-  const auto result_idx =
-      mlir::cast<mlir::OpResult>(private_result).getResultNumber();
-  mlir::ktdf::PrivateYieldOp yield = priv_op.getYieldOp();
-  auto allocated = mlir::dyn_cast<mlir::OpResult>(yield.getOperand(result_idx));
-  if (!allocated) return private_result;
-  auto alloc_op = allocated.getDefiningOp<mlir::ktdf::FifoAllocateOp>();
-  if (!alloc_op) return private_result;
-
-  auto slot = mlir::cast<mlir::ktdf::FifoSlotType>(allocated.getType());
-  if (slot.getNumElements() == new_num_elements) return private_result;
-  auto wider = mlir::ktdf::FifoSlotType::get(slot.getContext(), slot.getSrc(),
-                                             slot.getDest(), new_num_elements,
-                                             slot.getElementType());
-
-  // The allocation again, that slot wider. Only the one result changes type;
-  // the others are handed on as they were.
-  llvm::SmallVector<mlir::Type> slots(alloc_op->getResultTypes());
-  slots[allocated.getResultNumber()] = wider;
-  builder.setInsertionPoint(alloc_op);
-  auto new_alloc = mlir::ktdf::FifoAllocateOp::create(
-      builder, alloc_op.getLoc(), slots, alloc_op.getOperands());
-  alloc_op->replaceAllUsesWith(new_alloc->getResults());
-  alloc_op.erase();
-
-  private_result.setType(wider);
-  return private_result;
-}
-
 /// Apply all mutations for one BroadcastLegalizationSite.
 static void applyTransformation(const BroadcastLegalizationSite& site,
-                                mlir::OpBuilder& builder) {
+                                mlir::RewriterBase& rewriter) {
   mlir::linalg::GenericOp generic_op = site.generic_op;
   mlir::Value input = generic_op.getDpsInputs()[site.operand_index];
 
@@ -464,8 +405,13 @@ static void applyTransformation(const BroadcastLegalizationSite& site,
 
     if (!is_fifo_hop) {
       // Memref hop: widen the alloc and update transfer sizes.
-      widenMemrefAlloc(hop.transfer.getDestination(), site.vector_width,
-                       builder);
+      const mlir::Value buffer = hop.transfer.getDestination();
+      llvm::SmallVector<int64_t> shape(
+          mlir::cast<mlir::MemRefType>(buffer.getType()).getShape());
+      shape.back() = site.vector_width;
+      [[maybe_unused]] const bool resized =
+          mlir::ktdf::resizePrivateBuffer(rewriter, buffer, shape);
+      assert(resized && "must trace back to memref.alloc");
 
       // Update static_dest_sizes last dim.
       auto dest_sizes_opt = hop.transfer.getStaticDestSizesArray();
@@ -477,13 +423,15 @@ static void applyTransformation(const BroadcastLegalizationSite& site,
       }
 
       // Update static_source_sizes last dim.
-      mlir::ktdf::setInnermostStaticSourceSize(hop.transfer, site.vector_width);
+      mlir::ktdf::setInnermostStaticSourceSize(rewriter, hop.transfer,
+                                               site.vector_width);
     } else {
-      // FIFO hop: mark with transfer_mode="splat", widen the slot it splats
-      // into, and say so on the transfer. The source stays the one element that
-      // arrives; it is the destination that is filled.
-      mlir::ktdf::markSplatTransfer(hop.transfer);
-      widenFifoSlot(hop.transfer.getDestination(), site.vector_width, builder);
+      // FIFO hop: make it a splat and widen the slot it splats into. The
+      // source stays the one element that arrives; it is the destination that
+      // is filled.
+      hop.transfer.setTransferMode(mlir::ktdf::TransferMode::Splat);
+      mlir::ktdf::resizePrivateFifoSlot(rewriter, hop.transfer.getDestination(),
+                                        site.vector_width);
 
       auto dest_sizes_opt = hop.transfer.getStaticDestSizesArray();
       if (dest_sizes_opt) {
@@ -506,9 +454,9 @@ static void applyTransformation(const BroadcastLegalizationSite& site,
   auto new_result_type =
       mlir::RankedTensorType::get(new_shape, old_result_type.getElementType());
 
-  builder.setInsertionPoint(read_op);
+  rewriter.setInsertionPoint(read_op);
   auto new_read = mlir::ktdf::ReadFromFifoOp::create(
-      builder, read_op.getLoc(), new_result_type, read_op.getFifoSlot());
+      rewriter, read_op.getLoc(), new_result_type, read_op.getFifoSlot());
 
   read_op.getResult().replaceAllUsesWith(new_read.getResult());
   read_op.erase();
@@ -516,7 +464,7 @@ static void applyTransformation(const BroadcastLegalizationSite& site,
   // Update the linalg.generic indexing map for this operand.
   auto maps = generic_op.getIndexingMapsArray();
   maps[site.operand_index] = site.new_indexing_map;
-  generic_op.setIndexingMapsAttr(builder.getAffineMapArrayAttr(maps));
+  generic_op.setIndexingMapsAttr(rewriter.getAffineMapArrayAttr(maps));
 }
 
 struct ScalarBroadcastLegalizationPass
@@ -553,9 +501,9 @@ struct ScalarBroadcastLegalizationPass
     }
 
     // Transformation phase.
-    mlir::OpBuilder builder(&getContext());
+    mlir::IRRewriter rewriter(&getContext());
     for (const auto& site : sites) {
-      applyTransformation(site, builder);
+      applyTransformation(site, rewriter);
     }
   }
 };
