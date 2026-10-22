@@ -268,14 +268,15 @@ def ReductionDimChunkingPass : Pass<"reduction-dim-chunking", "mlir::ModuleOp"> 
     has more than one chunk — each innermost iteration containing one
     ktdf.pipeline (Load / Compute / Store stages).
 
-    When the chunk count is inferred from the threshold (num-chunks not
-    specified), a GCD-based outer-to-inner strategy is used: starting from
-    the outermost reduction dimension, each step absorbs gcd(dim_size,
-    remaining_chunk) into that dimension and passes remaining/gcd inward.
-    Dimensions with a symbolic (dynamic) size are skipped without consuming
-    any of the remaining chunk budget.  The innermost overall loop dimension
-    is never chunked — if it is a reduction dim it is excluded before
-    distribution begins.
+    When the chunk sizes are inferred from the threshold (num-chunks not
+    specified), ReductionFootprint selects them: the reduction
+    dimensions are shrunk from the outermost to the innermost in the layout
+    of the inputs, each to the largest divisor of its size that lets the
+    input tiles of a chunk fit the threshold.  The innermost overall loop
+    dimension is never chunked.
+
+    The op computing one chunk is the one tiling with full-reduction
+    semantics (scf::tileUsingSCF) yields for those chunk sizes.
 
     When num-chunks is specified explicitly, multi-dim chunking is applied:
     one value per reduction dimension (in iterator-type order), one nested
@@ -313,9 +314,8 @@ def ReductionDimChunkingPass : Pass<"reduction-dim-chunking", "mlir::ModuleOp"> 
     value per dim, in iterator-type order).  Values may differ across dims;
     the pass emits one nested scf.for per dim (dims with chunk count 1
     produce no loop).  When omitted (the default), the pass infers the
-    chunk count automatically from the input tensor size and the
-    `chunk-size-threshold` option, then distributes it across dims using
-    the GCD-based outer-to-inner strategy described above.
+    chunk sizes from the input tile sizes and the `chunk-size-threshold`
+    option, as described above.
 
     Option `chunk-size-threshold` (default 1 MiB = 1048576 bytes) is the
     per-chunk byte budget used when `num-chunks` is not provided.  It is
@@ -328,14 +328,14 @@ def ReductionDimChunkingPass : Pass<"reduction-dim-chunking", "mlir::ModuleOp"> 
                "per reduction dim, in iterator-type order).  Values may differ "
                "across dims; the pass emits one nested scf.for per dim (dims "
                "with chunk count 1 produce no loop).  When empty (the default) "
-               "the pass infers the chunk count from chunk-size-threshold and "
-               "distributes it via the GCD-based outer-to-inner strategy.">,
+               "the pass infers the chunk sizes from chunk-size-threshold.">,
     Option<"chunkSizeThreshold", "chunk-size-threshold", "int64_t",
            "1048576",
-           "Per-chunk size budget in bytes used for automatic numChunks "
-           "inference when num-chunks is not specified (default: 1 MiB).">
+           "Bytes the input tiles of a chunk may occupy, used to infer the "
+           "chunk sizes when num-chunks is not specified (default: 1 MiB).">
   ];
   let dependentDialects = [
+    "mlir::affine::AffineDialect",
     "mlir::ktdf::KTDFDialect",
     "mlir::scf::SCFDialect",
     "mlir::arith::ArithDialect",
@@ -395,6 +395,20 @@ def LoopIVAffineMulStrengthReductionPass
     "mlir::affine::AffineDialect",
     "mlir::arith::ArithDialect",
     "mlir::scf::SCFDialect"
+  ];
+}
+
+def CoalesceDataMovementPass
+    : Pass<"ktdf-coalesce-data-movement", "mlir::ModuleOp"> {
+  let summary = "Coalesce data movement into KTDF FIFO and transfer ops";
+  let description = [{
+    Greedily applies the patterns of
+    `mlir::ktdf::populateDataMovementCoalescingPatterns`, which fold the
+    reshaping and slicing of moved data into the KTDF ops that move it.
+  }];
+  let dependentDialects = [
+    "mlir::ktdf::KTDFDialect",
+    "mlir::tensor::TensorDialect"
   ];
 }
 

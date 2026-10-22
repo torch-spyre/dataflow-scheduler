@@ -19,13 +19,11 @@
 // ReductionDimChunking: split reduction dimensions of the inner linalg.generic
 // into sequential chunks so that each chunk fits in the hardware FIFO path.
 //
-// When the chunk count is inferred from the threshold (--num-chunks not given),
-// chunking uses a GCD-based outer-to-inner strategy: starting from the
-// outermost reduction dimension, each step absorbs gcd(dim_size, remaining)
-// into that dimension and passes remaining/gcd inward.  Dimensions with a
-// symbolic (dynamic) size are skipped.  The innermost overall loop dimension
-// is never chunked — if it is a reduction dim it is excluded before
-// distribution begins.
+// When the chunk sizes are inferred from the threshold (--num-chunks not
+// given), ReductionFootprint selects them: the reduction dimensions are
+// shrunk from the outermost to the innermost in the layout of the inputs until
+// the input tiles of a chunk fit the threshold.  The innermost overall loop
+// dimension is never chunked.
 //
 // When --num-chunks is given explicitly, multi-dim chunking is applied using
 // one value per reduction dimension (in iterator-type order); one nested
@@ -42,28 +40,30 @@
 //                         stage-c (Store)  : FIFO → local memory
 //   stage-2 (Store)  : local memory → global memory
 //
-// The transformation replaces the single inner ktdf.pipeline with nested
-// scf.for loops — one per reduction dimension that has more than one chunk.
-// Dimensions whose num_chunks==1 produce no loop (the single chunk covers
-// the entire dimension).  Each innermost iteration contains one ktdf.pipeline
-// with three stages built by ktdf::StageFactory (see ReductionUtils.h).
-// First-vs-rest accumulation behaviour is selected at runtime via
+// The transformation wraps the single inner ktdf.pipeline in nested scf.for
+// loops — one per reduction dimension that has more than one chunk — and
+// rewrites it in place to process one chunk per innermost iteration.
+// Dimensions whose num_chunks==1 produce no loop (the single chunk covers the
+// entire dimension).  The compute stage computes its chunk with the op tiling
+// with full-reduction semantics yields.  First-vs-rest accumulation behaviour
+// is selected at runtime via
 // %condition = AND(iv_j == 0 for all active chunk loop IVs):
 //
-//   Load stage   : transfers the current input chunk slice (memref → fifo_in).
+//   Load stage   : transfers the current input chunk slice (memref → fifo_in)
+//                  instead of the whole input.
 //                  When !condition, also transfers the partial accumulator
 //                  (local memory output buffer → fifo_partial) so the
 //                  Compute stage can read it back.
-//   Compute stage: unconditionally reads fifo_in and runs a first
-//                  linalg.generic into tensor.empty.  Then branches on
+//   Compute stage: unconditionally reads fifo_in and runs the tiled
+//                  linalg.generic into the original init.  Then branches on
 //                  condition:
 //                    then (first iter): yield first generic result.
 //                    else (later iters): read fifo_partial, run a second
 //                      linalg.generic(input=partial, output=first result),
 //                      yield second generic result.
 //                  The conditional result is written to fifo_out.
-//   Store stage  : unconditionally writes fifo_out back to the local memory
-//                  output buffer.
+//   Store stage  : unchanged: unconditionally writes fifo_out back to the
+//                  local memory output buffer.
 //
 // The existing local memory output buffer (discovered via the original Store
 // stage's data_transfer destination) is reused as the partial-accumulation
@@ -72,20 +72,34 @@
 //===----------------------------------------------------------------------===//
 
 #include <mlir/Dialect/Linalg/IR/LinalgInterfaces.h>
+#include <mlir/Dialect/Linalg/Transforms/TilingInterfaceImpl.h>
+#include <mlir/Dialect/Utils/StaticValueUtils.h>
+#include <mlir/Interfaces/TilingInterface.h>
 
+#include <functional>
 #include <memory>
+#include <optional>
+#include <tuple>
 
-#include "dataflow-scheduler/Dialect/KTDF/Analysis/ReductionChunkAnalysis.h"
+#include "dataflow-scheduler/Dialect/KTDF/Analysis/ReductionFootprint.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/DataTransfers.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
+#include "dataflow-scheduler/Dialect/KTDF/Utils/DataTransfers.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/Dominance.h"
+#include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/CSE.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 #define PASS_NAME "reduction-dim-chunking"
 #define DEBUG_TYPE PASS_NAME
@@ -130,6 +144,11 @@ struct ReductionDimChunkingPass
           ReductionDimChunkingPass> {
   using ReductionDimChunkingPassBase<
       ReductionDimChunkingPass>::ReductionDimChunkingPassBase;
+
+  void getDependentDialects(DialectRegistry& registry) const override {
+    ReductionDimChunkingPassBase::getDependentDialects(registry);
+    linalg::registerTilingInterfaceExternalModels(registry);
+  }
 
   void runOnOperation() override {
     if (DisableThisPass) return;
@@ -194,12 +213,10 @@ struct ReductionDimChunkingPass
     assert(inner_pipeline_count == 1 &&
            "expected exactly 1 inner pipeline in parent region");
 
-    ktdf::StageOp load_stage =
-        StageFactory::findLoadStage(inner_pipeline, compute_stage);
+    ktdf::StageOp load_stage = findLoadStage(inner_pipeline, compute_stage);
     assert(load_stage && "could not find load stage upstream of compute stage");
 
-    ktdf::StageOp store_stage =
-        StageFactory::findStoreStage(inner_pipeline, compute_stage);
+    ktdf::StageOp store_stage = findStoreStage(inner_pipeline, compute_stage);
     assert(store_stage &&
            "could not find store stage downstream of compute stage");
 
@@ -217,80 +234,78 @@ struct ReductionDimChunkingPass
     // ------------------------------------------------------------------
     // Determine reduction dims and per-dim chunk sizes.
     //
-    // Threshold path (numChunks empty): GCD-based outer-to-inner chunking
-    // across all reduction dims; dynamic dims are skipped; the innermost
-    // overall loop dim is excluded if it is a reduction dim.
+    // Threshold path (numChunks empty): ReductionFootprint selects the
+    // chunk sizes; the innermost overall loop dim is excluded if it is a
+    // reduction dim.
     //
     // Explicit path (numChunks non-empty): one value per reduction dim;
     // nested scf.for loops; dims with count 1 produce no loop.
     // ------------------------------------------------------------------
-    ReductionChunkResult reduction_chunk;
 
     // FIXME: This implementation assumes that there is an injective mapping
     //        from loop to shape space, i.e., for each iteration, there will be
     //        a distinct element read from the first input tensor.
-    generic_op.getReductionDims(reduction_chunk.reduction_dims);
+    SmallVector<unsigned> reduction_dims;
+    generic_op.getReductionDims(reduction_dims);
+    SmallVector<int64_t> red_dim_sizes;
+    SmallVector<int64_t> chunk_sizes;
+    const auto loop_ranges = generic_op.getStaticLoopRanges();
 
     if (numChunks.empty()) {
-      // Auto-infer via analysis — GCD-based outer-to-inner chunking.
-
       // Collect all reduction dims, excluding the innermost overall loop dim
       // if it is a reduction (the innermost loop dim must never be chunked,
       // regardless of iterator type).
-      if (!reduction_chunk.reduction_dims.empty() &&
-          reduction_chunk.reduction_dims.back() ==
-              generic_op.getNumLoops() - 1) {
-        reduction_chunk.reduction_dims.pop_back();
+      if (!reduction_dims.empty() &&
+          reduction_dims.back() == generic_op.getNumLoops() - 1) {
+        reduction_dims.pop_back();
       }
-      if (reduction_chunk.reduction_dims.empty()) {
+      if (reduction_dims.empty()) {
         LDBG(1) << PASS_NAME
             ": could not find a chunkable reduction dimension — skipping";
         return success();
       }
 
-      auto result = analyzeReductionChunks(generic_op, chunkSizeThreshold);
-      if (!result) {
+      const auto footprint = ReductionFootprint::get(generic_op);
+      if (failed(footprint)) {
         inner_pipeline.emitError(PASS_NAME
-                                 ": ReductionChunkAnalysis could not infer "
-                                 "chunk count");
+                                 ": ReductionFootprint could not model the "
+                                 "reduction");
+        return failure();
+      }
+      const auto tile_sizes =
+          footprint->getTileSizes(getBudget(load_stage, generic_op));
+      if (!tile_sizes) {
+        inner_pipeline.emitError(llvm::Twine(PASS_NAME
+                                             ": no chunking of the reduction "
+                                             "fits the threshold of ") +
+                                 llvm::Twine(chunkSizeThreshold) + " bytes");
         return failure();
       }
 
-      auto chunk_dims =
-          computeChunkDims(result->red_dim_sizes, result->num_chunks);
-      if (!chunk_dims) {
-        inner_pipeline.emitError(
-            PASS_NAME
-            ": chunk count could not be fully distributed across the "
-            "chunkable reduction dimensions");
-        return failure();
+      for (const auto dim : reduction_dims) {
+        red_dim_sizes.push_back(loop_ranges[dim]);
+        chunk_sizes.push_back((*tile_sizes)[dim]);
       }
-
-      reduction_chunk.num_chunks = result->num_chunks;
-      reduction_chunk.red_dim_sizes = std::move(result->red_dim_sizes);
-      reduction_chunk.chunk_sizes = std::move(*chunk_dims);
     } else {
       // User-supplied --num-chunks path: collect reduction dims and validate.
-      if (reduction_chunk.reduction_dims.empty()) {
+      if (reduction_dims.empty()) {
         inner_pipeline.emitError(PASS_NAME
                                  ": could not find reduction dimension");
         return failure();
       }
 
-      if (numChunks.size() != reduction_chunk.reduction_dims.size()) {
+      if (numChunks.size() != reduction_dims.size()) {
         inner_pipeline.emitError(
             llvm::Twine(PASS_NAME ": numChunks has ") +
             llvm::Twine(numChunks.size()) + " entries but there are " +
-            llvm::Twine(reduction_chunk.reduction_dims.size()) +
-            " reduction dims");
+            llvm::Twine(reduction_dims.size()) + " reduction dims");
         return failure();
       }
 
-      const auto loop_ranges = generic_op.getStaticLoopRanges();
-      for (size_t j = 0; j < reduction_chunk.reduction_dims.size(); ++j) {
-        const auto dim = reduction_chunk.reduction_dims[j];
+      for (size_t j = 0; j < reduction_dims.size(); ++j) {
+        const auto dim = reduction_dims[j];
         const auto dim_size = loop_ranges[dim];
-        reduction_chunk.red_dim_sizes.push_back(dim_size);
+        red_dim_sizes.push_back(dim_size);
         if (dim_size == ShapedType::kDynamic) {
           LDBG(1) << PASS_NAME
                   << ": dynamic reduction size not yet supported — skipping";
@@ -303,32 +318,18 @@ struct ReductionDimChunkingPass
                   << " size=" << dim_size << " — skipping";
           return success();
         }
-        reduction_chunk.chunk_sizes.push_back(dim_size /
-                                              static_cast<int64_t>(nchunk));
+        chunk_sizes.push_back(dim_size / static_cast<int64_t>(nchunk));
       }
     }
 
     // Collect per-dim chunk counts in reduction-dim order.
     SmallVector<int64_t> per_dim_num_chunks;
-    if (numChunks.empty()) {
-      // Auto-inferred path: derive per-dim count from dim_size / chunk_size.
-      for (size_t j = 0; j < reduction_chunk.reduction_dims.size(); ++j) {
-        const int64_t dim_size = reduction_chunk.red_dim_sizes[j];
-        // Dynamic dims were skipped by computeChunkDims (chunk_sizes[j] left
-        // at kDynamic) — treat as 1 chunk (no loop emitted).
-        if (dim_size == ShapedType::kDynamic)
-          per_dim_num_chunks.push_back(1);
-        else
-          per_dim_num_chunks.push_back(dim_size /
-                                       reduction_chunk.chunk_sizes[j]);
-      }
-    } else {
-      for (unsigned nc : numChunks)
-        per_dim_num_chunks.push_back(static_cast<int64_t>(nc));
+    for (auto [dim_size, chunk_size] :
+         llvm::zip_equal(red_dim_sizes, chunk_sizes)) {
+      per_dim_num_chunks.push_back(dim_size / chunk_size);
     }
 
-    LDBG(1) << PASS_NAME ": num_reduction_dims="
-            << reduction_chunk.reduction_dims.size();
+    LDBG(1) << PASS_NAME ": num_reduction_dims=" << reduction_dims.size();
 
     // One chunk on every dimension leaves the reduction as it is: the rewrite
     // below would rebuild the pipeline to emit the same program, differing only
@@ -342,33 +343,52 @@ struct ReductionDimChunkingPass
     }
 
     return rewriteComputeStage(inner_pipeline, load_stage, compute_stage,
-                               store_stage, generic_op,
-                               reduction_chunk.reduction_dims,
-                               reduction_chunk.chunk_sizes, per_dim_num_chunks);
+                               store_stage, generic_op, reduction_dims,
+                               chunk_sizes, per_dim_num_chunks);
   }
 
   // -----------------------------------------------------------------------
-  // Replace inner_pipeline with nested scf.for loops — one per reduction
-  // dimension whose num_chunks > 1. Dimensions with num_chunks == 1 need no
-  // loop; their IV is treated as the constant 0 for offset and condition
-  // computation.
+  // The budget a chunk of `generic_op` has: chunk-size-threshold bytes for
+  // every input in the memory the load stage transfers it from.
+  // -----------------------------------------------------------------------
+  FootprintBudget getBudget(ktdf::StageOp load_stage,
+                            linalg::GenericOp generic_op) const {
+    FootprintBudget budget;
+    for (OpOperand* input : generic_op.getDpsInputOperands()) {
+      auto read = input->get().getDefiningOp<ktdf::ReadFromFifoOp>();
+      if (!read) continue;
+      load_stage.getBody()->walk([&](ktdf::DataTransferOp transfer) {
+        if (!transfer.isSourceMemRef() ||
+            transfer.getDestination() != read.getFifoSlot())
+          return WalkResult::advance();
+        Attribute memory =
+            cast<MemRefType>(transfer.getSource().getType()).getMemorySpace();
+        budget.place(*input, memory);
+        budget.capacity[memory] = chunkSizeThreshold;
+        return WalkResult::interrupt();
+      });
+    }
+    return budget;
+  }
+
+  // -----------------------------------------------------------------------
+  // Wrap inner_pipeline in one scf.for per chunked reduction dimension, and
+  // rewrite it in place to process one chunk per iteration:
   //
-  // For N dims with num_chunks[j] > 1 the emitted structure is:
-  //
-  //   scf.for %iv_0 = 0 to num_chunks[0] step 1 {
-  //     scf.for %iv_1 = 0 to num_chunks[1] step 1 {
-  //       ...
-  //         %condition = (iv_0 == 0 && iv_1 == 0 && ...)
-  //         ktdf.pipeline {
-  //           ktdf.private { ... }   // FIFO slots + tokens
-  //           ktdf.stage { ... }     // Load
-  //           ktdf.stage { ... }     // Compute
-  //           ktdf.stage { ... }     // Store
-  //         }
-  //     }
+  //   scf.for %iv_0 = 0 to num_chunks[0] {
+  //     ...
+  //       %first = (iv_0 == 0 && ...)
+  //       ktdf.pipeline {
+  //         Load:    + if !%first: partial_i <- where output i is stored
+  //         Compute: inputs sliced to the chunk,
+  //                  outputs accumulated into if %first {init_i}
+  //                                           else {read partial_i}
+  //         Store:   unchanged
+  //       }
   //   }
   //
-  // The original inner_pipeline is erased after the replacement is inserted.
+  // The data movement coalescing patterns carry the input slices over to the
+  // load stage.
   // -----------------------------------------------------------------------
   LogicalResult rewriteComputeStage(
       ktdf::PipelineOp inner_pipeline, ktdf::StageOp load_stage,
@@ -379,208 +399,259 @@ struct ReductionDimChunkingPass
     IRRewriter rewriter(context);
     Location loc = inner_pipeline.getLoc();
 
-    // ------------------------------------------------------------------
-    // Step 1: Trace dataflow to discover the source/destination memrefs and
-    // the original FIFO slot types.
-    //
-    // Input path:
-    //   input_memref → DataTransferOp → fifo_in → ReadFromFifoOp
-    //               → generic.ins[0]
-    //
-    // Output path:
-    //   generic.result(0) → WriteToFifoOp → fifo_out
-    //               → DataTransferOp → partial_memref
-    // ------------------------------------------------------------------
-    auto [load_transfer, read_from_fifo] =
-        StageFactory::findLoadTransfer(load_stage, generic_op);
-    if (!read_from_fifo) {
-      inner_pipeline.emitError(
-          PASS_NAME ": generic input is not produced by read_from_fifo");
-      return failure();
-    }
-    if (!load_transfer) {
-      inner_pipeline.emitError(PASS_NAME
-                               ": no memref-to-fifo transfer feeding "
-                               "the generic's fifo_in slot in load stage");
-      return failure();
-    }
-    Value input_memref = load_transfer.getSource();
-
-    auto [store_transfer, write_to_fifo] =
-        StageFactory::findStoreTransfer(compute_stage, store_stage, generic_op);
-    if (!write_to_fifo) {
-      inner_pipeline.emitError(
-          PASS_NAME ": generic result is not consumed by write_to_fifo");
-      return failure();
-    }
-    if (!store_transfer) {
-      inner_pipeline.emitError(PASS_NAME
-                               ": no fifo-to-memref transfer consuming "
-                               "the generic's fifo_out slot in store stage");
-      return failure();
-    }
-    Value partial_memref = store_transfer.getDestination();
-    auto output_memref_type = cast<MemRefType>(partial_memref.getType());
-
-    auto in_fifo_type =
-        dyn_cast<ktdf::FifoSlotType>(read_from_fifo.getFifoSlot().getType());
-    auto out_fifo_type =
-        dyn_cast<ktdf::FifoSlotType>(write_to_fifo.getFifoSlot().getType());
-    if (!in_fifo_type || !out_fifo_type) {
-      inner_pipeline.emitError(
-          PASS_NAME
-          ": could not derive input/output FIFO slot types "
-          "from compute stage");
-      return failure();
-    }
-
-    // Per-chunk input tensor type: reduction dims replaced with chunk_sizes.
-    auto orig_input_tensor_type =
-        cast<RankedTensorType>(generic_op.getInputs().front().getType());
-    SmallVector<int64_t> chunk_input_shape(
-        orig_input_tensor_type.getShape().begin(),
-        orig_input_tensor_type.getShape().end());
-    for (size_t j = 0; j < reduction_dims.size(); ++j)
-      chunk_input_shape[reduction_dims[j]] = chunk_sizes[j];
-    auto chunk_input_tensor_type = RankedTensorType::get(
-        chunk_input_shape, orig_input_tensor_type.getElementType());
-
-    // Output tensor type (unchanged).
-    auto output_tensor_type =
-        cast<RankedTensorType>(generic_op.getOutputs().front().getType());
-
-    // ------------------------------------------------------------------
-    // Step 2: Emit the replacement structure.
-    //
-    // Insertion point is set just before inner_pipeline so the new loops land
-    // in the correct position.  inner_pipeline is erased at the end (Step 3).
-    // ------------------------------------------------------------------
-    rewriter.setInsertionPoint(inner_pipeline);
-
-    auto input_memref_type = cast<MemRefType>(input_memref.getType());
-    int64_t chunk_fifo_elements = chunk_input_tensor_type.getNumElements();
-
-    auto chunk_in_fifo_type = ktdf::FifoSlotType::get(
-        context, in_fifo_type.getSrc(), in_fifo_type.getDest(),
-        chunk_fifo_elements, in_fifo_type.getElementType());
-
-    // Applicable-units attributes from original stages.
-    auto load_units = load_stage.getApplicableUnitsAttr();
-    auto compute_units = compute_stage.getApplicableUnitsAttr();
-    auto store_units = store_stage.getApplicableUnitsAttr();
-
-    // Batch-loop induction variable. The enclosing loop is a precondition:
-    // the indices of the transfers built below are expressed relative to it.
-    // A single-level pipeline is well-formed IR, so report the missing loop
-    // rather than assert on it.
-    auto batch_for =
-        dyn_cast<scf::ForOp>(inner_pipeline->getParentRegion()->getParentOp());
-    if (!batch_for)
+    // The batch loop is a precondition: without it, the stages loading into
+    // local memory share the pipeline, and would be repeated for every chunk.
+    if (!isa<scf::ForOp>(inner_pipeline->getParentRegion()->getParentOp()))
       return inner_pipeline.emitError(PASS_NAME)
              << ": reduction needs chunking, but its pipeline is not nested in "
                 "a batch scf.for, so there is no index to chunk against";
-    Value batch_iv = batch_for.getInductionVar();
 
-    // Materialise per-dim upper-bound constants before the outermost loop.
-    // These are index-typed scf.for bounds and must live at the scf.for
-    // scope, not inside any stage body.
-    size_t n_dims = reduction_dims.size();
-    SmallVector<Value> c_per_dim_num_chunks;
-    for (int64_t nc : per_dim_num_chunks) {
-      c_per_dim_num_chunks.push_back(
-          arith::ConstantIndexOp::create(rewriter, loc, nc));
+    // Every output must be written to a slot the store stage stores to memory,
+    // where the next chunk reads it back from.
+    SmallVector<ktdf::DataTransferOp> stores;
+    for (OpResult result : generic_op->getResults()) {
+      auto write = result.hasOneUse()
+                       ? dyn_cast<ktdf::WriteToFifoOp>(*result.user_begin())
+                       : nullptr;
+      auto* consumer = write ? ktdf::getConsumer(write.getFifoSlot()) : nullptr;
+      auto store = consumer
+                       ? dyn_cast<ktdf::DataTransferOp>(consumer->getOwner())
+                       : nullptr;
+      if (!store || store->getParentOp() != store_stage ||
+          !store.isDestMemRef() ||
+          store.getTransferMode() != ktdf::TransferMode::Copy)
+        return inner_pipeline.emitError(PASS_NAME)
+               << ": output #" << result.getResultNumber()
+               << " is not stored to memory by the store stage";
+      stores.push_back(store);
     }
 
-    // Build loops from outermost (dim 0) to innermost (dim n_dims-1).
-    // dim_ivs[j] holds the loop IV when a loop was created for dim j, or
-    // c0_loop when num_chunks[j]==1 (no loop for that dim).
-    // After this block, inner_builder is positioned at the innermost loop
-    // body (or at the original insertion point if no loops were generated).
-    SmallVector<Value> dim_ivs(n_dims);
-    OpBuilder inner_builder = rewriter;  // copy: same insertion point
+    // The partial results travel the way the first operand does.
+    auto input_read =
+        generic_op->getOperand(0).getDefiningOp<ktdf::ReadFromFifoOp>();
+    if (!input_read)
+      return inner_pipeline.emitError(PASS_NAME)
+             << ": expected the first operand to be read from a FIFO";
+    auto input_slot =
+        cast<ktdf::FifoSlotType>(input_read.getFifoSlot().getType());
+    auto input_result = cast<OpResult>(input_read.getFifoSlot());
+    Operation* input_alloc = cast<ktdf::PrivateOp>(input_result.getOwner())
+                                 .getYieldOp()
+                                 ->getOperand(input_result.getResultNumber())
+                                 .getDefiningOp();
 
-    // c0_loop / c1_loop: loop-bound constants emitted at scf.for scope.
-    // StageFactory emits its own c0/c1 inside each stage body where they
-    // are legal (stage bodies are the only valid ktdf.pipeline children).
-    Value c0_loop = arith::ConstantIndexOp::create(rewriter, loc, 0);
-    Value c1_loop = arith::ConstantIndexOp::create(rewriter, loc, 1);
+    // The chunk loops, and the offset of each loop dim in the chunk.
+    rewriter.setInsertionPoint(inner_pipeline);
+    Value c0 = arith::ConstantIndexOp::create(rewriter, loc, 0);
+    Value c1 = arith::ConstantIndexOp::create(rewriter, loc, 1);
+    SmallVector<OpFoldResult> offsets(generic_op.getNumLoops(),
+                                      rewriter.getIndexAttr(0));
+    SmallVector<OpFoldResult> sizes =
+        getAsIndexOpFoldResult(context, generic_op.getStaticLoopRanges());
+    Value first;
+    for (auto [dim, chunk_size, num_chunks] :
+         llvm::zip_equal(reduction_dims, chunk_sizes, per_dim_num_chunks)) {
+      if (num_chunks == 1) continue;
+      auto loop = scf::ForOp::create(
+          rewriter, loc, c0,
+          arith::ConstantIndexOp::create(rewriter, loc, num_chunks), c1);
+      rewriter.setInsertionPointToStart(loop.getBody());
+      Value iv = loop.getInductionVar();
+      offsets[dim] = affine::makeComposedFoldedAffineApply(
+          rewriter, loc, rewriter.getAffineDimExpr(0) * chunk_size, {iv});
+      sizes[dim] = rewriter.getIndexAttr(chunk_size);
+      Value is_first = arith::CmpIOp::create(rewriter, loc,
+                                             arith::CmpIPredicate::eq, iv, c0);
+      first = first ? arith::AndIOp::create(rewriter, loc, first, is_first)
+                    : is_first;
+    }
+    rewriter.moveOpBefore(inner_pipeline, rewriter.getInsertionBlock(),
+                          rewriter.getInsertionPoint());
 
-    for (size_t j = 0; j < n_dims; ++j) {
-      if (per_dim_num_chunks[j] == 1) {
-        // No loop for this dim; use constant 0 as the IV.
-        dim_ivs[j] = c0_loop;
-      } else {
-        auto loop = scf::ForOp::create(inner_builder, loc, c0_loop,
-                                       c_per_dim_num_chunks[j], c1_loop);
-        dim_ivs[j] = loop.getInductionVar();
-        // Descend into the loop body for the next (inner) level.
-        inner_builder = OpBuilder(loop.getBody(), loop.getBody()->begin());
+    // The compute stage computes the chunk. Outputs not indexed by a chunked
+    // dim accumulate over the chunks, the others are partitioned by them. The
+    // index computations of the slices stay outside the pipeline, where the
+    // load and store stages can see them.
+    rewriter.setInsertionPoint(inner_pipeline);
+    auto tiled = cast<TilingInterface>(generic_op.getOperation())
+                     .getTiledImplementation(rewriter, offsets, sizes);
+    if (failed(tiled))
+      return inner_pipeline.emitError(PASS_NAME)
+             << ": could not tile the reduction to a chunk";
+    SmallVector<OpFoldResult> result_offsets, result_sizes;
+    SmallVector<Value> results;
+    for (OpResult result : generic_op->getResults()) {
+      if (failed(cast<TilingInterface>(generic_op.getOperation())
+                     .getResultTilePosition(rewriter, result.getResultNumber(),
+                                            offsets, sizes, result_offsets,
+                                            result_sizes)))
+        return inner_pipeline.emitError(PASS_NAME)
+               << ": could not tile output #" << result.getResultNumber();
+      results.push_back(tiled->tiledValues[result.getResultNumber()]);
+      auto type = cast<RankedTensorType>(result.getType());
+      if (cast<RankedTensorType>(results.back().getType()) == type) continue;
+      auto empty = tensor::EmptyOp::create(rewriter, loc, type.getShape(),
+                                           type.getElementType());
+      results.back() = tensor::InsertSliceOp::create(
+          rewriter, loc, results.back(), empty, result_offsets, result_sizes,
+          SmallVector<OpFoldResult>(type.getRank(), rewriter.getIndexAttr(1)));
+      tiled->generatedSlices.push_back(empty);
+      tiled->generatedSlices.push_back(results.back().getDefiningOp());
+    }
+    for (Operation* op : llvm::concat<Operation* const>(tiled->generatedSlices,
+                                                        tiled->tiledOps))
+      rewriter.moveOpBefore(op, generic_op);
+    for (Value result : results) {
+      if (auto insert = result.getDefiningOp<tensor::InsertSliceOp>())
+        rewriter.moveOpAfter(insert, tiled->tiledOps.front());
+    }
+    rewriter.replaceOp(generic_op, results);
+    generic_op = cast<linalg::GenericOp>(tiled->tiledOps.front());
+    for (Operation* op : tiled->generatedSlices) {
+      auto slice = dyn_cast<tensor::ExtractSliceOp>(op);
+      if (slice && isIdentitySlice(slice))
+        rewriter.replaceOp(slice, slice.getSource());
+    }
+
+    // Every accumulator starts from its init on the first chunk, and from the
+    // partial result the previous chunk stored otherwise.
+    {
+      ktdf::PrivateBuilder slots(rewriter, inner_pipeline, loc);
+      for (auto [init, store] :
+           llvm::zip_equal(generic_op.getDpsInitsMutable(), stores)) {
+        if (init.get().getDefiningOp<tensor::ExtractSliceOp>()) continue;
+        auto type = cast<RankedTensorType>(init.get().getType());
+        Value partial =
+            slots
+                .createFifo(ktdf::FifoSlotType::get(
+                    context, input_slot.getSrc(), input_slot.getDest(),
+                    type.getNumElements(), type.getElementType()))
+                .front();
+        rewriter.moveOpAfter(partial.getDefiningOp(), input_alloc);
+        input_alloc = partial.getDefiningOp();
+
+        rewriter.setInsertionPoint(generic_op);
+        auto acc = scf::IfOp::create(rewriter, loc, TypeRange{type}, first,
+                                     /*withElseRegion=*/true);
+        rewriter.setInsertionPointToStart(acc.thenBlock());
+        scf::YieldOp::create(rewriter, loc, init.get());
+        rewriter.setInsertionPointToStart(acc.elseBlock());
+        scf::YieldOp::create(
+            rewriter, loc,
+            ktdf::ReadFromFifoOp::create(rewriter, loc, type, partial)
+                .getResult());
+        rewriter.modifyOpInPlace(
+            generic_op, [&, &init = init]() { init.set(acc.getResult(0)); });
+
+        rewriter.setInsertionPointToEnd(load_stage.getBody());
+        auto load = scf::IfOp::create(rewriter, loc, TypeRange{}, first,
+                                      /*withElseRegion=*/true);
+        rewriter.setInsertionPointToStart(load.elseBlock());
+        OpOperand& dest = store.getDestinationMutable();
+        const auto [map, indices] = store.getTiedOffset(&dest);
+        ktdf::DataTransferOp::create(
+            rewriter, loc, dest.get(), map,
+            cloneOutOf(rewriter, indices, store_stage),
+            store.getTiedSizes(&dest), partial, AffineMap{}, ValueRange{},
+            ArrayRef<OpFoldResult>{
+                rewriter.getIndexAttr(type.getNumElements())});
       }
     }
 
-    // condition = AND of (iv_j == 0) for every dim whose loop was generated.
-    // Dims with num_chunks==1 always have iv==c0 and are skipped to avoid
-    // dead arith.cmpi constants.
-    // Degenerate case (all dims have num_chunks==1): condition stays null;
-    // emit arith.constant 1 (i1) rather than a trivially-true cmpi.
-    Value condition;
-    for (size_t j = 0; j < n_dims; ++j) {
-      if (per_dim_num_chunks[j] == 1) continue;
-      Value eq = arith::CmpIOp::create(
-          inner_builder, loc, arith::CmpIPredicate::eq, dim_ivs[j], c0_loop);
-      condition = condition
-                      ? arith::AndIOp::create(inner_builder, loc, condition, eq)
-                      : eq;
-    }
-    if (!condition) {
-      condition = arith::ConstantIntOp::create(inner_builder, loc, /*value=*/1,
-                                               /*width=*/1);
-    }
+    // Splits the combine off the accumulation, where possible.
+    for (OpOperand& init : generic_op.getDpsInitsMutable())
+      (void)extractCombiner(rewriter, generic_op, init);
 
-    // One ktdf.pipeline per innermost chunk iteration.
-    auto phase_pipeline = ktdf::PipelineOp::create(inner_builder, loc);
-    OpBuilder pipe_bldr(phase_pipeline.getBody(),
-                        phase_pipeline.getBody()->end());
+    RewritePatternSet patterns(context);
+    scheduler::populateDataMovementCoalescingPatterns(patterns);
+    GreedyRewriteConfig config;
+    config.enableFolding(false).enableConstantCSE(false);
+    auto* const scope =
+        inner_pipeline->getParentWithTrait<OpTrait::IsIsolatedFromAbove>();
+    if (failed(applyPatternsGreedily(scope, std::move(patterns), config)))
+      return inner_pipeline.emitError(PASS_NAME)
+             << ": data movement coalescing did not converge";
+    if (!llvm::all_of(generic_op.getDpsInputs(), [](Value input) {
+          return !input.getDefiningOp<tensor::ExtractSliceOp>();
+        }))
+      return inner_pipeline.emitError(PASS_NAME)
+             << ": could not fold the chunk into the load transfer";
 
-    // partial_fifo_type carries output-tensor-sized elements in the
-    // Load → Compute direction (same src/dest endpoints as fifo_in).
-    auto partial_fifo_type = ktdf::FifoSlotType::get(
-        context, in_fifo_type.getSrc(), in_fifo_type.getDest(),
-        out_fifo_type.getNumElements(), out_fifo_type.getElementType());
+    DominanceInfo dominance;
+    eliminateCommonSubExpressions(rewriter, dominance, load_stage);
+    return success();
+  }
 
-    StageFactory factory(pipe_bldr, loc, batch_iv, load_units, compute_units,
-                         store_units);
+  // Determines whether `slice` takes the whole of its source.
+  static bool isIdentitySlice(tensor::ExtractSliceOp slice) {
+    return slice.getSourceType() == slice.getResultType() &&
+           llvm::all_of(slice.getMixedOffsets(),
+                        [](OpFoldResult ofr) { return isZeroInteger(ofr); }) &&
+           llvm::all_of(slice.getMixedStrides(),
+                        [](OpFoldResult ofr) { return isOneInteger(ofr); });
+  }
 
-    // Describe the FIFO slot layout and token count for this chunk pipeline:
-    //   in-slot  0  (chunk_in_fifo_type) : input chunk,  Load → Compute
-    //   partial-slot 0 (partial_fifo_type): partial accum, Load → Compute
-    //                                       (non-first iterations only)
-    //   out-slot 0  (out_fifo_type)      : reduction result, Compute → Store
-    //   token 0                          : Load signals Compute
-    //   token 1                          : Compute signals Store
-    ChunkPipelineConfig cfg;
-    cfg.in_slot_types = {chunk_in_fifo_type};
-    cfg.partial_slot_types = {partial_fifo_type};
-    cfg.out_slot_types = {out_fifo_type};
-    cfg.n_tokens = 2;
+  // Returns `values`, cloning the pure ops computing them within `scope` to
+  // the insertion point of `rewriter`.
+  static SmallVector<Value> cloneOutOf(RewriterBase& rewriter,
+                                       ValueRange values, Operation* scope) {
+    IRMapping mapping;
+    std::function<Value(Value)> get = [&](Value value) -> Value {
+      if (Value mapped = mapping.lookupOrNull(value)) return mapped;
+      Operation* def = value.getDefiningOp();
+      if (!def || !scope->isProperAncestor(def)) return value;
+      assert(isPure(def) && def->getNumRegions() == 0 &&
+             "index computations are expected to be pure");
+      for (Value operand : def->getOperands()) (void)get(operand);
+      rewriter.clone(*def, mapping);
+      return mapping.lookup(value);
+    };
+    return llvm::map_to_vector(values, get);
+  }
 
-    factory.setSlots(factory.buildFifoPrivate(cfg));
+  // Rewrites `op` accumulating into `init = scf.if %c {%v} else {%partial}`
+  // to accumulate into %v, and to combine %partial into its result on the
+  // else branch instead. Fails unless the body of `op` is a single binary op
+  // of its block arguments, with only `init` as an output.
+  static LogicalResult extractCombiner(RewriterBase& rewriter,
+                                       linalg::GenericOp op, OpOperand& init) {
+    auto acc = init.get().getDefiningOp<scf::IfOp>();
+    Block* body = op.getBody();
+    if (!acc || !acc->hasOneUse() || op->getNumResults() != 1 ||
+        op.getNumDpsInputs() != 1 ||
+        !llvm::hasSingleElement(body->without_terminator()))
+      return failure();
+    Operation& combiner = body->front();
+    if (combiner.getNumOperands() != 2 || combiner.getNumResults() != 1 ||
+        !llvm::is_contained(combiner.getOperands(), body->getArgument(0)) ||
+        !llvm::is_contained(combiner.getOperands(), body->getArgument(1)) ||
+        body->getTerminator()->getOperand(0) != combiner.getResult(0))
+      return failure();
 
-    factory.buildLoadStage(condition, input_memref, input_memref_type,
-                           partial_memref, output_memref_type, reduction_dims,
-                           chunk_sizes, dim_ivs, cfg);
+    Value value = acc.thenYield().getOperand(0);
+    Value partial = acc.elseYield().getOperand(0);
+    Value result = op->getResult(0);
+    rewriter.modifyOpInPlace(op, [&]() { init.set(value); });
+    rewriter.moveOpAfter(acc, op);
+    rewriter.replaceAllUsesWith(result, acc.getResult(0));
+    rewriter.modifyOpInPlace(acc.thenYield(),
+                             [&]() { acc.thenYield()->setOperand(0, result); });
 
-    factory.buildComputeStage(condition, chunk_input_tensor_type,
-                              output_tensor_type, generic_op, cfg);
-
-    factory.buildStoreStage(partial_memref, cfg);
-
-    // ------------------------------------------------------------------
-    // Step 3: Erase the original inner pipeline now that the replacement
-    // has been inserted before it.
-    // ------------------------------------------------------------------
-    rewriter.eraseOp(inner_pipeline);
-
+    // The combine has the body of `op`, as an elementwise op on the outputs.
+    auto type = cast<RankedTensorType>(result.getType());
+    AffineMap identity =
+        rewriter.getMultiDimIdentityMap(static_cast<unsigned>(type.getRank()));
+    rewriter.setInsertionPoint(acc.elseYield());
+    auto combine = linalg::GenericOp::create(
+        rewriter, op.getLoc(), TypeRange{type}, ValueRange{partial},
+        ValueRange{result}, ArrayRef<AffineMap>{identity, identity},
+        SmallVector<utils::IteratorType>(type.getRank(),
+                                         utils::IteratorType::parallel));
+    rewriter.cloneRegionBefore(op.getRegion(), combine.getRegion(),
+                               combine.getRegion().end());
+    rewriter.modifyOpInPlace(acc.elseYield(), [&]() {
+      acc.elseYield()->setOperand(0, combine.getResult(0));
+    });
     return success();
   }
 };

@@ -4,6 +4,7 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFTransforms
     StageCoarsening/Materializer.cpp
     StageCoarsening/ScopeCorrection.cpp
     BroadcastPromotion.cpp
+    CoalesceDataMovement.cpp
     MappableExtensions.cpp
     MapReductionPartials.cpp
     ReductionDimChunking.cpp
@@ -39,9 +40,13 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFTransforms
     MLIRFuncDialect
     MLIRIR
     MLIRLinalgDialect
+    MLIRLinalgTransforms
     MLIRMemRefDialect
     MLIRPass
     MLIRSCFDialect
+    MLIRSCFTransforms
     MLIRTensorDialect
+    MLIRTilingInterface
+    MLIRTransforms
     MLIRDialectUtils
 )

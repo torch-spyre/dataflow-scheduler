@@ -27,9 +27,7 @@
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/Dialect/Affine/ViewLikeInterfaceUtils.h>
 #include <mlir/Dialect/Tensor/IR/Tensor.h>
-#include <mlir/Dialect/Utils/ReshapeOpsUtils.h>
 #include <mlir/Dialect/Utils/StaticValueUtils.h>
-#include <mlir/IR/AffineExpr.h>
 #include <mlir/IR/AffineMap.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinTypes.h>
@@ -45,6 +43,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <tuple>
@@ -52,8 +51,10 @@
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/DataTransferLowering.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/DataTransfers.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
+#include "ktir/Dialect/KTDP/KTDP.h"
 
 using namespace scheduler;
 
@@ -84,122 +85,6 @@ namespace {
     return mlir::getConstantIntValue(range.size)
         .value_or(mlir::ShapedType::kDynamic);
   });
-}
-
-/// Maps @p slice of a tensor of @p source_shape onto the same elements of a
-/// reshaped tensor of @p target_shape .
-///
-/// In-bounds slices of unit dimensions always start at zero.
-///
-/// @retval failure   Shapes differ in more than static unit dimensions, or
-///                   @p slice is not of size one in a dropped unit dimension.
-/// @retval Slice     Mixed slice parameters.
-[[nodiscard]] auto mapSlice(mlir::Builder& builder,
-                            llvm::ArrayRef<mlir::Range> slice,
-                            llvm::ArrayRef<int64_t> source_shape,
-                            llvm::ArrayRef<int64_t> target_shape)
-    -> llvm::FailureOr<llvm::SmallVector<mlir::Range>> {
-  llvm::SmallVector<std::pair<int64_t, mlir::Range>> carried;
-  for (auto [extent, range] : llvm::zip_equal(source_shape, slice)) {
-    if (extent != 1) {
-      carried.emplace_back(extent, range);
-    } else if (!mlir::isConstantIntValue(range.size, 1)) {
-      return llvm::failure();
-    }
-  }
-
-  const mlir::Range unit{builder.getIndexAttr(0), builder.getIndexAttr(1),
-                         builder.getIndexAttr(1)};
-  llvm::SmallVector<mlir::Range> mapped;
-  auto* next = carried.begin();
-  for (const auto extent : target_shape) {
-    if (extent == 1) {
-      mapped.push_back(unit);
-      continue;
-    }
-    if (next == carried.end() || mlir::ShapedType::isDynamic(extent) ||
-        next->first != extent) {
-      return llvm::failure();
-    }
-    mapped.push_back((next++)->second);
-  }
-  if (next != carried.end()) {
-    return llvm::failure();
-  }
-  return mapped;
-}
-
-/// Reshapes @p value to @p shape , which may only differ in unit dimensions.
-[[nodiscard]] auto reshapeTo(mlir::OpBuilder& builder, mlir::Location loc,
-                             mlir::Value value, llvm::ArrayRef<int64_t> shape)
-    -> mlir::Value {
-  const auto type = llvm::cast<mlir::RankedTensorType>(value.getType());
-  if (type.getShape() == shape) {
-    return value;
-  }
-
-  const auto reshape = [&](mlir::Value source,
-                           mlir::RankedTensorType target) -> mlir::Value {
-    const auto source_type =
-        llvm::cast<mlir::RankedTensorType>(source.getType());
-    const auto reassociation =
-        mlir::getReassociationIndicesForReshape(source_type, target);
-    assert(reassociation && "shapes must only differ in unit dimensions");
-    if (source_type.getRank() > target.getRank()) {
-      return mlir::tensor::CollapseShapeOp::create(builder, loc, source,
-                                                   *reassociation);
-    }
-    return mlir::tensor::ExpandShapeOp::create(builder, loc, target, source,
-                                               *reassociation);
-  };
-
-  // A single reshape suffices unless unit dimensions are dropped and added.
-  const auto target = type.clone(shape);
-  if (mlir::getReassociationIndicesForReshape(type, target)) {
-    return reshape(value, target);
-  }
-  const auto squeezed = type.clone(llvm::to_vector(llvm::make_filter_range(
-      shape, [](int64_t extent) { return extent != 1; })));
-  return reshape(reshape(value, squeezed), target);
-}
-
-/// Memory region accessed by one side of a `ktdf.data_transfer`, given as the
-/// affine map to its start, the indices of that map, and its sizes.
-using TransferAccess =
-    std::tuple<mlir::AffineMap, llvm::SmallVector<mlir::Value>,
-               llvm::SmallVector<mlir::OpFoldResult>>;
-
-/// Creates the access that a `ktdf.data_transfer` uses for @p slice .
-///
-/// Since `ktdf.data_transfer` always performs a contiguous access, non unit
-/// strides are not allowed in dimensions of size not equal to one.
-///
-/// @retval failure         Invalid strided access.
-/// @retval TransferAccess  Memory side of a `ktdf.data_transfer`.
-[[nodiscard]] auto createTransferAccess(mlir::OpBuilder& builder,
-                                        llvm::ArrayRef<mlir::Range> slice)
-    -> llvm::FailureOr<TransferAccess> {
-  llvm::SmallVector<mlir::AffineExpr> results;
-  llvm::SmallVector<mlir::Value> offsets;
-  llvm::SmallVector<mlir::OpFoldResult> sizes;
-  for (const auto& range : slice) {
-    if (!mlir::isConstantIntValue(range.stride, 1) &&
-        !mlir::isConstantIntValue(range.size, 1)) {
-      return llvm::failure();
-    }
-
-    if (const auto value = mlir::getConstantIntValue(range.offset); value) {
-      results.push_back(builder.getAffineConstantExpr(*value));
-    } else {
-      results.push_back(builder.getAffineDimExpr(offsets.size()));
-      offsets.push_back(llvm::cast<mlir::Value>(range.offset));
-    }
-    sizes.push_back(range.size);
-  }
-
-  return TransferAccess{
-      mlir::AffineMap::get(offsets.size(), 0, results, builder.getContext()),
-      offsets, sizes};
 }
 
 }  // namespace
@@ -278,48 +163,6 @@ void scheduler::setThrottle(mlir::Operation* op, int64_t value) {
 
 namespace {
 
-/// Folds a reshape of the data read from a FIFO into the read.
-struct FoldReshapeIntoFifoRead
-    : mlir::OpRewritePattern<mlir::ktdf::ReadFromFifoOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  auto matchAndRewrite(mlir::ktdf::ReadFromFifoOp read,
-                       mlir::PatternRewriter& rewriter) const
-      -> llvm::LogicalResult override {
-    if (!read->hasOneUse() || !isReshape(*read->user_begin())) {
-      return rewriter.notifyMatchFailure(read, "not reshaped");
-    }
-
-    auto* const reshape = *read->user_begin();
-    rewriter.modifyOpInPlace(read, [&]() {
-      read.getResult().setType(
-          llvm::cast<mlir::ShapedType>(reshape->getResult(0).getType()));
-    });
-    rewriter.replaceOp(reshape, read.getResult());
-    return llvm::success();
-  }
-};
-
-/// Folds a reshape of the data written to a FIFO into the write.
-struct FoldReshapeIntoFifoWrite
-    : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
-  using OpRewritePattern::OpRewritePattern;
-
-  auto matchAndRewrite(mlir::ktdf::WriteToFifoOp write,
-                       mlir::PatternRewriter& rewriter) const
-      -> llvm::LogicalResult override {
-    auto* const reshape = write.getData().getDefiningOp();
-    if (!reshape || !isReshape(reshape)) {
-      return rewriter.notifyMatchFailure(write, "not reshaped");
-    }
-
-    rewriter.modifyOpInPlace(write, [&]() {
-      write.getDataMutable().assign(reshape->getOperand(0));
-    });
-    return llvm::success();
-  }
-};
-
 auto createLoad(mlir::OpBuilder& builder, mlir::ktdp_lowering::LoadOp load,
                 llvm::ArrayRef<mlir::Range> slice,
                 std::optional<mlir::Location> slice_loc = {})
@@ -375,8 +218,8 @@ struct FoldSliceIntoLoad
 
 void scheduler::populateDataMovementCoalescingPatterns(
     mlir::RewritePatternSet& patterns) {
-  patterns.add<FoldReshapeIntoFifoRead, FoldReshapeIntoFifoWrite,
-               FoldSliceIntoLoad>(patterns.getContext());
+  mlir::ktdf::populateDataMovementCoalescingPatterns(patterns);
+  patterns.add<FoldSliceIntoLoad>(patterns.getContext());
 }
 
 //===----------------------------------------------------------------------===//
@@ -440,7 +283,7 @@ struct TileLoad : mlir::OpRewritePattern<mlir::tensor::ExtractSliceOp> {
     auto slice = getSlice(extract);
     for (auto* op = source.getDefiningOp(); op && isReshape(op);
          op = source.getDefiningOp()) {
-      auto mapped = mapSlice(
+      auto mapped = mlir::ktdf::mapSliceOfCopy(
           rewriter, slice,
           llvm::cast<mlir::ShapedType>(op->getResult(0).getType()).getShape(),
           llvm::cast<mlir::ShapedType>(op->getOperand(0).getType()).getShape());
@@ -465,8 +308,8 @@ struct TileLoad : mlir::OpRewritePattern<mlir::tensor::ExtractSliceOp> {
 
     // Reshape the tile, and add the hops back in, counting the load as one.
     mlir::Value loaded =
-        reshapeTo(rewriter, extract.getLoc(), new_load.getResult(),
-                  extract.getType().getShape());
+        mlir::ktdf::reshapeTo(rewriter, extract.getLoc(), new_load.getResult(),
+                              extract.getType().getShape());
     llvm::SmallVector<mlir::Attribute> hops{
         getMemorySpace(load.getAccessTile())};
     if (via) {
@@ -492,8 +335,8 @@ struct TileLoad : mlir::OpRewritePattern<mlir::tensor::ExtractSliceOp> {
 
 /// Determines whether any op strictly between @p begin and @p end , which must
 /// be in this order in the same block, may have memory effects.
-[[nodiscard]] auto hasMemoryEffectsBetween(mlir::Operation* begin,
-                                           mlir::Operation* end) -> bool {
+[[nodiscard]] auto mightHaveMemoryEffectsBetween(mlir::Operation* begin,
+                                                 mlir::Operation* end) -> bool {
   assert(begin->getBlock() == end->getBlock() && begin->isBeforeInBlock(end));
   return llvm::any_of(
       llvm::make_range(std::next(begin->getIterator()), end->getIterator()),
@@ -535,9 +378,9 @@ struct TileStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
     // Map the inserted slice onto the stored tensor.
     auto slice = getSlice(insert_slice);
     if (has_reshape) {
-      auto mapped =
-          mapSlice(rewriter, slice, insert_slice.getDestType().getShape(),
-                   store.getDataTile().getType().getShape());
+      auto mapped = mlir::ktdf::mapSliceOfCopy(
+          rewriter, slice, insert_slice.getDestType().getShape(),
+          store.getDataTile().getType().getShape());
       if (failed(mapped)) {
         return rewriter.notifyMatchFailure(store, "unsupported reshape");
       }
@@ -557,7 +400,7 @@ struct TileStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
       if (outermost->getBlock() != store->getBlock()) {
         return rewriter.notifyMatchFailure(store, "not after the loop nest");
       }
-      if (hasMemoryEffectsBetween(outermost, store)) {
+      if (mightHaveMemoryEffectsBetween(outermost, store)) {
         return rewriter.notifyMatchFailure(store,
                                            "memory effects before store");
       }
@@ -569,7 +412,7 @@ struct TileStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
 
     // Determine the value to store. Conservatively, this must be the result of
     // insert_slice, since we didn't check how that is computed.
-    mlir::Value stored = insert_slice.getResult();
+    mlir::TypedValue<mlir::RankedTensorType> stored = insert_slice.getResult();
     if (nest->is_update) {
       stored = insert_slice.getSource();
       rewriter.replaceAllUsesWith(insert_slice.getResult(),
@@ -579,8 +422,8 @@ struct TileStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
     // Reshape the tile, and add the hops back in, counting the store as one.
     rewriter.setInsertionPointAfter(insert_slice);
     if (has_reshape) {
-      stored =
-          reshapeTo(rewriter, store.getLoc(), stored, getSliceShape(slice));
+      stored = mlir::ktdf::reshapeTo(rewriter, store.getLoc(), stored,
+                                     getSliceShape(slice));
     }
     llvm::SmallVector<mlir::Attribute> hops;
     if (via) {
@@ -589,9 +432,11 @@ struct TileStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
     hops.push_back(getMemorySpace(store.getAccessTile()));
     canonicalizeHops(hops, mem_space_map_);
     if (hops.size() > 1) {
-      stored = mlir::ktdf::ViaOp::create(
-          rewriter, store.getLoc(), stored,
-          rewriter.getArrayAttr(llvm::ArrayRef(hops).drop_back(1)));
+      stored = llvm::cast<mlir::TypedValue<mlir::RankedTensorType>>(
+          mlir::ktdf::ViaOp::create(
+              rewriter, store.getLoc(), stored,
+              rewriter.getArrayAttr(llvm::ArrayRef(hops).drop_back(1)))
+              .getResult());
     }
 
     // Create the `ktdp_lowering.store` that captures the applied tiling.
@@ -603,12 +448,14 @@ struct TileStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
     // load it again from memory.
     if (outermost && nest->is_update) {
       rewriter.setInsertionPointAfter(outermost);
-      auto reloaded = mlir::ktdp::LoadOp::create(rewriter, store.getLoc(),
-                                                 store.getDataTile().getType(),
-                                                 store.getAccessTile());
+      auto reloaded = llvm::cast<mlir::TypedValue<mlir::RankedTensorType>>(
+          mlir::ktdp::LoadOp::create(rewriter, store.getLoc(),
+                                     store.getDataTile().getType(),
+                                     store.getAccessTile())
+              .getResult());
       rewriter.replaceAllUsesWith(
           nest->result,
-          reshapeTo(
+          mlir::ktdf::reshapeTo(
               rewriter, store.getLoc(), reloaded,
               llvm::cast<mlir::ShapedType>(nest->result.getType()).getShape()));
     }
@@ -702,12 +549,15 @@ struct LowerLoadToFifo : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
 
     // Dimensions of stride zero broadcast a single loaded element.
     auto slice = getSlice(load);
+    bool is_splat = false;
     for (auto& range : slice) {
       if (mlir::isConstantIntValue(range.stride, 0)) {
+        is_splat |= !mlir::isConstantIntValue(range.size, 1);
         range.size = rewriter.getIndexAttr(1);
       }
     }
-    const auto source = createTransferAccess(rewriter, slice);
+    const auto source =
+        mlir::ktdf::TransferAccess::get(rewriter.getContext(), slice);
     if (failed(source)) {
       return rewriter.notifyMatchFailure(load, "strided load");
     }
@@ -716,7 +566,9 @@ struct LowerLoadToFifo : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
     auto transfer = mlir::ktdf::DataTransferOp::create(
         rewriter, rewriter.getFusedLoc({load.getLoc(), write.getLoc()}), memref,
         source_map, source_offsets, source_sizes, write.getFifoSlot(), {}, {},
-        load.getMixedSizes());
+        load.getMixedSizes(),
+        is_splat ? mlir::ktdf::TransferMode::Splat
+                 : mlir::ktdf::TransferMode::Copy);
     transfer->setDiscardableAttrs(load->getRawDictionaryAttrs());
     rewriter.eraseOp(write);
     return llvm::success();
@@ -742,7 +594,8 @@ struct LowerStoreFromFifo
       return rewriter.notifyMatchFailure(store, "not bufferized");
     }
 
-    const auto dest = createTransferAccess(rewriter, getSlice(store));
+    const auto dest =
+        mlir::ktdf::TransferAccess::get(rewriter.getContext(), getSlice(store));
     if (failed(dest)) {
       return rewriter.notifyMatchFailure(store, "strided store");
     }
@@ -776,8 +629,10 @@ struct LowerStoreFromLoad
       return rewriter.notifyMatchFailure(store, "does not load from memory");
     }
 
-    const auto load_access = createTransferAccess(rewriter, getSlice(load));
-    const auto store_access = createTransferAccess(rewriter, getSlice(store));
+    const auto load_access =
+        mlir::ktdf::TransferAccess::get(rewriter.getContext(), getSlice(load));
+    const auto store_access =
+        mlir::ktdf::TransferAccess::get(rewriter.getContext(), getSlice(store));
     if (failed(load_access) || failed(store_access)) {
       return rewriter.notifyMatchFailure(store, "strided transfer");
     }
@@ -811,7 +666,8 @@ struct LowerIndLoadToFifo : mlir::OpRewritePattern<mlir::ktdf::WriteToFifoOp> {
       return rewriter.notifyMatchFailure(load, "expected static shape");
     }
 
-    const auto src_access = createTransferAccess(rewriter, getSlice(load));
+    const auto src_access =
+        mlir::ktdf::TransferAccess::get(rewriter.getContext(), getSlice(load));
     if (failed(src_access)) {
       return rewriter.notifyMatchFailure(load, "strided transfer");
     }
@@ -853,7 +709,8 @@ struct LowerIndStoreFromFifo
       return rewriter.notifyMatchFailure(store, "expected static shape");
     }
 
-    const auto dest_access = createTransferAccess(rewriter, getSlice(store));
+    const auto dest_access =
+        mlir::ktdf::TransferAccess::get(rewriter.getContext(), getSlice(store));
     if (failed(dest_access)) {
       return rewriter.notifyMatchFailure(store, "strided transfer");
     }

@@ -600,6 +600,10 @@ bool PathExpansionMaterializer::tryAdaptDataTransferOp(
       params.dest_sizes);
   result->setDiscardableAttrs(
       transfer_info->template_op->getRawDictionaryAttrs());
+  if (auto template_transfer = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(
+          transfer_info->template_op)) {
+    result.setTransferMode(template_transfer.getTransferMode());
+  }
 
   return true;
 }
@@ -811,6 +815,10 @@ void PathExpansionMaterializer::emitSyntheticTransfer(
   if (transfer_info.template_op) {
     transfer->setDiscardableAttrs(
         transfer_info.template_op->getRawDictionaryAttrs());
+    if (auto template_transfer = mlir::dyn_cast<mlir::ktdf::DataTransferOp>(
+            transfer_info.template_op)) {
+      transfer.setTransferMode(template_transfer.getTransferMode());
+    }
   }
 }
 

@@ -89,9 +89,9 @@ void populateKTDPTilingPatterns(mlir::RewritePatternSet& patterns,
 
 /// Adds @p patterns that coalesce data movement.
 ///
-///  - Folds `tensor.(collapse|expand)_shape` into `ktdf.read_from_fifo`
-///  - Folds `tensor.(collapse|expand)_shape` into `ktdf.write_to_fifo`
 ///  - Folds `ktdp_lowering.load` into its only `tensor.extract_slice` user.
+///
+/// This includes the upstream `ktdf` data movement coalescing patterns.
 void populateDataMovementCoalescingPatterns(mlir::RewritePatternSet& patterns);
 
 /// Adds @p patterns that convert various ops to `ktdf.data_transfer`.

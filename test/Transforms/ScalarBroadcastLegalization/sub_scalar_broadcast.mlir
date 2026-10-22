@@ -43,8 +43,8 @@
 // CHECK-NEXT:         } {applicable_units = ["MNILU"]}
 // CHECK-NEXT:         ktdf.stage depends_in(%[[VAL_1:.*]]#6) depends_out(%[[VAL_1]]#7) {
 // CHECK-NEXT:           ktdf.data_transfer from %[[VAL_1]]#0[0, 0, 0, 0] size [1, 1, 1, 64] to %[[VAL_1]]#3 size [64] : memref<1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-                         // The second L1LU transfer must have transfer_mode = "splat", source size still [1, 1, 1, 1].
-// CHECK-NEXT:           ktdf.data_transfer from %[[VAL_1]]#1[0, 0, 0, 0] size [1, 1, 1, 1] to %[[VAL_1]]#4 size [64] {transfer_mode = "splat"} : memref<1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+                         // The second L1LU transfer must be a splat, source size still [1, 1, 1, 1].
+// CHECK-NEXT:           ktdf.data_transfer from %[[VAL_1]]#1[0, 0, 0, 0] size [1, 1, 1, 1] to %[[VAL_1]]#4 size [64] {transfer_mode = #ktdf.transfer_mode<splat>} : memref<1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
 // CHECK-NEXT:         } {applicable_units = ["L1LU"]}
 // CHECK-NEXT:         ktdf.stage depends_in(%[[VAL_2:.*]]#7) depends_out(%[[VAL_2]]#8) {
 // CHECK-NEXT:           %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[VAL_2]]#3 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
@@ -119,7 +119,7 @@ module {
       } {applicable_units = ["MNILU"]}
       ktdf.stage depends_in(%3#6) depends_out(%3#7) {
         ktdf.data_transfer from %3#0[0, 0, 0, 0] size [1, 1, 1, 64] to %3#3 size [64] : memref<1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-        ktdf.data_transfer from %3#1[0, 0, 0, 0] size [1, 1, 1, 1] to %3#4 size [64] : memref<1x1x1x1xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+        ktdf.data_transfer from %3#1[0, 0, 0, 0] size [1, 1, 1, 1] to %3#4 size [64] {transfer_mode = #ktdf.transfer_mode<splat>} : memref<1x1x1x1xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
       } {applicable_units = ["L1LU"]}
       ktdf.stage depends_in(%3#7) depends_out(%3#8) {
         %4 = ktdf.read_from_fifo %3#3 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>

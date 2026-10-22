@@ -1,20 +1,18 @@
 // RUN: dataflow-scheduler-opt --reduction-dim-chunking %s | FileCheck %s
 
-// Test: ReductionChunkAnalysis auto-infer via default chunk-size-threshold (1 MiB).
+// Test: ReductionFootprint auto-infer via default chunk-size-threshold (1 MiB).
 //
 // Input linalg.generic over tensor<1x32768x64xf16>:
 //   iterator_types = ["parallel", "reduction", "parallel"]
 //   total_input_bytes = 1 * 32768 * 64 * 2 = 4,194,304 bytes (4 MiB)
 //
 // Default threshold = 1 MiB = 1,048,576 bytes.
-// Smallest N such that 4,194,304 / N ≤ 1,048,576 is N=4.
 //
 // The reduction dim at index 1 (size 32768) is chunkable.  The innermost
 // overall loop dim is index 2 (parallel), so no reduction dim is excluded.
 //
-// computeChunkDims distributes N=4 across [32768]:
-//   gcd(32768, 4) = 4, so dim-1 is split into 4 chunks of 8192 each.
-//   Remaining budget drops to 1 after the first dim — distribution succeeds.
+// The largest divisor of 32768 whose input tile fits the threshold is 8192:
+// 1 * 8192 * 64 * 2 = 1,048,576 bytes, so dim-1 is split into 4 chunks.
 //
 // The pass emits one scf.for over dim-1 with bound 4.
 // Each iteration processes tensor<1x8192x64xf16> (524288 elements).

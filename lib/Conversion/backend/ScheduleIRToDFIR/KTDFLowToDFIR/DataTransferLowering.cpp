@@ -653,7 +653,7 @@ struct LowerDataTransferPattern
     // the hardware replicates or zero-pads to fill the vector. Skip the
     // equality check and use the destination size as the transfer width.
     const bool is_broadcast_transfer =
-        mlir::ktdf::isBroadcastTransfer(data_transfer_op);
+        data_transfer_op.getTransferMode() != mlir::ktdf::TransferMode::Copy;
     if (is_broadcast_transfer && src_total_elements > dst_total_elements) {
       data_transfer_op.emitError(
           "source total elements must not exceed destination for "
