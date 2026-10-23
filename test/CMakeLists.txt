@@ -4,6 +4,12 @@ llvm_canonicalize_cmake_booleans(
   BUILD_SHARED_LIBS
 )
 
+get_target_property(DATAFLOW_SCHEDULER_TOOLS_DIR dataflow-scheduler-opt RUNTIME_OUTPUT_DIRECTORY)
+if(NOT DATAFLOW_SCHEDULER_TOOLS_DIR)
+  get_target_property(DATAFLOW_SCHEDULER_TOOLS_DIR dataflow-scheduler-opt BINARY_DIR)
+endif()
+message(STATUS "DataflowScheduler tools dir: ${DATAFLOW_SCHEDULER_TOOLS_DIR}")
+
 configure_lit_site_cfg(
     ${CMAKE_CURRENT_SOURCE_DIR}/lit.site.cfg.py.in
     ${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg.py
