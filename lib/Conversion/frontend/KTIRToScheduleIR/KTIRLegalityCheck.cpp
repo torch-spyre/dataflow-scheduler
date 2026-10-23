@@ -30,6 +30,8 @@
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/Pass/Pass.h"
 
@@ -79,6 +81,18 @@ namespace {
 
   // Reject everything else.
   return false;
+}
+
+/// Determines whether @p fill can become a splat `arith.constant`, which is
+/// the only form of a reduction's init the scheduler carries.
+///
+/// The fill value must be a constant, and the output must be statically shaped.
+[[nodiscard]] auto isLegalFill(mlir::linalg::FillOp fill) -> bool {
+  const auto type =
+      llvm::dyn_cast<mlir::RankedTensorType>(fill.getResultTypes().front());
+  const auto value = fill.getInputs().front();
+  return type && type.hasStaticShape() &&
+         mlir::matchPattern(value, mlir::m_Constant());
 }
 
 struct KTIRLegalityCheckPass
@@ -143,6 +157,16 @@ struct KTIRLegalityCheckPass
                       mlir::linalg::SubOp, mlir::linalg::MaxOp,
                       mlir::linalg::MinOp, mlir::linalg::YieldOp>(op)) {
           return mlir::WalkResult::advance();
+        }
+        if (auto fill = mlir::dyn_cast<mlir::linalg::FillOp>(op)) {
+          if (!isLegalFill(fill)) {
+            fill.emitError(
+                "V1 only supports linalg.fill of a constant into a statically "
+                "shaped tensor");
+            failed = true;
+            return mlir::WalkResult::interrupt();
+          }
+          return mlir::WalkResult::skip();
         }
         if (mlir::isa<mlir::linalg::ReduceOp>(op)) {
           // Inspect the reduce body: every op must be a legal body op.

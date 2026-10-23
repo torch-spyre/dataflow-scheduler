@@ -101,8 +101,10 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Dominance.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Transforms/RegionUtils.h"
 
 #define PASS_NAME "map-reduction-partials"
 #define DEBUG_TYPE PASS_NAME
@@ -222,6 +224,32 @@ static FailureOr<TypedAttr> getNeutralAttr(linalg::GenericOp generic_op,
 }
 
 // ---------------------------------------------------------------------------
+// Initialise the accumulator `alloc_val` with the scalar `fill_value`, emitting
+// at the builder's insertion point.
+//
+// The value goes to a buffer of its own, which the accumulator is then copied
+// from. Filling the accumulator directly would put the value in the copy
+// instruction's immediate, and that field is too narrow for a 32-bit one. A
+// buffer written once and never read back is invariant, so what hoists such a
+// write can lift it to where a register is initialised instead -- which carries
+// the whole value.
+// ---------------------------------------------------------------------------
+static void fillThroughIdentityBuffer(OpBuilder& builder, Location loc,
+                                      Value fill_value, Value alloc_val) {
+  // The accumulator may be a subview, whose strided layout an alloc can't
+  // take; the identity buffer is its shape without the layout.
+  auto alloc_type = cast<MemRefType>(alloc_val.getType());
+  auto identity = memref::AllocOp::create(
+      builder, loc,
+      MemRefType::get(alloc_type.getShape(), alloc_type.getElementType(),
+                      MemRefLayoutAttrInterface{},
+                      alloc_type.getMemorySpace()));
+  linalg::FillOp::create(builder, loc, ValueRange{fill_value},
+                         ValueRange{identity.getResult()});
+  memref::CopyOp::create(builder, loc, identity.getResult(), alloc_val);
+}
+
+// ---------------------------------------------------------------------------
 // Transform the initializer `init_val` of a loop-carried accumulator in-place,
 // emitting linalg.fill (or memref.copy) into `alloc_val` wherever the original
 // tensor value was produced.  `alloc_val` is a memref.alloc already emitted at
@@ -230,11 +258,15 @@ static FailureOr<TypedAttr> getNeutralAttr(linalg::GenericOp generic_op,
 // `generic_op` is the reduction linalg.generic whose combiner determines the
 // correct neutral element for the fill.
 //
-// Three leaf cases are handled; scf.if recurses into both branches:
+// Four leaf cases are handled; scf.if recurses into both branches:
 //
 //   tensor.empty()
 //     → linalg.fill(%neutral, %alloc) inserted just before the tensor.empty,
 //       then the tensor.empty is erased.
+//
+//   arith.constant dense<%v> : tensor<...>   (splat)
+//     → linalg.fill(%v, %alloc) + memref.copy inserted just before the
+//       constant, then the constant is erased once nothing else reads it.
 //
 //   ktdf.read_from_fifo ... -> tensor<...>
 //     → emit memref-typed read_from_fifo + memref.copy into %alloc just
@@ -261,20 +293,27 @@ static LogicalResult lowerIterArgInitializer(Value init_val, Value alloc_val,
     Location loc = empty_op.getLoc();
     Value neutral_val =
         arith::ConstantOp::create(builder, loc, neutral.value());
-
-    // The identity goes to a buffer of its own, which the accumulator is then
-    // copied from. Filling the accumulator directly would put the value in the
-    // copy instruction's immediate, and that field is too narrow for a 32-bit
-    // one. A buffer written once and never read back is invariant, so what
-    // hoists such a write can lift it to where a register is initialised
-    // instead -- which carries the whole value.
-    auto identity = memref::AllocOp::create(
-        builder, loc, cast<MemRefType>(alloc_val.getType()));
-    linalg::FillOp::create(builder, loc, ValueRange{neutral_val},
-                           ValueRange{identity.getResult()});
-    memref::CopyOp::create(builder, loc, identity.getResult(), alloc_val);
+    fillThroughIdentityBuffer(builder, loc, neutral_val, alloc_val);
 
     empty_op->erase();
+    return success();
+  }
+
+  // ── Case: splat arith.constant with a user-specified initializer ──────────
+  if (auto const_op = dyn_cast<arith::ConstantOp>(defining_op)) {
+    auto scalar = ktdf::getReductionInitScalar(init_val);
+    if (!scalar) {
+      return const_op->emitError(
+          "lowerIterArgInitializer: a constant initializer must be a splat");
+    }
+    OpBuilder builder(const_op);
+    Location loc = const_op.getLoc();
+    fillThroughIdentityBuffer(builder, loc,
+                              arith::ConstantOp::create(builder, loc, scalar),
+                              alloc_val);
+
+    // Constants are uniqued, so another op may still read this one.
+    if (const_op->use_empty()) const_op->erase();
     return success();
   }
 
@@ -324,7 +363,8 @@ static LogicalResult lowerIterArgInitializer(Value init_val, Value alloc_val,
 
   return defining_op->emitError(
       "lowerIterArgInitializer: unrecognised initializer form — expected "
-      "tensor.empty, ktdf.read_from_fifo, or scf.if");
+      "tensor.empty, a splat arith.constant, ktdf.read_from_fifo, or "
+      "scf.if");
 }
 
 // ---------------------------------------------------------------------------
@@ -719,6 +759,105 @@ static void widenPrivateResult(Value priv_res, Type new_type) {
 }
 
 // ---------------------------------------------------------------------------
+// The last op in `block` that initialises the accumulator `acc` -- the copy
+// lowerIterArgInitializer ends every initializer form with, or the scf.if that
+// holds one -- or null if none does.
+// ---------------------------------------------------------------------------
+static Operation* findLastAccumulatorInit(Value acc, Block* block) {
+  Operation* last = nullptr;
+  for (Operation* user : acc.getUsers()) {
+    auto copy = dyn_cast<memref::CopyOp>(user);
+    if (!copy || copy.getTarget() != acc) continue;
+    Operation* ancestor = block->findAncestorOpInBlock(*copy);
+    if (ancestor && (!last || last->isBeforeInBlock(ancestor))) last = ancestor;
+  }
+  return last;
+}
+
+// ---------------------------------------------------------------------------
+// Lower `init`, the original init of the inner-dim generic, into `lane`: the
+// slice of the outer-dim accumulator `acc` the inner-dim generic reduces into.
+//
+// The inner-dim generic combines every lane of `acc` into `lane`, so whatever
+// `lane` holds before the outer-dim reduction starts is counted exactly once.
+// A tensor.empty needs nothing but erasing -- the outer-dim init already left
+// the combiner's neutral element there. Any other init is written into `lane`
+// right after the outer-dim init, and before the loop that accumulates into
+// `acc`:
+//
+//   %acc = <neutral>                              // outer-dim init
+//   %lane = memref.subview %acc[...][..., 1, ...]
+//   <init> → %lane                                // e.g. a fill through an
+//                                                 // identity buffer
+//   scf.for ... { linalg.generic ins(...) outs(%acc) }
+//   linalg.generic ins(%acc) outs(%sv)            // inner-dim reduction
+//
+// `combiner` is a generic with the inner-dim generic's body, which gives the
+// neutral element of a tensor.empty an scf.if init yields. `acc_from_fifo` is
+// set when `acc` is a copy of the fifo data rather than an outer-dim
+// accumulator.
+// ---------------------------------------------------------------------------
+static LogicalResult lowerInnerDimInit(Value init, Value acc,
+                                       memref::SubViewOp lane_like,
+                                       linalg::GenericOp combiner,
+                                       bool acc_from_fifo) {
+  if (auto empty_op = init.getDefiningOp<tensor::EmptyOp>()) {
+    if (empty_op->use_empty()) empty_op->erase();
+    return success();
+  }
+
+  auto scalar = ktdf::getReductionInitScalar(init);
+  auto if_op = init.getDefiningOp<scf::IfOp>();
+  if (!scalar && !if_op) {
+    return combiner->emitError(
+        "rewriteInnerDimGeneric: unrecognised initializer form — expected "
+        "tensor.empty, a splat arith.constant, or scf.if");
+  }
+  // FIXME: With no outer-dim loop the accumulator is copied straight from the
+  //        fifo, so there is no point to seed a lane before it accumulates;
+  //        the init would need a combine of its own after the reduction.
+  if (acc_from_fifo) {
+    return combiner->emitError(
+        "rewriteInnerDimGeneric: an init other than tensor.empty is not "
+        "supported without an outer reduction loop");
+  }
+  Operation* acc_init = findLastAccumulatorInit(acc, combiner->getBlock());
+  if (!acc_init) {
+    return combiner->emitError(
+        "rewriteInnerDimGeneric: found no init of the outer-dim accumulator "
+        "to seed the init after");
+  }
+
+  OpBuilder builder(acc_init->getContext());
+  builder.setInsertionPointAfter(acc_init);
+  Location loc = init.getLoc();
+  auto lane = cast<memref::SubViewOp>(builder.clone(*lane_like));
+  lane.getSourceMutable().assign(acc);
+
+  if (scalar) {
+    fillThroughIdentityBuffer(builder, loc,
+                              arith::ConstantOp::create(builder, loc, scalar),
+                              lane.getResult());
+    ktdf::eraseDeadReductionInit(init);
+    return success();
+  }
+
+  // An scf.if moves behind the outer-dim init, and is lowered there. It is
+  // defined next to the inner-dim generic, behind that point, so its condition
+  // must be available there.
+  DominanceInfo dominance(lane);
+  IRRewriter rewriter(builder);
+  if (failed(moveValueDefinitions(rewriter, if_op.getCondition(), lane,
+                                  dominance))) {
+    return combiner->emitError(
+        "rewriteInnerDimGeneric: the init's condition can't be computed ahead "
+        "of the outer-dim reduction");
+  }
+  if_op->moveAfter(lane);
+  return lowerIterArgInitializer(init, lane.getResult(), combiner);
+}
+
+// ---------------------------------------------------------------------------
 // Iterate the direct uses of `fifo_slot` and for each data_transfer that
 // references it update the FIFO-side static size field to reflect `new_shape`.
 // ---------------------------------------------------------------------------
@@ -883,7 +1022,9 @@ static LogicalResult rewriteInnerDimGeneric(
   // straight out of the fifo, since each element's own contribution still has
   // to be worked out, so the second would overwrite the first.
   SmallVector<Value> effective(allocs_in);
-  if (allocs_in.front().getDefiningOp<ktdf::ReadFromFifoOp>()) {
+  const bool acc_from_fifo = static_cast<bool>(
+      allocs_in.front().getDefiningOp<ktdf::ReadFromFifoOp>());
+  if (acc_from_fifo) {
     Attribute mem_space = group_local_mem.getLocalMemoryKindForStage(stage);
     if (!mem_space) return failure();
 
@@ -922,8 +1063,8 @@ static LogicalResult rewriteInnerDimGeneric(
   // subview of each. In Case A those are the outer-dim accumulators; in Case B
   // they are the local registers copied from the fifo. Original maps and
   // iterator_types are preserved.
-  ktdf::cloneLinalgGenericAsBufferOp(builder, generic_op, /*inputs=*/effective,
-                                     /*outputs=*/subviews);
+  auto buffer_generic = ktdf::cloneLinalgGenericAsBufferOp(
+      builder, generic_op, /*inputs=*/effective, /*outputs=*/subviews);
 
   // Patch each write_to_fifo to send the whole buffer its result reduced into
   // rather than the subview, and capture the slot it wrote to, whose type is
@@ -961,13 +1102,15 @@ static LogicalResult rewriteInnerDimGeneric(
     widenFifoUses(old_fifo_slot, in_shape, generic_op.getContext());
   }
 
-  // Erase the original tensor.empty output initializers and the tensor
-  // generic.
+  // Erase the tensor generic, then lower each of its original inits into the
+  // lane of its accumulator it reduced into. Lowering erases the init.
   SmallVector<Value> orig_out_inits(generic_op.getOutputs());
   generic_op.erase();
-  for (Value init : orig_out_inits) {
-    if (!init.use_empty()) continue;
-    if (auto* def = init.getDefiningOp()) def->erase();
+  for (auto [r, init] : llvm::enumerate(orig_out_inits)) {
+    if (failed(lowerInnerDimInit(init, effective[r],
+                                 subviews[r].getDefiningOp<memref::SubViewOp>(),
+                                 buffer_generic, acc_from_fifo)))
+      return failure();
   }
 
   return success();
