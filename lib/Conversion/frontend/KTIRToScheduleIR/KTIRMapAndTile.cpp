@@ -360,13 +360,12 @@ void bubbleOpExtractSlice(mlir::RewriterBase& rewriter,
          !mlir::isConstantIntValue(slice.getMixedSizes()[dim], 1);
 }
 
-struct BroadcastInputs
-    : mlir::OpInterfaceRewritePattern<mlir::linalg::LinalgOp> {
+struct BroadcastInputs : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   explicit BroadcastInputs(mlir::MLIRContext* context,
                            const AttrMapping& mem_space_map)
-      : OpInterfaceRewritePattern(context), mem_space_map_(mem_space_map) {}
+      : OpRewritePattern(context), mem_space_map_(mem_space_map) {}
 
-  auto matchAndRewrite(mlir::linalg::LinalgOp op,
+  auto matchAndRewrite(mlir::linalg::GenericOp op,
                        mlir::PatternRewriter& rewriter) const
       -> mlir::LogicalResult override {
     const auto throttle_attr =
@@ -381,8 +380,26 @@ struct BroadcastInputs
     rewriter.startOpModification(op);
     auto changed = false;
     for (auto* const input : op.getDpsInputOperands()) {
-      const auto type =
+      auto type =
           llvm::dyn_cast<mlir::RankedTensorType>(input->get().getType());
+
+      // A rank-0 operand is broadcast along a unit dimension that is added.
+      if (type && type.getRank() == 0) {
+        auto expand = mlir::tensor::ExpandShapeOp::create(
+            rewriter, op.getLoc(),
+            mlir::RankedTensorType::get({1}, type.getElementType()),
+            input->get(), llvm::ArrayRef<mlir::ReassociationIndices>{});
+        input->set(expand);
+        type = expand.getResultType();
+
+        auto maps = op.getIndexingMapsArray();
+        auto& map = maps[input->getOperandNumber()];
+        map = mlir::AffineMap::get(map.getNumDims(), map.getNumSymbols(),
+                                   rewriter.getAffineConstantExpr(0));
+        op.setIndexingMapsAttr(rewriter.getAffineMapArrayAttr(maps));
+        changed = true;
+      }
+
       const auto bcast_dims =
           op.getMatchingIndexingMap(input).getBroadcastDims();
       if (!type || bcast_dims.empty() ||

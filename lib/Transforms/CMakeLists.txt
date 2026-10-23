@@ -22,6 +22,7 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     ParallelizeLoopsAcrossInstances.cpp
     PathExpansion.cpp
     ScalarBroadcastLegalization.cpp
+    SimplifyLinalg.cpp
     SplatLegalizationPass.cpp
     StripMineSCFForLoops.cpp
     TileSCFForLoops.cpp
@@ -53,15 +54,19 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
 
   LINK_MLIR_LIBS
     MLIRIR
+    MLIRAffineAnalysis
     MLIRAffineDialect
     MLIRArithDialect
     MLIRBufferizationDialect
     MLIRLinalgDialect
+    MLIRLinalgTransforms
     MLIRMathDialect
     MLIRMemRefDialect
     MLIRSCFDialect
     MLIRTensorDialect
+    MLIRTensorTransforms
     MLIRPass
+    MLIRPresburger
     MLIRTransformUtils
     MLIRValueBoundsOpInterface
     MLIRAlignmentAttrInterface
