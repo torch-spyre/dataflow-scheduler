@@ -31,6 +31,7 @@
 #include <mlir/Pass/Pass.h>
 #include <mlir/Transforms/RegionUtils.h>
 
+#include "dataflow-scheduler/Analysis/ArchViews/GroupLocalMemory.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
@@ -240,6 +241,62 @@ auto wantsTheValue(Operation* reader) -> bool {
          isa_and_nonnull<math::MathDialect>(dialect);
 }
 
+/// Whether \p reader takes the register itself: a template call does. A reader
+/// that wants neither the register nor its value keeps the constant.
+auto wantsTheRegister(Operation* reader) -> bool {
+  return llvm::isa<ktdf::OpaqueOp>(reader);
+}
+
+/// Maps every constant a generic under \p root reads into the memory local to
+/// the compute of that generic, if arithmetic or a template call in its body
+/// reads it, it is not an index, and it is not mapped yet.
+///
+/// A constant read by several generics is mapped by the first that reads it.
+auto mapConstantsToLocalMemory(Operation* root, ktdf_arch::Mapping& mapping,
+                               const arch_view::GroupLocalMemory& local_memory)
+    -> LogicalResult {
+  const auto result = root->walk([&](linalg::GenericOp generic) {
+    // Resolved on the first constant to map, so a generic with none is left
+    // unmapped.
+    ktdf_arch::ExecutionUnitOp compute;
+    const auto body = generic.getBody()->walk([&](Operation* op) {
+      for (const auto operand : op->getOperands()) {
+        auto constant = operand.getDefiningOp<arith::ConstantOp>();
+        // Only a constant can be put in a register here.
+        if (!constant) continue;
+        // A constant the mapping already places keeps its memory.
+        if (ktdf_arch::getProperty<ktdf_arch::MapsToAttr>(constant)) continue;
+        // An index addresses memory; it is not computed on.
+        if (constant.getType().isIndex()) continue;
+        // Only arithmetic and template calls read a constant out of a register.
+        if (!wantsTheValue(op) && !wantsTheRegister(op)) continue;
+
+        if (!compute) {
+          compute = mapping.getOrMap<ktdf_arch::ExecutionUnitOp>(
+              generic, mapping.byKind().getDefaultCompute().getKind());
+          if (!compute) {
+            generic.emitError(
+                "no compute resource is mapped to size registers");
+            return WalkResult::interrupt();
+          }
+        }
+        const auto memory = llvm::dyn_cast_if_present<ktdf_arch::MapsToAttr>(
+            local_memory.getLocalMemoryKind(compute.getKind()));
+        if (!memory) {
+          generic.emitError("no unambiguous local memory of ")
+              << compute.getKind() << " to hold a register for a constant";
+          return WalkResult::interrupt();
+        }
+        ktdf_arch::setProperty(constant, memory);
+      }
+      return WalkResult::advance();
+    });
+    return body.wasInterrupted() ? WalkResult::interrupt()
+                                 : WalkResult::advance();
+  });
+  return failure(result.wasInterrupted());
+}
+
 /// Reads the first lane of \p reg in front of \p reader. The fill put the same
 /// value in every lane, so any lane would do.
 auto loadFirstLane(Value reg, Operation* reader, RewriterBase& rewriter)
@@ -279,8 +336,9 @@ auto materializeRegisters(linalg::GenericOp generic,
     const auto reg = materializeRegister(constant, generic, compute, rewriter);
     if (!reg) return failure();
 
-    // Whatever read the constant reads the register now, where it stands: the
-    // body is not isolated from above. Arithmetic reads a lane out of it.
+    // A template call in the body reads the register now, where it stands: the
+    // body is not isolated from above. Arithmetic reads a lane out of it. Any
+    // other reader keeps the constant.
     SmallVector<OpOperand*> takes_the_value;
     for (OpOperand& use : constant.getResult().getUses()) {
       if (generic->isProperAncestor(use.getOwner()) &&
@@ -290,7 +348,7 @@ auto materializeRegisters(linalg::GenericOp generic,
     }
     rewriter.replaceUsesWithIf(constant.getResult(), reg, [&](OpOperand& use) {
       return generic->isProperAncestor(use.getOwner()) &&
-             !wantsTheValue(use.getOwner());
+             wantsTheRegister(use.getOwner());
     });
     for (OpOperand* use : takes_the_value) {
       use->set(loadFirstLane(reg, use->getOwner(), rewriter));
@@ -325,6 +383,14 @@ struct MaterializeRegistersPass
     if (!mapping.byKind().getDefaultCompute()) {
       mapping.getDevice().getDeclaration().emitError(
           "no (unambiguous) default compute resource");
+      signalPassFailure();
+      return;
+    }
+
+    const auto& local_memory =
+        default_device.getRef().getOrCreateView<arch_view::GroupLocalMemory>();
+    if (failed(
+            mapConstantsToLocalMemory(getOperation(), mapping, local_memory))) {
       signalPassFailure();
       return;
     }
