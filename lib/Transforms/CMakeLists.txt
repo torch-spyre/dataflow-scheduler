@@ -19,6 +19,7 @@ add_dataflow_scheduler_library(DataflowSchedulerTransforms
     MaterializeRegisters.cpp
     NormalizeGridTo1D.cpp
     NormalizeSCFForLoops.cpp
+    OrderFifoSlotsByUse.cpp
     ParallelizeLoopsAcrossInstances.cpp
     PathExpansion.cpp
     ScalarBroadcastLegalization.cpp
