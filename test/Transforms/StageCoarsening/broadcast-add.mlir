@@ -8,8 +8,6 @@
 
 // CHECK: #[[$ATTR_0:.+]] = affine_map<()[s0, s1] -> (-s0 + s1)>
 // CHECK: #[[$ATTR_1:.+]] = affine_map<()[s0, s1] -> ((-s0 + s1) ceildiv 64)>
-// CHECK: #[[$ATTR_2:.+]] = affine_map<(d0)[s0] -> (d0 * 64 + s0)>
-// CHECK: #[[$ATTR_3:.+]] = affine_map<(d0)[s0] -> (d0 + s0)>
 
 
 // CHECK:       func.func @broadcast_add_kernel(%[[VAL_0:.*]]: memref<?xf16, "DDR">, %[[VAL_1:.*]]: memref<?x?xf16, "DDR">, %[[VAL_2:.*]]: memref<?x?xf16, "DDR">, %[[VAL_3:.*]]: index, %[[VAL_4:.*]]: index) {
@@ -39,11 +37,8 @@
 // CHECK-NEXT:           ktdf.stage depends_in(none) depends_out(%[[VAL_19]]#3) {
 // CHECK-NEXT:             scf.for %[[VAL_26:.*]] = %[[VAL_5]] to %[[VAL_14]] step %[[VAL_6]] {
 // CHECK-NEXT:               scf.for %[[VAL_27:.*]] = %[[VAL_5]] to %[[VAL_18]] step %[[VAL_6]] {
-// CHECK-NEXT:                 %[[VAL_28:.*]] = affine.apply #[[$ATTR_2]](%[[VAL_27]]){{\[}}%[[VAL_15]]]
-// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_0]]{{\[}}%[[VAL_28]]] size [64] to %[[VAL_19]]#0{{\[}}%[[VAL_27]], %[[VAL_5]]] size [1, 64] : memref<?xf16, "DDR">, memref<?x64xf16, "L1">
-// CHECK-NEXT:                 %[[VAL_29:.*]] = affine.apply #[[$ATTR_2]](%[[VAL_27]]){{\[}}%[[VAL_15]]]
-// CHECK-NEXT:                 %[[VAL_30:.*]] = affine.apply #[[$ATTR_3]](%[[VAL_26]]){{\[}}%[[VAL_11]]]
-// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_1]]{{\[}}%[[VAL_30]], %[[VAL_29]]] size [1, 64] to %[[VAL_19]]#1{{\[}}%[[VAL_26]], %[[VAL_27]], %[[VAL_5]]] size [1, 1, 64] : memref<?x?xf16, "DDR">, memref<?x?x64xf16, "L1">
+// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_0]]{{\[}}%[[VAL_27]] * 64 + %[[VAL_15]]] size [64] to %[[VAL_19]]#0{{\[}}%[[VAL_27]], 0] size [1, 64] : memref<?xf16, "DDR">, memref<?x64xf16, "L1">
+// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_1]]{{\[}}%[[VAL_26]] + %[[VAL_11]], %[[VAL_27]] * 64 + %[[VAL_15]]] size [1, 64] to %[[VAL_19]]#1{{\[}}%[[VAL_26]], %[[VAL_27]], 0] size [1, 1, 64] : memref<?x?xf16, "DDR">, memref<?x?x64xf16, "L1">
 // CHECK-NEXT:               }
 // CHECK-NEXT:             }
 // CHECK-NEXT:           }
@@ -60,14 +55,14 @@
 // CHECK-NEXT:                     ktdf.private_yield %[[VAL_35]], %[[VAL_36]], %[[VAL_37]], %[[VAL_38]], %[[VAL_39]] : memref<64xf16, "SFU_REG">, memref<64xf16, "SFU_REG">, memref<64xf16, "SFU_REG">, !ktdf.token, !ktdf.token
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                   ktdf.stage depends_in(none) depends_out(%[[VAL_34]]#3) {
-// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_19]]#0{{\[}}%[[VAL_33]], %[[VAL_5]]] size [1, 64] to %[[VAL_34]]#0{{\[}}%[[VAL_5]]] size [64] : memref<?x64xf16, "L1">, memref<64xf16, "SFU_REG">
-// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_19]]#1{{\[}}%[[VAL_32]], %[[VAL_33]], %[[VAL_5]]] size [1, 1, 64] to %[[VAL_34]]#1{{\[}}%[[VAL_5]]] size [64] : memref<?x?x64xf16, "L1">, memref<64xf16, "SFU_REG">
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_19]]#0{{\[}}%[[VAL_33]], 0] size [1, 64] to %[[VAL_34]]#0[0] size [64] : memref<?x64xf16, "L1">, memref<64xf16, "SFU_REG">
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_19]]#1{{\[}}%[[VAL_32]], %[[VAL_33]], 0] size [1, 1, 64] to %[[VAL_34]]#1[0] size [64] : memref<?x?x64xf16, "L1">, memref<64xf16, "SFU_REG">
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                   ktdf.stage depends_in(%[[VAL_34]]#3) depends_out(%[[VAL_34]]#4) {
 // CHECK-NEXT:                     linalg.add ins(%[[VAL_34]]#0, %[[VAL_34]]#1 : memref<64xf16, "SFU_REG">, memref<64xf16, "SFU_REG">) outs(%[[VAL_34]]#2 : memref<64xf16, "SFU_REG">)
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                   ktdf.stage depends_in(%[[VAL_34]]#4) depends_out(none) {
-// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_34]]#2{{\[}}%[[VAL_5]]] size [64] to %[[VAL_19]]#2{{\[}}%[[VAL_32]], %[[VAL_33]], %[[VAL_5]]] size [1, 1, 64] : memref<64xf16, "SFU_REG">, memref<?x?x64xf16, "L1">
+// CHECK-NEXT:                     ktdf.data_transfer from %[[VAL_34]]#2[0] size [64] to %[[VAL_19]]#2{{\[}}%[[VAL_32]], %[[VAL_33]], 0] size [1, 1, 64] : memref<64xf16, "SFU_REG">, memref<?x?x64xf16, "L1">
 // CHECK-NEXT:                   }
 // CHECK-NEXT:                 }
 // CHECK-NEXT:               }
@@ -76,9 +71,7 @@
 // CHECK-NEXT:           ktdf.stage depends_in(%[[VAL_19]]#4) depends_out(none) {
 // CHECK-NEXT:             scf.for %[[VAL_44:.*]] = %[[VAL_5]] to %[[VAL_14]] step %[[VAL_6]] {
 // CHECK-NEXT:               scf.for %[[VAL_45:.*]] = %[[VAL_5]] to %[[VAL_18]] step %[[VAL_6]] {
-// CHECK-NEXT:                 %[[VAL_46:.*]] = affine.apply #[[$ATTR_2]](%[[VAL_45]]){{\[}}%[[VAL_15]]]
-// CHECK-NEXT:                 %[[VAL_47:.*]] = affine.apply #[[$ATTR_3]](%[[VAL_44]]){{\[}}%[[VAL_11]]]
-// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_19]]#2{{\[}}%[[VAL_44]], %[[VAL_45]], %[[VAL_5]]] size [1, 1, 64] to %[[VAL_2]]{{\[}}%[[VAL_47]], %[[VAL_46]]] size [1, 64] : memref<?x?x64xf16, "L1">, memref<?x?xf16, "DDR">
+// CHECK-NEXT:                 ktdf.data_transfer from %[[VAL_19]]#2{{\[}}%[[VAL_44]], %[[VAL_45]], 0] size [1, 1, 64] to %[[VAL_2]]{{\[}}%[[VAL_44]] + %[[VAL_11]], %[[VAL_45]] * 64 + %[[VAL_15]]] size [1, 64] : memref<?x?x64xf16, "L1">, memref<?x?xf16, "DDR">
 // CHECK-NEXT:               }
 // CHECK-NEXT:             }
 // CHECK-NEXT:           }

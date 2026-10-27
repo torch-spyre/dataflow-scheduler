@@ -105,6 +105,22 @@ struct RelayPair {
   return merged;
 }
 
+/// Returns the transfer mode of the transfer that composes @p in and @p out ,
+/// or std::nullopt if both change sizes.
+[[nodiscard]] auto mergeTransferMode(mlir::ktdf::DataTransferOp in,
+                                     mlir::ktdf::DataTransferOp out)
+    -> std::optional<mlir::ktdf::TransferMode> {
+  const auto in_mode = in.getTransferMode();
+  const auto out_mode = out.getTransferMode();
+  if (in_mode == mlir::ktdf::TransferMode::Copy) {
+    return out_mode;
+  }
+  if (out_mode == mlir::ktdf::TransferMode::Copy) {
+    return in_mode;
+  }
+  return std::nullopt;
+}
+
 /// Merges the applicable units of @p in and @p out . Returns std::nullopt if
 /// both are set and do not intersect.
 [[nodiscard]] auto mergeUnits(mlir::ktdf::StageOp in, mlir::ktdf::StageOp out)
@@ -228,12 +244,18 @@ auto foldRelay(mlir::RewriterBase& rewriter, mlir::ktdf::StageOp in) -> bool {
     return reject("applicable units do not intersect");
   }
   llvm::SmallVector<mlir::NamedAttrList> attrs;
+  llvm::SmallVector<mlir::ktdf::TransferMode> modes;
   for (auto [transfer_in, transfer_out] : pairs) {
     auto merged = mergeAttrs(transfer_in, transfer_out);
     if (!merged) {
       return reject("transfers carry conflicting attributes");
     }
+    const auto mode = mergeTransferMode(transfer_in, transfer_out);
+    if (!mode) {
+      return reject("both transfers change sizes");
+    }
     attrs.push_back(std::move(*merged));
+    modes.push_back(*mode);
   }
 
   LDBG() << "folding " << pairs.size() << " relay(s) of "
@@ -243,7 +265,7 @@ auto foldRelay(mlir::RewriterBase& rewriter, mlir::ktdf::StageOp in) -> bool {
   // Rewrite the consumer into memory-to-memory transfers. Inserting at the
   // consumer keeps the stages in dependency order, and all operands are
   // defined outside of both stages.
-  for (auto [pair, merged] : llvm::zip_equal(pairs, attrs)) {
+  for (auto [pair, merged, mode] : llvm::zip_equal(pairs, attrs, modes)) {
     rewriter.setInsertionPoint(pair.out);
     auto transfer = mlir::ktdf::DataTransferOp::create(
         rewriter, rewriter.getFusedLoc({pair.in.getLoc(), pair.out.getLoc()}),
@@ -251,7 +273,7 @@ auto foldRelay(mlir::RewriterBase& rewriter, mlir::ktdf::StageOp in) -> bool {
         pair.in.getSourceIndices(), pair.in.getMixedSourceSizes(),
         pair.out.getDestination(),
         pair.out.getDestMap().value_or(mlir::AffineMap{}),
-        pair.out.getDestIndices(), pair.out.getMixedDestSizes());
+        pair.out.getDestIndices(), pair.out.getMixedDestSizes(), mode);
     transfer->setDiscardableAttrs(merged.getDictionary(rewriter.getContext()));
     rewriter.eraseOp(pair.out);
   }

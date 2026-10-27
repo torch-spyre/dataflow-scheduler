@@ -26,7 +26,7 @@
 //   2. Collect reduction_dims[] and their per-dimension sizes dim_sizes[].
 //      The total shrink factor R = product(dim_sizes[]).
 //   3. Get the parent ktdf.pipeline of the compute stage.
-//   4. Find the load stage via StageFactory::findLoadStage (upstream of
+//   4. Find the load stage via findLoadStage (upstream of
 //      compute via depends_in/depends_out token chain).  Identify the
 //      FIFO-dest data_transfer that feeds linalg.generic ins() — its
 //      destination is fifo_in.
@@ -49,7 +49,7 @@
 //        after SplitReductionInnerOuterDim), uses of the original generic are
 //        replaced with the outermost loop results.
 //      - The outermost loop is tagged {loop_type = reduction_loop}.
-//   9. Find the conditional-store stage via StageFactory::findStoreStage
+//   9. Find the conditional-store stage via findStoreStage
 //      (downstream of compute via depends_out/depends_in token chain).
 //      Wrap its data_transfer in scf.if (all ivs == last) inside the
 //      innermost already-created scf.for.
@@ -500,7 +500,7 @@ struct ReductionLoopExposurePass
     }
 
     ktdf::StageOp load_stage =
-        ktdf::StageFactory::findLoadStage(inner_pipeline, compute_stage);
+        ktdf::findLoadStage(inner_pipeline, compute_stage);
     if (!load_stage) {
       inner_pipeline.emitError(
           PASS_NAME ": cannot find load stage upstream of compute stage");
@@ -669,7 +669,7 @@ struct ReductionLoopExposurePass
     // 3. Find the "conditional store" stage.
     // -----------------------------------------------------------------------
     ktdf::StageOp conditional_store_stage =
-        ktdf::StageFactory::findStoreStage(inner_pipeline, compute_stage);
+        ktdf::findStoreStage(inner_pipeline, compute_stage);
 
     // -----------------------------------------------------------------------
     // 4. Rewrite every stage.

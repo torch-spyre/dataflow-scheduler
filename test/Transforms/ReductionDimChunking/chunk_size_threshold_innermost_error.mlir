@@ -1,22 +1,16 @@
-// RUN: dataflow-scheduler-opt --reduction-dim-chunking="chunk-size-threshold=200" %s -verify-diagnostics
+// RUN: dataflow-scheduler-opt --reduction-dim-chunking="chunk-size-threshold=100" %s -verify-diagnostics
 
-// Test: threshold path emits an error when the budget N is only partially
-// distributed.
+// Test: threshold path emits an error when no chunking fits the threshold.
 //
 // Input linalg.generic over tensor<4x3x64xf16>:
 //   iterator_types = ["reduction", "reduction", "parallel"]
 //   total_input_bytes = 4 * 3 * 64 * 2 = 1536 bytes
 //
-// threshold=200 bytes.  Smallest N such that 1536 / N <= 200 is N=8.
-//
-// The innermost overall loop dim is index 2 (parallel), so both reduction
-// dims are chunkable: d0=4 (index 0) and d1=3 (index 1).
-//
-// computeChunkDims distributes N=8 across [4, 3]:
-//   gcd(4, 8) = 4, so dim-0 absorbs 4 chunks and remaining drops to 2.
-//   gcd(3, 2) = 1, so dim-1 absorbs nothing and remaining stays at 2.
-//   After visiting all dims, remaining is still 2, so the function returns
-//   nullopt and the pass signals failure.
+// threshold=100 bytes.  The innermost overall loop dim is index 2 (parallel),
+// so both reduction dims are chunkable: d0=4 (index 0) and d1=3 (index 1).
+// Chunking both down to 1 still leaves one row of the innermost dim,
+// 64 * 2 = 128 bytes, which exceeds the threshold, and the pass signals
+// failure.
 
 #map = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
 #map1 = affine_map<(d0, d1, d2) -> (d2)>
@@ -59,7 +53,7 @@ module {
         } {applicable_units = ["MNILU"]}
         ktdf.stage depends_in(%2#2) depends_out(%2#3) {
           scf.for %arg0 = %c0 to %c1 step %c1 {
-            // expected-error @below {{reduction-dim-chunking: chunk count could not be fully distributed across the chunkable reduction dimensions}}
+            // expected-error @below {{reduction-dim-chunking: no chunking of the reduction fits the threshold of 100 bytes}}
             ktdf.pipeline {
               %3:4 = ktdf.private -> (!ktdf.fifo.slot<"L1LU" -> "SFU", 768xf16>, !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, !ktdf.token, !ktdf.token) {
                 %4 = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"L1LU" -> "SFU", 768xf16>

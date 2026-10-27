@@ -21,7 +21,7 @@
 // One element arrives and 64 are filled, which is the splat the load unit has.
 // CHECK:      ktdf.data_transfer from %[[P:.*]]#0[0, 0, 0, 0] size [1, 1, 1, 64] to %[[P]]#3 size [64] :
 // CHECK-SAME:   !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-// CHECK-NEXT: ktdf.data_transfer from %[[P]]#1[0, 0, 0, 0] size [1, 1, 1, 1] to %[[P]]#4 size [64] {transfer_mode = "splat"} :
+// CHECK-NEXT: ktdf.data_transfer from %[[P]]#1[0, 0, 0, 0] size [1, 1, 1, 1] to %[[P]]#4 size [64] {transfer_mode = #ktdf.transfer_mode<splat>} :
 // CHECK-SAME:   !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
 
 // Each read is the width of the slot it reads, and the broadcast map is gone.
