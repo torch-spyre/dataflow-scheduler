@@ -2,10 +2,11 @@
 
 // CHECK-LABEL: func.func @local_schedule_0
 
-// Staging allocs reshaped to memref<?x?x1x1x64x1x64xf16, "L1">:
-// CHECK:      %[[PRIV:.*]]:4 = ktdf.private -> (memref<?x?x1x1x64x1x64xf16, "L1">, memref<?x?x1x1x64x1x64xf16, "L1">, !ktdf.token, !ktdf.token) {
-// CHECK-DAG:    %[[A0:.*]] = memref.alloc(%{{.*}}, %{{.*}}) : memref<?x?x1x1x64x1x64xf16, "L1">
-// CHECK-DAG:    %[[A1:.*]] = memref.alloc(%{{.*}}, %{{.*}}) : memref<?x?x1x1x64x1x64xf16, "L1">
+// Staging allocs reshaped to memref<1x?x1x1x64x1x64xf16, "L1"> (the point loop over the stick dim runs once, so its
+// buffer dim is a static 1):
+// CHECK:      %[[PRIV:.*]]:4 = ktdf.private -> (memref<1x?x1x1x64x1x64xf16, "L1">, memref<1x?x1x1x64x1x64xf16, "L1">, !ktdf.token, !ktdf.token) {
+// CHECK-DAG:    %[[A0:.*]] = memref.alloc(%{{.*}}) : memref<1x?x1x1x64x1x64xf16, "L1">
+// CHECK-DAG:    %[[A1:.*]] = memref.alloc(%{{.*}}) : memref<1x?x1x1x64x1x64xf16, "L1">
 // CHECK:        ktdf.private_yield %[[A0]], %[[A1]]
 
 // MNILU Stage: transfer widened to [1, 64, 1, 1, 64] -> [1, 1, 1, 1, 64, 1, 64]
