@@ -161,6 +161,22 @@ auto cloneLinalgGenericAsBufferOp(mlir::OpBuilder& builder,
                                   mlir::ValueRange outputs)
     -> mlir::linalg::GenericOp;
 
+/// The scalar a reduction accumulator's init sets every element to: the splat
+/// of an `arith.constant` tensor. Null for a `tensor.empty`, a non-splat
+/// constant, or anything else.
+///
+/// A splat constant is how a reduction states the value it starts from; a
+/// `tensor.empty` leaves it to the combiner's neutral element.
+auto getReductionInitScalar(mlir::Value init) -> mlir::TypedAttr;
+
+/// Whether `init` is a form the reduction passes accept as an accumulator's
+/// init: a `tensor.empty`, or one `getReductionInitScalar` recognises.
+auto isSupportedReductionInit(mlir::Value init) -> bool;
+
+/// Erase the op that defines a reduction init once nothing reads `init`. Does
+/// nothing while `init` still has uses.
+void eraseDeadReductionInit(mlir::Value init);
+
 }  // namespace mlir::ktdf
 
 #endif  // DATAFLOW_SCHEDULER_DIALECT_KTDF_UTILS_UTILS_H_

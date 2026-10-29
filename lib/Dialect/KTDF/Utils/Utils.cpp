@@ -34,8 +34,11 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SetVector.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/IRMapping.h"
 
@@ -266,4 +269,25 @@ auto mlir::ktdf::findStageForUnit(uniform::QueryMapOp query_op,
   }
 
   return {};
+}
+
+auto mlir::ktdf::getReductionInitScalar(Value init) -> TypedAttr {
+  if (auto const_op = init.getDefiningOp<arith::ConstantOp>()) {
+    if (auto splat = dyn_cast<SplatElementsAttr>(const_op.getValue())) {
+      return splat.getSplatValue<TypedAttr>();
+    }
+  }
+  return {};
+}
+
+auto mlir::ktdf::isSupportedReductionInit(Value init) -> bool {
+  return init.getDefiningOp<tensor::EmptyOp>() ||
+         static_cast<bool>(getReductionInitScalar(init));
+}
+
+void mlir::ktdf::eraseDeadReductionInit(Value init) {
+  Operation* def = init.getDefiningOp();
+  if (def && init.use_empty()) {
+    def->erase();
+  }
 }

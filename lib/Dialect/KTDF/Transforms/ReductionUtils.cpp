@@ -24,6 +24,7 @@
 
 #include <optional>
 
+#include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -252,6 +253,30 @@ void StageFactory::buildComputeStage(Value condition,
   Value empty_tensor =
       tensor::EmptyOp::create(b, loc_, output_tensor_type.getShape(),
                               output_tensor_type.getElementType());
+
+  // An init that states the value the accumulator starts from is counted on
+  // the first chunk only: every later chunk is combined with a partial that
+  // already holds it.
+  //
+  //   %seed = scf.if condition { <copy of the init> } else { tensor.empty }
+  if (auto scalar =
+          ktdf::getReductionInitScalar(generic_op.getOutputs().front())) {
+    auto seed_if = scf::IfOp::create(b, loc_, TypeRange{output_tensor_type},
+                                     condition, /*withElseRegion=*/true);
+    {
+      OpBuilder then_bldr =
+          OpBuilder::atBlockBegin(&seed_if.getThenRegion().front());
+      Value init = arith::ConstantOp::create(
+          then_bldr, loc_, SplatElementsAttr::get(output_tensor_type, scalar));
+      scf::YieldOp::create(then_bldr, loc_, init);
+    }
+    {
+      OpBuilder else_bldr =
+          OpBuilder::atBlockBegin(&seed_if.getElseRegion().front());
+      scf::YieldOp::create(else_bldr, loc_, empty_tensor);
+    }
+    empty_tensor = seed_if.getResult(0);
+  }
   {
     IRMapping mapping;
     mapping.map(generic_op.getInputs().front(), in_tensor.getResult());

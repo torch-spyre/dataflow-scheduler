@@ -78,6 +78,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/ReductionChunkAnalysis.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
+#include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -448,6 +449,14 @@ struct ReductionDimChunkingPass
     // Output tensor type (unchanged).
     auto output_tensor_type =
         cast<RankedTensorType>(generic_op.getOutputs().front().getType());
+
+    // The compute stage rebuilds the init on every chunk; it can only do so
+    // for an init it can tell the value of.
+    if (!ktdf::isSupportedReductionInit(generic_op.getOutputs().front())) {
+      return generic_op.emitError(PASS_NAME
+                                  ": the reduction's init is neither a "
+                                  "tensor.empty nor a splat arith.constant");
+    }
 
     // ------------------------------------------------------------------
     // Step 2: Emit the replacement structure.

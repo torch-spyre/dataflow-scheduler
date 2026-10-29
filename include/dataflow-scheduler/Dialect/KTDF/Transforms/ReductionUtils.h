@@ -217,6 +217,11 @@ class StageFactory {
   // cloned linalg.generic against a fresh tensor.empty to produce an
   // intermediate partial result.
   //
+  // When the generic's init states the value its accumulator starts from (a
+  // splat arith.constant), that value is applied exactly once:
+  // the first chunk starts from a copy of the init and every later one from a
+  // tensor.empty, through `scf.if condition`.
+  //
   // A runtime branch on condition then selects the final output:
   //   - condition == true  (first iteration):
   //       yield the first generic result directly (no prior partial).
