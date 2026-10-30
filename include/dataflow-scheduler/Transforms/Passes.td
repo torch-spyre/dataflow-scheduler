@@ -308,9 +308,42 @@ def AddressAssignmentPass : Pass<"address-assignment", "mlir::ModuleOp"> {
   ];
 }
 
+def AccessGranularityLegalizationPass
+    : Pass<"access-granularity-legalization", "mlir::ModuleOp"> {
+  let summary = "Enforce hardware physical access_granularity constraints on data_transfer ops";
+  let description = [{
+    Runs immediately after path-expansion and before splat-legalization.
+    Enforces hardware physical access_granularity constraints across all
+    ktdf.data_transfer operations (memory-to-memory and memory-to-FIFO),
+    independently of whether a broadcast/splat is involved.
+
+    For example, an MNILU transfer of [1, 1, 1, 1] may need to be widened to
+    [1, 1, 1, 64] to satisfy DDR bus alignment constraints.
+
+    Key responsibilities:
+      1. Source buffer bounds checking: when widening a load transfer the pass
+         inspects the source memref shape/allocation bounds and verifies the
+         innermost dimension is large enough to support the widened physical
+         read, or diagnoses unpadded small buffers that would cause
+         out-of-bounds reads.
+      2. Loads vs. stores: differentiates read widening (safe into padded
+         intermediate buffers) from write widening (requires hardware
+         byte-enables or masking).
+      3. Integration with padding modes: leverages ZeroPadFront / ZeroPadBack
+         transfer modes for sub-granule non-splat slices (boundary/tail tiles).
+  }];
+  let constructor = "::scheduler::createAccessGranularityLegalizationPass()";
+}
+
+// TODO(splat-and-access-granularity-legalization-plan): Retire this pass.
+// Memory-side transfer widening and hardware access granularity checking
+// (mustLegalizeLoad) have been moved to access-granularity-legalization.
+// The compute-side indexing map normalization and read_from_fifo type updates
+// that remain here should be folded into splat-legalization or direct
+// front-end lowering; once that is done this pass can be removed entirely.
 def ScalarBroadcastLegalizationPass
     : Pass<"scalar-broadcast-legalization", "mlir::ModuleOp"> {
-  let summary = "Legalize scalar broadcast inputs to linalg.generic compute ops";
+  let summary = "Legalize scalar broadcast inputs to linalg.generic compute ops (deprecated)";
   let description = [{
     Detects linalg.generic operations in compute stages that have input
     indexing maps with a constant in the vector dimension (scalar broadcast).
@@ -318,9 +351,14 @@ def ScalarBroadcastLegalizationPass
     the compute unit does not support scalar broadcast semantics natively,
     this pass legalizes the path by:
       1. Widening memref-side transfers to the full vector granularity.
-      2. Marking the L1->FIFO transfer with transfer_mode="splat".
+      2. Marking the L1->FIFO transfer as a splat.
       3. Updating read_from_fifo result type and linalg.generic indexing map
          to use the full vector identity map.
+
+    Deprecated: memory-side transfer widening is being moved to
+    access-granularity-legalization. This pass will be retired once the
+    remaining compute-side responsibilities are folded into splat-legalization
+    or front-end lowering.
   }];
   let constructor = "::scheduler::createScalarBroadcastLegalizationPass()";
 }
@@ -355,13 +393,10 @@ def IndirectAddrBufFillLegalizationPass
 }
 
 def SplatLegalizationPass : Pass<"splat-legalization", "mlir::ModuleOp"> {
-  let summary = "Legalize splat data_transfer loads and name the shuffle that finishes them";
+  let summary = "Validate splat loads, widen to access granularity, and name the sub-SIMD shuffle";
   let description = [{
-    Runs after ScalarBroadcastLegalizationPass and records, in the IR, that a
-    splat the hardware cannot perform in one step has been left half done.
-
-    For each ktdf.data_transfer with transfer_mode="splat" whose destination is
-    a FIFO:
+    Runs after access-granularity-legalization. For each ktdf.data_transfer
+    with a splat transfer mode whose destination is a FIFO:
 
       1. Validates that the load unit's SIMD feature declares the splat
          capability.
@@ -381,10 +416,9 @@ def SplatLegalizationPass : Pass<"splat-legalization", "mlir::ModuleOp"> {
     gap; it is the pass's durable output.
 
     The shuffle itself is emitted by the lowering to DFIR, which reads the group
-    width off the compute unit's sub_simd_lanes.  What the buffer it works on is
-    and where it lives stays the device's to decide, in its
-    patterns ["post_scheduling"] block.  This pass queries the arch for the load
-    width and nothing else.
+    width off the compute unit's sub_simd_lanes.  This pass queries the arch for
+    the load width and nothing else.  Splat placement (ensuring the splat lands
+    on the terminal FIFO load) is the responsibility of path expansion upstream.
   }];
   let constructor = "::scheduler::createSplatLegalizationPass()";
   let dependentDialects = [
@@ -634,30 +668,57 @@ def HoistConstantStoragePass : Pass<"hoist-constant-storage", "mlir::func::FuncO
 
 def FoldFifoRelayStagesPass
     : Pass<"fold-fifo-relay-stages", "mlir::ModuleOp"> {
-  let summary = "Fold stages relaying memory to memory through FIFOs";
+  let summary = "Fold transfers relaying memory to memory through FIFOs";
   let description = [{
-    Folds a stage that transfers from memory into FIFO slots, and the stage
-    that transfers out of those slots into memory, into a single stage of
-    memory-to-memory transfers.
+    Folds a transfer from memory into a FIFO slot, and the transfer out of that
+    slot into memory, into a single memory-to-memory transfer. Each such relay
+    folds on its own, so the other transfers of its two stages may go to other
+    stages and between other memories.
 
     Path expansion can only split stages, never merge them, so it expects
     every transfer between two memories in one stage. If no unit can perform
     such a transfer, path expansion splits it again.
 
-    A pair of stages is folded when:
-    - Each holds nothing but transfers, the producer only into FIFO slots and
-      the consumer only out of them.
-    - Every slot is written once by the producer and read once by the
-      consumer, and has no other users.
-    - All slots connect the same pair of resources, all sources are in one
-      memory and all destinations in another.
-    - What goes into each slot is what comes out of it.
-    - The tokens the producer signals are only awaited by the consumer.
-    - The applicable units of the stages intersect, if both have any.
-    - No pair of transfers carries different throttles.
+    A relay can fold when:
+    - Its two stages hold nothing but transfers.
+    - Its slot is written once and read once, by different stages, and has no
+      other users.
+    - Its source and destination are in different memories.
+    - What goes into the slot is what comes out of it (ie fifo-side sizes must match).
+    - Its two transfers do not carry different throttles.
 
-    The folded stage takes the place of the consumer. It awaits the tokens of
-    the producer and those of the consumer that the producer did not signal.
+    The folded transfer goes into one of the two stages, the target, which
+    also awaits what the other stage awaits. The other stage loses its half of
+    the relay, and is erased if left empty. The stages that awaited an erased
+    stage await what it awaited instead.
+
+    Each transfer reads from one place and writes to another. For a memref,
+    the place is its memory. For a FIFO slot, it is the resource that the
+    slot's type names on the stage's side: the slot's source if the stage
+    writes into it, and its destination if the stage reads from it. For
+    example, a stage that writes into `!ktdf.fifo.slot<"MNILU" -> "L1LU", ...>`
+    writes to "MNILU".
+
+    The anchor of a stage is a place that all of its transfers read from, or
+    a place that all of them write to. A stage that reads from DDR and a
+    stage that writes to DDR have different anchors. If the transfers share
+    both the place they read from and the place they write to, a memory wins
+    over a FIFO. If both places are memories, or both are FIFOs, both are
+    anchors.
+
+    The fold must keep what path expansion expects:
+    - The dependencies stay free of cycles.
+    - Each of the two stages that still holds transfers has an anchor.
+    - A stage only gains an anchor that no other stage has.
+    - The stages that await the producer, other than the consumer, still see
+      the source read. The stages that await the consumer still see the
+      destination written.
+    - The applicable units of the stages intersect, if both have any.
+
+    The target is the stage whose fold leaves the other one empty if there is
+    one, then the producer, then the consumer. Afterwards, stages are reordered
+    so that each comes after the stages it awaits, and the dependency tokens
+    are normalized (see `simplify-pipeline`).
 
     Example:
     ```mlir
@@ -685,7 +746,7 @@ def FoldFifoRelayStagesPass
   ];
 
   let statistics = [
-    Statistic<"num_folded", "num-folded", "Number of folded stage pairs">,
+    Statistic<"num_folded", "num-folded", "Number of folded relays">,
   ];
 }
 
