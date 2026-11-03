@@ -310,8 +310,8 @@ def ReductionDimChunkingPass : Pass<"reduction-dim-chunking", "mlir::ModuleOp"> 
     the outermost reduction dimension, each step absorbs gcd(dim_size,
     remaining_chunk) into that dimension and passes remaining/gcd inward.
     Dimensions with a symbolic (dynamic) size are skipped without consuming
-    any of the remaining chunk budget.  The innermost overall loop dimension
-    is never chunked — if it is a reduction dim it is excluded before
+    any of the remaining chunk budget.  The innermost dimension of the first
+    input is never chunked — the reduction dim indexing it is excluded before
     distribution begins.
 
     When num-chunks is specified explicitly, multi-dim chunking is applied:

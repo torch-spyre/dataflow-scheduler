@@ -23,8 +23,8 @@
 // chunking uses a GCD-based outer-to-inner strategy: starting from the
 // outermost reduction dimension, each step absorbs gcd(dim_size, remaining)
 // into that dimension and passes remaining/gcd inward.  Dimensions with a
-// symbolic (dynamic) size are skipped.  The innermost overall loop dimension
-// is never chunked — if it is a reduction dim it is excluded before
+// symbolic (dynamic) size are skipped.  The innermost dimension of the first
+// input is never chunked — the reduction dim indexing it is excluded before
 // distribution begins.
 //
 // When --num-chunks is given explicitly, multi-dim chunking is applied using
@@ -218,8 +218,8 @@ struct ReductionDimChunkingPass
     // Determine reduction dims and per-dim chunk sizes.
     //
     // Threshold path (numChunks empty): GCD-based outer-to-inner chunking
-    // across all reduction dims; dynamic dims are skipped; the innermost
-    // overall loop dim is excluded if it is a reduction dim.
+    // across all reduction dims; dynamic dims are skipped; the reduction dim
+    // indexing the innermost dim of the first input is excluded.
     //
     // Explicit path (numChunks non-empty): one value per reduction dim;
     // nested scf.for loops; dims with count 1 produce no loop.
@@ -233,13 +233,16 @@ struct ReductionDimChunkingPass
     if (numChunks.empty()) {
       // Auto-infer via analysis — GCD-based outer-to-inner chunking.
 
-      // Collect all reduction dims, excluding the innermost overall loop dim
-      // if it is a reduction (the innermost loop dim must never be chunked,
-      // regardless of iterator type).
-      if (!reduction_chunk.reduction_dims.empty() &&
-          reduction_chunk.reduction_dims.back() ==
-              generic_op.getNumLoops() - 1) {
-        reduction_chunk.reduction_dims.pop_back();
+      // Collect all reduction dims, excluding the one that indexes the
+      // innermost dim of the first input (the innermost input dim must never
+      // be chunked). Under a non-identity map that is not necessarily the
+      // innermost loop dim.
+      AffineMap input_map =
+          generic_op.getMatchingIndexingMap(generic_op.getDpsInputOperand(0));
+      if (input_map.getNumResults() != 0) {
+        if (auto innermost =
+                dyn_cast<AffineDimExpr>(input_map.getResults().back()))
+          llvm::erase(reduction_chunk.reduction_dims, innermost.getPosition());
       }
       if (reduction_chunk.reduction_dims.empty()) {
         LDBG(1) << PASS_NAME
@@ -255,8 +258,13 @@ struct ReductionDimChunkingPass
         return failure();
       }
 
+      // The analysis sizes every reduction dim; distribute the chunk count
+      // over the chunkable ones only, so the excluded dim takes none of it.
+      const auto loop_ranges = generic_op.getStaticLoopRanges();
+      for (unsigned dim : reduction_chunk.reduction_dims)
+        reduction_chunk.red_dim_sizes.push_back(loop_ranges[dim]);
       auto chunk_dims =
-          computeChunkDims(result->red_dim_sizes, result->num_chunks);
+          computeChunkDims(reduction_chunk.red_dim_sizes, result->num_chunks);
       if (!chunk_dims) {
         inner_pipeline.emitError(
             PASS_NAME
@@ -266,7 +274,6 @@ struct ReductionDimChunkingPass
       }
 
       reduction_chunk.num_chunks = result->num_chunks;
-      reduction_chunk.red_dim_sizes = std::move(result->red_dim_sizes);
       reduction_chunk.chunk_sizes = std::move(*chunk_dims);
     } else {
       // User-supplied --num-chunks path: collect reduction dims and validate.
