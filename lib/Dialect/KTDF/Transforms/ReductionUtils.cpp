@@ -118,7 +118,7 @@ FifoPrivateResult StageFactory::buildFifoPrivate(
 void StageFactory::buildLoadStage(
     Value condition, Value input_memref, MemRefType input_memref_type,
     Value partial_memref, MemRefType output_memref_type,
-    ArrayRef<unsigned> reduction_dims, ArrayRef<int64_t> chunk_sizes,
+    ArrayRef<unsigned> input_dims, ArrayRef<int64_t> chunk_sizes,
     ArrayRef<Value> dim_ivs, const ChunkPipelineConfig& cfg) {
   // token 0: Load → Compute synchronisation (ChunkPipelineConfig convention).
   auto stage =
@@ -136,11 +136,11 @@ void StageFactory::buildLoadStage(
   // Build the shared source index vector and AffineMap for all in-slots.
   //
   // dim-0 of the memref is the batch/local slot (index = local_slot_idx, size =
-  // 1). dims 1..rank-1 correspond to linalg.generic dims 0..rank-2:
-  //   - reduction dim j → index operand = dim_ivs[j],
+  // 1). dims 1..rank-1 correspond to input tensor dims 0..rank-2:
+  //   - chunked dim j   → index operand = dim_ivs[j],
   //                        map result    = d_j * chunk_size[j]  (affine),
   //                        static size   = chunk_size[j]
-  //   - parallel dim    → index operand = c0,
+  //   - other dim       → index operand = c0,
   //                        map result    = d_k  (identity),
   //                        static size   = full dim size
   //
@@ -162,11 +162,11 @@ void StageFactory::buildLoadStage(
 
   // dims 1..rank-1.
   for (int64_t i = 1; i < input_rank; ++i) {
-    int64_t generic_dim = i - 1;
-    auto it = llvm::find(reduction_dims, generic_dim);
+    int64_t input_dim = i - 1;
+    auto it = llvm::find(input_dims, input_dim);
     unsigned dim_idx = static_cast<unsigned>(i);
-    if (it != reduction_dims.end()) {
-      size_t j = static_cast<size_t>(it - reduction_dims.begin());
+    if (it != input_dims.end()) {
+      size_t j = static_cast<size_t>(it - input_dims.begin());
       src_indices.push_back(dim_ivs[j]);
       src_static_sizes.push_back(chunk_sizes[j]);
       // iv_j * chunk_size[j]: constant multiplication stays in the map.

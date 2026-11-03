@@ -226,9 +226,8 @@ struct ReductionDimChunkingPass
     // ------------------------------------------------------------------
     ReductionChunkResult reduction_chunk;
 
-    // FIXME: This implementation assumes that there is an injective mapping
-    //        from loop to shape space, i.e., for each iteration, there will be
-    //        a distinct element read from the first input tensor.
+    // Chunk sizes are chosen in loop space; rewriteComputeStage maps each
+    // chunked loop dim to the first-input dim it indexes.
     generic_op.getReductionDims(reduction_chunk.reduction_dims);
 
     if (numChunks.empty()) {
@@ -434,14 +433,36 @@ struct ReductionDimChunkingPass
       return failure();
     }
 
-    // Per-chunk input tensor type: reduction dims replaced with chunk_sizes.
+    // The chunk is cut from the first input, along the input dim each chunked
+    // loop dim indexes. Loop dims and input dims only coincide under an
+    // identity map, so find them through the indexing map of the input.
+    AffineMap input_map =
+        generic_op.getMatchingIndexingMap(generic_op.getDpsInputOperand(0));
+    if (!input_map.isProjectedPermutation())
+      return inner_pipeline.emitError(PASS_NAME)
+             << ": the first input of the reduction is not indexed by a "
+                "projected permutation, so its chunk cannot be sliced";
+    SmallVector<unsigned> input_dims;
+    for (unsigned dim : reduction_dims) {
+      auto input_dim =
+          input_map.getResultPosition(rewriter.getAffineDimExpr(dim));
+      if (!input_dim)
+        return inner_pipeline.emitError(PASS_NAME)
+               << ": reduction loop dim " << dim
+               << " does not index the first input, so it cannot be chunked";
+      input_dims.push_back(*input_dim);
+    }
+
+    // Per-chunk input tensor type: chunked input dims replaced with
+    // chunk_sizes.
     auto orig_input_tensor_type =
         cast<RankedTensorType>(generic_op.getInputs().front().getType());
     SmallVector<int64_t> chunk_input_shape(
         orig_input_tensor_type.getShape().begin(),
         orig_input_tensor_type.getShape().end());
-    for (size_t j = 0; j < reduction_dims.size(); ++j)
-      chunk_input_shape[reduction_dims[j]] = chunk_sizes[j];
+    for (auto [input_dim, chunk_size] :
+         llvm::zip_equal(input_dims, chunk_sizes))
+      chunk_input_shape[input_dim] = chunk_size;
     auto chunk_input_tensor_type = RankedTensorType::get(
         chunk_input_shape, orig_input_tensor_type.getElementType());
 
@@ -567,7 +588,7 @@ struct ReductionDimChunkingPass
     factory.setSlots(factory.buildFifoPrivate(cfg));
 
     factory.buildLoadStage(condition, input_memref, input_memref_type,
-                           partial_memref, output_memref_type, reduction_dims,
+                           partial_memref, output_memref_type, input_dims,
                            chunk_sizes, dim_ivs, cfg);
 
     factory.buildComputeStage(condition, chunk_input_tensor_type,
