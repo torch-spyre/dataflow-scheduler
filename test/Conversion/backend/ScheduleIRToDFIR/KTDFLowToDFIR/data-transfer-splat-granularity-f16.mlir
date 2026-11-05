@@ -23,11 +23,11 @@
 // CHECK:       dataflow.program_unit iter_arg : %[[ITER_L:.+]] -> (%[[U0:.+]], %[[U1:.+]]) :
 // CHECK:         %[[ALLOC:.+]] = memref.alloc() : memref<256xf16, "L1">
 // CHECK:         scf.for
-// CHECK:           %[[LOAD:.+]] = agen.vector_load %[[ALLOC]][%{{.*}}]
+// CHECK:           %[[DST_MAP:.+]] = uniform.def_immutable_mapping([%[[U0]] -> %{{.*}}], [%[[U1]] -> %{{.*}}]):index
+// CHECK-NEXT:      %[[DST:.+]] = uniform.query_map(map:%[[DST_MAP]], key:%[[ITER_L]]) : index
+// CHECK-NEXT:      %[[LOAD:.+]] = agen.vector_load %[[ALLOC]][%{{.*}}]
 // CHECK-SAME:        {load_order = #[[MAP]], load_set = #[[SET]]} : memref<256xf16, "L1">, vector<1xf16>
 // CHECK-NEXT:      %[[SEND_SHUF:.+]] = vectorchain.shuffle input(%[[LOAD]]) {indices = [0 : i32], repetition = 64 : i32} : vector<1xf16>, vector<64xf16>
-// CHECK-NEXT:      %[[DST_MAP:.+]] = uniform.def_immutable_mapping([%[[U0]] -> %{{.*}}], [%[[U1]] -> %{{.*}}]):index
-// CHECK-NEXT:      %[[DST:.+]] = uniform.query_map(map:%[[DST_MAP]], key:%[[ITER_L]]) : index
 // CHECK-NEXT:      dataflow.send %[[DST]], %[[SEND_SHUF]] : vector<64xf16>
 // --- compute-unit program_unit (SFU): receive result used directly, no shuffle ---
 // CHECK:       dataflow.program_unit iter_arg : %[[ITER_C:.+]] -> (%[[V0:.+]], %[[V1:.+]]) :

@@ -89,6 +89,15 @@ struct LowerReadFromFifoPattern
                                          "vector does not have static shape");
     }
 
+    // The wide side of a float conversion arrives as several vectors, which
+    // the conversion lowers along with itself.
+    if (llvm::any_of(read_op->getUsers(), [](mlir::Operation* user) {
+          return isFloatConversion(user) && !isWideningFloatConversion(user);
+        })) {
+      return rewriter.notifyMatchFailure(
+          read_op, "read by a float conversion, which lowers it");
+    }
+
     // Find the enclosing program_unit
     auto program_unit =
         read_op->getParentOfType<mlir::dataflow::ProgramUnitOp>();
@@ -200,6 +209,13 @@ struct LowerWriteToFifoPattern
     if (!vector_type) {
       return rewriter.notifyMatchFailure(write_op,
                                          "vector does not have static shape");
+    }
+
+    // The wide side of a float conversion leaves as several vectors, which
+    // the conversion lowers along with itself.
+    if (isWideningFloatConversion(write_op.getData().getDefiningOp())) {
+      return rewriter.notifyMatchFailure(
+          write_op, "written by a float conversion, which lowers it");
     }
 
     // Find the enclosing program_unit
@@ -926,12 +942,13 @@ mlir::LogicalResult scheduler::runOperationLowerings(
     SymbolAllocator& symbols) {
   // Lower linalg.generic compute operations and FIFO operations
   mlir::RewritePatternSet patterns(func.getContext());
-  populateLinalgLoweringPatterns(patterns, symbols);
+  populateLinalgLoweringPatterns(patterns, symbols, components);
   patterns.add<LowerMemRefCopyFromFifoPattern>(func.getContext());
   patterns.add<LowerReadFromFifoPattern>(func.getContext(), mapping.byKind(),
                                          components);
   patterns.add<LowerWriteToFifoPattern>(func.getContext(), components);
-  populateDataTransferLoweringPatterns(patterns, components);
+  populateDataTransferLoweringPatterns(patterns, components,
+                                       mapping.byKind().getDefaultCompute());
   patterns.add<LowerSignalPattern>(func.getContext(), scheduler_ctx,
                                    components);
   patterns.add<LowerGetTileSizePattern>(func.getContext(), scheduler_ctx,

@@ -133,13 +133,13 @@
 // CHECK-NEXT:             dataflow.sync_recv %[[QUERY_MAP_7]] : index
 // CHECK-NEXT:             scf.for %[[VAL_13:.*]] = %[[CONSTANT_11]] to %[[CONSTANT_7]] step %[[CONSTANT_10]] {
 // CHECK-NEXT:               scf.for %[[VAL_14:.*]] = %[[CONSTANT_11]] to %[[CONSTANT_7]] step %[[CONSTANT_10]] {
-// CHECK-NEXT:                 %[[VECTOR_LOAD_0:.*]] = agen.vector_load %[[GET_LOGICAL_MEMORY_VIEW_5]]{{\[}}%[[VAL_13]], %[[VAL_14]], 0, 0, 0, 0] {load_order = #[[$ATTR_8]], load_set = #[[$ATTR_19]]} : memref<2x2x1x1x1x64xf16>, vector<64xf16>
 // CHECK-NEXT:                 %[[DEF_IMMUTABLE_MAPPING_8:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_2]] -> %[[GET_UNIT_4]]], {{\[}}%[[GET_UNIT_3]] -> %[[GET_UNIT_5]]]):index
 // CHECK-NEXT:                 %[[QUERY_MAP_8:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_8]], key:%[[VAL_8]]) : index
+// CHECK-NEXT:                 %[[VECTOR_LOAD_0:.*]] = agen.vector_load %[[GET_LOGICAL_MEMORY_VIEW_5]]{{\[}}%[[VAL_13]], %[[VAL_14]], 0, 0, 0, 0] {load_order = #[[$ATTR_8]], load_set = #[[$ATTR_19]]} : memref<2x2x1x1x1x64xf16>, vector<64xf16>
 // CHECK-NEXT:                 dataflow.send %[[QUERY_MAP_8]], %[[VECTOR_LOAD_0]] : vector<64xf16>
-// CHECK-NEXT:                 %[[VECTOR_LOAD_1:.*]] = agen.vector_load %[[GET_LOGICAL_MEMORY_VIEW_4]][0, 0] {load_order = #[[$ATTR_2]], load_set = #[[$ATTR_16]]} : memref<1x64xf16>, vector<64xf16>
 // CHECK-NEXT:                 %[[DEF_IMMUTABLE_MAPPING_9:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_2]] -> %[[GET_UNIT_4]]], {{\[}}%[[GET_UNIT_3]] -> %[[GET_UNIT_5]]]):index
 // CHECK-NEXT:                 %[[QUERY_MAP_9:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_9]], key:%[[VAL_8]]) : index
+// CHECK-NEXT:                 %[[VECTOR_LOAD_1:.*]] = agen.vector_load %[[GET_LOGICAL_MEMORY_VIEW_4]][0, 0] {load_order = #[[$ATTR_2]], load_set = #[[$ATTR_16]]} : memref<1x64xf16>, vector<64xf16>
 // CHECK-NEXT:                 dataflow.send %[[QUERY_MAP_9]], %[[VECTOR_LOAD_1]] : vector<64xf16>
 // CHECK-NEXT:               } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}

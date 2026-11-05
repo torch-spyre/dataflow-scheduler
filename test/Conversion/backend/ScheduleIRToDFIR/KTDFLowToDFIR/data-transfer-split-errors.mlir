@@ -18,9 +18,8 @@
 // Anything else is rejected rather than silently mis-lowered.
 // The vector width here is 64 lanes.
 
-// Splitting requires the innermost source/destination size to be a multiple of
-// the vector width; a 96-lane innermost dim is not a multiple of 64 and cannot
-// be covered by whole 64-lane vectors.
+// A 96-lane innermost dimension cannot be covered by contiguous 64-lane
+// vectors, so this transfer still requires an explicit rejection.
 module {
   ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
   // expected-error @below {{failed to run operation lowerings for innermost_size_not_multiple_of_vector_width}}
@@ -35,7 +34,7 @@ module {
     %ddr_buf = memref.alloc() : memref<2x128x96xf16, "DDR">
     %l1_buf = memref.alloc() : memref<2x1x128x96xf16, "L1">
     ktdf_lowering.execute_on %unit {
-      // expected-error @below {{data transfer of 12288 elements exceeds the throttle of 64; splitting requires the innermost source and destination sizes to be a multiple of the throttle, but they are 96 and 96}}
+      // expected-error @below {{data transfer of 12288 elements exceeds the throttle of 64; source and destination must split into contiguous rectangular vectors of that size}}
       // expected-error @below {{failed to legalize operation 'ktdf.data_transfer' that was explicitly marked illegal}}
       ktdf.data_transfer from %ddr_buf[%c0, 0, 0] size [1, 128, 96]
                          to %l1_buf[%c0, 0, 0, 0] size [1, 1, 128, 96]

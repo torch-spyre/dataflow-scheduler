@@ -20,6 +20,7 @@
 #define DATAFLOW_SCHEDULER_CONVERSION_FRONTEND_KTIRTOSCHEDULEIR_UTILS_H_
 
 #include <llvm/Support/ErrorHandling.h>
+#include <mlir/Dialect/Linalg/IR/Linalg.h>
 #include <mlir/Dialect/Utils/StructuredOpsUtils.h>
 #include <mlir/IR/BuiltinTypes.h>
 #include <mlir/IR/MLIRContext.h>
@@ -29,9 +30,41 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDFEnums.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/DataTransfers.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 
 namespace scheduler {
+
+[[nodiscard]] inline auto isStandaloneFloatConversion(mlir::Operation* op)
+    -> bool {
+  auto generic = mlir::dyn_cast_if_present<mlir::linalg::GenericOp>(op);
+  if (!generic || generic.getNumDpsInputs() != 1) return false;
+  mlir::Block& body = generic.getRegion().front();
+  if (!llvm::hasSingleElement(body.without_terminator())) return false;
+  auto& conversion = body.front();
+  return isDeviceFloatConversion(&conversion) &&
+         conversion.getOperand(0) == body.getArgument(0) &&
+         body.getTerminator()->getOperands() ==
+             mlir::ValueRange(conversion.getResult(0));
+}
+
+[[nodiscard]] inline auto getRoundTripProducer(mlir::linalg::LinalgOp op)
+    -> mlir::linalg::GenericOp {
+  if (!isStandaloneFloatConversion(op) || !op.hasPureTensorSemantics() ||
+      op->getNumResults() != 1 ||
+      !mlir::cast<mlir::ShapedType>(op->getResult(0).getType())
+           .getElementType()
+           .isF16()) {
+    return nullptr;
+  }
+  auto producer = op.getDpsInputs()[0].getDefiningOp<mlir::linalg::GenericOp>();
+  return isStandaloneFloatConversion(producer) &&
+                 producer.hasPureTensorSemantics() &&
+                 producer->getNumResults() == 1 && producer->hasOneUse() &&
+                 producer->getBlock() == op->getBlock()
+             ? producer
+             : nullptr;
+}
 
 [[nodiscard]] inline auto getSingleUse(mlir::Value value) -> mlir::OpOperand* {
   const auto uses = value.getUses();

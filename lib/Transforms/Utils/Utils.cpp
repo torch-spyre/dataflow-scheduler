@@ -167,3 +167,13 @@ int64_t scheduler::getVectorLanes(mlir::Type elem_type,
       compute.getFeature<mlir::ktdf_arch::feature::SIMD>().getLanes(elem_type),
       static_cast<int64_t>(1));
 }
+
+auto scheduler::isDeviceFloatConversion(mlir::Operation* op) -> bool {
+  if (auto ext = mlir::dyn_cast_if_present<mlir::arith::ExtFOp>(op)) {
+    return ext.getIn().getType().isF16() && ext.getType().isF32();
+  }
+  if (auto trunc = mlir::dyn_cast_if_present<mlir::arith::TruncFOp>(op)) {
+    return trunc.getIn().getType().isF32() && trunc.getType().isF16();
+  }
+  return false;
+}

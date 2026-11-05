@@ -80,6 +80,11 @@ void eraseDeadAncestorOps(llvm::ArrayRef<mlir::Operation*> roots);
 int64_t getVectorLanes(mlir::Type elem_type,
                        mlir::ktdf_arch::ExecutionUnitOp compute);
 
+/// Gets whether \p op is an `arith.extf` or `arith.truncf` the device has a
+/// conversion instruction for: f16 to f32 (dl16tofp32) or f32 to f16
+/// (fp32todl16).
+[[nodiscard]] auto isDeviceFloatConversion(mlir::Operation* op) -> bool;
+
 }  // namespace scheduler
 
 #endif  // DATAFLOW_SCHEDULER_TRANSFORMS_UTILS_UTILS_H_

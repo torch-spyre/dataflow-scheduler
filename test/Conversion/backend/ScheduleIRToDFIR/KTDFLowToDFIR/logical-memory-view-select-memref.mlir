@@ -26,9 +26,9 @@
 // CHECK-NEXT:         %[[FOR_0:.*]] = scf.for %[[I0:.*]] = %[[C0]] to %[[C12]] step %[[C1]] iter_args(%[[OA0:.*]] = %[[C128]]) -> (index) {
 // CHECK-NEXT:           %[[FOR_1:.*]] = scf.for %[[J0:.*]] = %[[C0]] to %[[C64]] step %[[C1]] iter_args(%[[IA0:.*]] = %[[OA0]]) -> (index) {
 // CHECK-NEXT:             %[[LMV_0:.*]] = dataflow.get_logical_memory_view %[[L1_TGT_0]], %[[IA0]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:             %[[VL_0:.*]] = agen.vector_load %[[LMV_0]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:             %[[MAP_SFU_0:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:             %[[SFU_TGT_0:.*]] = uniform.query_map(map:%[[MAP_SFU_0]], key:%[[ARG1]]) : index
+// CHECK-NEXT:             %[[VL_0:.*]] = agen.vector_load %[[LMV_0]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:             dataflow.send %[[SFU_TGT_0]], %[[VL_0]] : vector<49152xf16>
 // CHECK-NEXT:             %[[SUBI_0:.*]] = arith.subi %[[C98560]], %[[IA0]] : index
 // CHECK-NEXT:             scf.yield %[[SUBI_0]] : index
@@ -48,9 +48,9 @@
 // CHECK-NEXT:         %[[FOR_2:.*]] = scf.for %[[I1:.*]] = %[[C0]] to %[[C12]] step %[[C1]] iter_args(%[[OA1:.*]] = %[[C128]]) -> (index) {
 // CHECK-NEXT:           %[[FOR_3:.*]] = scf.for %[[J1:.*]] = %[[C0]] to %[[C64]] step %[[C1]] iter_args(%[[IA1:.*]] = %[[OA1]]) -> (index) {
 // CHECK-NEXT:             %[[LMV_1:.*]] = dataflow.get_logical_memory_view %[[L1_TGT_1]], %[[IA1]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:             %[[VL_1:.*]] = agen.vector_load %[[LMV_1]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:             %[[MAP_SFU_1:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:             %[[SFU_TGT_1:.*]] = uniform.query_map(map:%[[MAP_SFU_1]], key:%[[ARG5]]) : index
+// CHECK-NEXT:             %[[VL_1:.*]] = agen.vector_load %[[LMV_1]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:             dataflow.send %[[SFU_TGT_1]], %[[VL_1]] : vector<49152xf16>
 // CHECK-NEXT:             %[[SUBI_1:.*]] = arith.subi %[[C98560]], %[[IA1]] : index
 // CHECK-NEXT:             scf.yield %[[SUBI_1]] : index
@@ -70,9 +70,9 @@
 // CHECK-NEXT:         %[[FOR_4:.*]] = scf.for %[[I2:.*]] = %[[C0]] to %[[C12]] step %[[C1]] iter_args(%[[OA2:.*]] = %[[C128]]) -> (index) {
 // CHECK-NEXT:           %[[FOR_5:.*]] = scf.for %[[J2:.*]] = %[[C0]] to %[[C64]] step %[[C1]] iter_args(%[[IA2:.*]] = %[[OA2]]) -> (index) {
 // CHECK-NEXT:             %[[LMV_2:.*]] = dataflow.get_logical_memory_view %[[L1_TGT_2]], %[[IA2]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
-// CHECK-NEXT:             %[[VL_2:.*]] = agen.vector_load %[[LMV_2]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:             %[[MAP_SFU_2:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:             %[[SFU_TGT_2:.*]] = uniform.query_map(map:%[[MAP_SFU_2]], key:%[[ARG9]]) : index
+// CHECK-NEXT:             %[[VL_2:.*]] = agen.vector_load %[[LMV_2]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:             dataflow.send %[[SFU_TGT_2]], %[[VL_2]] : vector<49152xf16>
 // CHECK-NEXT:             %[[SUBI_2:.*]] = arith.subi %[[C98560]], %[[IA2]] : index
 // CHECK-NEXT:             scf.yield %[[SUBI_2]] : index

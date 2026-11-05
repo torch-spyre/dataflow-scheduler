@@ -47,6 +47,8 @@
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -65,6 +67,74 @@ namespace scheduler {
 }  // namespace scheduler
 
 namespace {
+
+struct PipelineBoundaryStages {
+  llvm::SmallVector<mlir::Operation*, 4> roots;
+  llvm::SmallVector<mlir::Operation*, 4> sinks;
+};
+
+/// Finds the leaf stages at a pipeline's entry and exit, including stages in
+/// nested pipelines. Only edges within this pipeline determine its boundary;
+/// an edge to a sibling must not hide an entry or exit from the next query.
+static PipelineBoundaryStages getPipelineBoundaryStages(
+    mlir::ktdf::PipelineOp pipeline,
+    const mlir::ktdf::StageDependencyDAG& global_dag) {
+  PipelineBoundaryStages boundary;
+  auto has_internal_neighbor = [&](mlir::Operation* stage,
+                                   const auto& neighbors) {
+    auto it = neighbors.find(stage);
+    return it != neighbors.end() &&
+           llvm::any_of(it->second, [&](mlir::Operation* other) {
+             return pipeline->isAncestor(other);
+           });
+  };
+  pipeline.walk([&](mlir::ktdf::StageOp stage) {
+    bool has_nested_pipeline = false;
+    stage.walk([&](mlir::ktdf::PipelineOp) {
+      has_nested_pipeline = true;
+      return mlir::WalkResult::interrupt();
+    });
+    if (has_nested_pipeline) return;
+
+    if (!has_internal_neighbor(stage, global_dag.predecessors)) {
+      boundary.roots.push_back(stage);
+    }
+    if (!has_internal_neighbor(stage, global_dag.successors)) {
+      boundary.sinks.push_back(stage);
+    }
+  });
+  return boundary;
+}
+
+/// Sibling pipelines execute in block order, but their local tokens do not
+/// express that order. Connect the earlier pipeline's exit leaf stages to the
+/// later one's entry leaf stages so scratchpad conflict detection can emit the
+/// required synchronization. Process nested pipelines first, before querying
+/// the boundaries of a pipeline that contains them.
+///
+/// This adds forward edges only and must run before loop back-edge analysis.
+static void addSiblingPipelineDependencies(
+    mlir::func::FuncOp func, mlir::ktdf::StageDependencyDAG& global_dag) {
+  llvm::DenseMap<mlir::Block*, mlir::ktdf::PipelineOp> previous_pipeline;
+  func.walk<mlir::WalkOrder::PostOrder>([&](mlir::ktdf::PipelineOp pipeline) {
+    const auto consumers = getPipelineBoundaryStages(pipeline, global_dag);
+    if (consumers.roots.empty() && consumers.sinks.empty()) return;
+    auto& previous = previous_pipeline[pipeline->getBlock()];
+    if (previous) {
+      const auto producers = getPipelineBoundaryStages(previous, global_dag);
+      for (auto* producer : producers.sinks) {
+        for (auto* consumer : consumers.roots) {
+          auto& successors = global_dag.successors[producer];
+          if (!llvm::is_contained(successors, consumer)) {
+            successors.push_back(consumer);
+            global_dag.predecessors[consumer].push_back(producer);
+          }
+        }
+      }
+    }
+    previous = pipeline;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Check whether there is a genuine cross-iteration scratchpad dependency
@@ -448,6 +518,7 @@ struct KTDFToKTDFLoweringPass
         func.emitError("failed to build global stage DAG");
         return signalPassFailure();
       }
+      addSiblingPipelineDependencies(func, global_dag);
 
       // Step 6b: Augment global_dag with cross-iteration back-edges for every
       // pipeline that has a genuine scratchpad RAW dependency between its load

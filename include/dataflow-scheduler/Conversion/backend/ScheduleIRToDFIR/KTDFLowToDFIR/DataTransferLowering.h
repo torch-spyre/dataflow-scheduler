@@ -37,12 +37,14 @@ namespace scheduler {
 /// the throughput limitation that this data transfer has to obey. This is set
 /// on pipeline construction / legalization, and gives the maximum number of
 /// elements that may be transferred in a single time step.
+/// Memory-to-memory lowering also caps this by the element type's SIMD width.
 static constexpr llvm::StringLiteral kThrottleAttrName =
     "dataflow_scheduler.throttle";
 
 /// Register LowerDataTransferPattern into the given pattern set.
-void populateDataTransferLoweringPatterns(mlir::RewritePatternSet& patterns,
-                                          const ResourceToUnits& components);
+void populateDataTransferLoweringPatterns(
+    mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
+    mlir::ktdf_arch::ExecutionUnitOp compute);
 
 }  // namespace scheduler
 

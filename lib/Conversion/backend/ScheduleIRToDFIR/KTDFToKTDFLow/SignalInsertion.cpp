@@ -29,13 +29,21 @@
 
 using namespace scheduler;
 
-// Returns the StageOp that is the correct insertion anchor for a SignalOp
-// between leaf stages producer_op and consumer_op. The anchor is the StageOp
-// in the shared parent PipelineOp that is closest (innermost) to both leaves —
-// i.e., the direct-child stage of the lowest common ancestor PipelineOp on
-// the producer's side.
+// Returns the insertion anchor for a signal between leaf stages. For sibling
+// pipelines the signal goes after the producer pipeline, where both pipelines'
+// units can execute it. Otherwise the anchor is the producer-side StageOp in
+// the innermost PipelineOp shared by both leaves.
 static mlir::Operation* sharedLevelAncestor(mlir::Operation* producer_op,
                                             mlir::Operation* consumer_op) {
+  for (mlir::Operation* p = producer_op->getParentOp(); p;
+       p = p->getParentOp()) {
+    if (!mlir::isa<mlir::ktdf::PipelineOp>(p)) continue;
+    auto* sibling = p->getBlock()->findAncestorOpInBlock(*consumer_op);
+    if (sibling && sibling != p && mlir::isa<mlir::ktdf::PipelineOp>(sibling)) {
+      return p;
+    }
+  }
+
   // Collect all PipelineOp ancestors of consumer (including its own parent).
   llvm::DenseSet<mlir::Operation*> consumer_pipelines;
   assert(mlir::isa<mlir::ktdf::StageOp>(consumer_op));

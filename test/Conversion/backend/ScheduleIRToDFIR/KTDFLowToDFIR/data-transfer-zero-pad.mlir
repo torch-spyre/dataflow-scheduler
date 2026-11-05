@@ -86,3 +86,48 @@ module {
     return
   }
 }
+
+// -----
+
+// An explicit two-packet slot must reject padding even without a conversion.
+module {
+  ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
+  // expected-error @below {{failed to run operation lowerings for zero_pad_front_into_two_packet_slot}}
+  func.func @zero_pad_front_into_two_packet_slot() attributes {grid = [1]} {
+    %c0 = arith.constant 0 : index
+    %lu = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1lu", type = "l1lu"} : index
+    %sfu = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-sfu", type = "sfu"} : index
+    ktdf_lowering.execute_on %lu, %sfu {
+      %in = memref.alloc() : memref<8xf32, "L1">
+      // expected-error @below {{failed to legalize operation 'ktdf.fifo.allocate' that was explicitly marked illegal}}
+      %fifo = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf32>
+      ktdf_lowering.execute_on %lu {
+        // expected-error @below {{splat/pad transfer cannot fill a FIFO slot moved as multiple vectors}}
+        ktdf.data_transfer from %in[%c0] size [8] to %fifo size [64] {dataflow_scheduler.vectors_per_slot = 2 : i64, transfer_mode = #ktdf.transfer_mode<zero_pad_front>} : memref<8xf32, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf32>
+      }
+    }
+    return
+  }
+}
+
+// -----
+
+module {
+  ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
+  // expected-error @below {{failed to run operation lowerings for zero_pad_back_into_two_packet_slot}}
+  func.func @zero_pad_back_into_two_packet_slot() attributes {grid = [1]} {
+    %c0 = arith.constant 0 : index
+    %lu = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-l1lu", type = "l1lu"} : index
+    %sfu = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-sfu", type = "sfu"} : index
+    ktdf_lowering.execute_on %lu, %sfu {
+      %in = memref.alloc() : memref<8xf32, "L1">
+      // expected-error @below {{failed to legalize operation 'ktdf.fifo.allocate' that was explicitly marked illegal}}
+      %fifo = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf32>
+      ktdf_lowering.execute_on %lu {
+        // expected-error @below {{splat/pad transfer cannot fill a FIFO slot moved as multiple vectors}}
+        ktdf.data_transfer from %in[%c0] size [8] to %fifo size [64] {dataflow_scheduler.vectors_per_slot = 2 : i64, transfer_mode = #ktdf.transfer_mode<zero_pad_back>} : memref<8xf32, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf32>
+      }
+    }
+    return
+  }
+}

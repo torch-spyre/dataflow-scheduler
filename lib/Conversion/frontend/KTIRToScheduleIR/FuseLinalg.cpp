@@ -41,6 +41,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 
 #define PASS_NAME "fuse-linalg"
 #define DEBUG_TYPE PASS_NAME
@@ -160,6 +161,17 @@ struct RemoveOutsDependency : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   return lhs;
 }
 
+/// Gets whether the body of @p op converts between f16 and f32.
+auto containsDeviceFloatConversion(mlir::Operation* op) -> bool {
+  return op
+      ->walk([](mlir::Operation* inner) {
+        return scheduler::isDeviceFloatConversion(inner)
+                   ? mlir::WalkResult::interrupt()
+                   : mlir::WalkResult::advance();
+      })
+      .wasInterrupted();
+}
+
 /// Fuses an elementwise producer into a 'linalg.generic' consumer.
 ///
 /// This is a mapping-aware copy of the (hidden) upstream pattern.
@@ -272,7 +284,13 @@ struct FuseLinalgPass : public impl::FuseLinalgPassBase<FuseLinalgPass> {
     patterns.add<FuseElementwiseOps>(
         patterns.getContext(), [&](mlir::OpOperand* through) -> bool {
           auto* const producer = through->get().getDefiningOp();
-          return candidates.contains(producer);
+          // A conversion between f16 and f32 stays a linalg.generic of its
+          // own: the device converts a whole vector of the narrow element
+          // into two of the wide one, which is lowered with the FIFO on its
+          // wide side rather than as a lane-wise op of a fused body.
+          return candidates.contains(producer) &&
+                 !containsDeviceFloatConversion(producer) &&
+                 !containsDeviceFloatConversion(through->getOwner());
         });
 
     // Fuse as many of the candidates as possible.

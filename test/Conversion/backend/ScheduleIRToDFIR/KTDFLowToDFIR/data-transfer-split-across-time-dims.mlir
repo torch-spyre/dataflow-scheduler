@@ -166,9 +166,9 @@ module {
   // CHECK:           %[[VAL_3:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-SFU", type = "SFU"} : index
   // CHECK:           dataflow.program_unit iter_arg : %[[VAL_4:.*]] -> (%[[VAL_0]], %[[VAL_1]]) : {
   // CHECK:             %[[VAL_5:.*]] = memref.alloc() : memref<128x64xf16, "L1">
-  // CHECK:             %[[VAL_6:.*]] = agen.vector_load %[[VAL_5]][0, 0] {load_order = #[[$ATTR_7]], load_set = #[[$ATTR_13]]} : memref<128x64xf16, "L1">, vector<8192xf16>
   // CHECK:             %[[VAL_7:.*]] = uniform.def_immutable_mapping({{\[}}%[[VAL_0]] -> %[[VAL_2]]], {{\[}}%[[VAL_1]] -> %[[VAL_3]]]):index
   // CHECK:             %[[VAL_8:.*]] = uniform.query_map(map:%[[VAL_7]], key:%[[VAL_4]]) : index
+  // CHECK:             %[[VAL_6:.*]] = agen.vector_load %[[VAL_5]][0, 0] {load_order = #[[$ATTR_7]], load_set = #[[$ATTR_13]]} : memref<128x64xf16, "L1">, vector<8192xf16>
   // CHECK:             dataflow.send %[[VAL_8]], %[[VAL_6]] : vector<8192xf16>
   // CHECK:           }
   // CHECK:           dataflow.program_unit iter_arg : %[[VAL_9:.*]] -> (%[[VAL_2]], %[[VAL_3]]) : {

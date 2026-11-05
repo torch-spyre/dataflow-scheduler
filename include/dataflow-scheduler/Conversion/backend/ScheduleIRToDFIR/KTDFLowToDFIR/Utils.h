@@ -28,7 +28,9 @@
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/LogicalResult.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -85,6 +87,44 @@ llvm::FailureOr<mlir::Value> resolveUnitFromFifoAttr(
     mlir::Attribute fifo_attr, const ResourceToUnits& components,
     mlir::PatternRewriter& rewriter, mlir::dataflow::ProgramUnitOp program_unit,
     mlir::Location loc, mlir::Operation* op_for_errors);
+
+/// Name of the attribute that says how many vectors a FIFO slot is moved as.
+///
+/// Set on a `ktdf.data_transfer` into or out of a FIFO slot by
+/// `markWideConversionSlots`, before the work is split into program units, so
+/// the unit at the memory end of the FIFO still knows after the split what the
+/// compute end does. A transfer without it moves the slot as one vector.
+static constexpr llvm::StringLiteral kVectorsPerSlotAttrName =
+    "dataflow_scheduler.vectors_per_slot";
+
+/// Gets whether \p generic converts between f16 and f32 and nothing else, and
+/// so has a wide side twice its narrow one: a lane-wise linalg.generic on
+/// tensors whose body converts its one input and yields the result.
+[[nodiscard]] auto isFloatConversion(mlir::Operation* generic) -> bool;
+
+/// Gets whether \p generic is a float conversion that widens, reading f16 and
+/// writing f32; one that is not reads f32 and writes f16.
+[[nodiscard]] auto isWideningFloatConversion(mlir::Operation* generic) -> bool;
+
+/// Marks every transfer through a FIFO slot that is the wide side of a float
+/// conversion in \p func with the number of vectors the slot is moved as.
+///
+/// The conversion takes one vector of the narrow element to two of the wide
+/// one, so its wide slot is two vectors, which both ends of the FIFO have to
+/// agree on. Fails, with an error, on a conversion whose wide side is not a
+/// FIFO only it uses, or whose FIFO has another end that moves the slot as
+/// one vector.
+[[nodiscard]] auto markWideConversionSlots(mlir::func::FuncOp func)
+    -> mlir::LogicalResult;
+
+/// Gets the vector one send or receive moves for \p transfer, a
+/// `ktdf.data_transfer` of \p vector_type into or out of a FIFO slot.
+///
+/// That is the whole of \p vector_type, unless the transfer is marked as moved
+/// as several vectors.
+[[nodiscard]] auto getFifoVectorType(mlir::Operation* transfer,
+                                     mlir::VectorType vector_type)
+    -> mlir::VectorType;
 
 /// Determine the data transfer type based on source and destination types.
 /// @param src_is_fifo True if source is a FIFO slot, false if memref

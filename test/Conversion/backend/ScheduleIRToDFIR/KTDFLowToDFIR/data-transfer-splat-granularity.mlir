@@ -39,11 +39,11 @@
 // CHECK:       dataflow.program_unit iter_arg : %[[ITER_L:.+]] -> (%[[U0]], %[[U1]]) :
 // CHECK:         %[[ALLOC:.+]] = memref.alloc() : memref<256xf32, "L1">
 // CHECK:         scf.for
-// CHECK:           %[[LOAD:.+]] = agen.vector_load %[[ALLOC]][%[[C0]]]
+// CHECK:           %{{.*}} = uniform.def_immutable_mapping
+// CHECK-NEXT:      %{{.*}} = uniform.query_map
+// CHECK-NEXT:      %[[LOAD:.+]] = agen.vector_load %[[ALLOC]][%[[C0]]]
 // CHECK-SAME:        {load_order = #[[MAP]], load_set = #[[SET]]} : memref<256xf32, "L1">, vector<2xf32>
 // CHECK-NEXT:      %[[SEND_SHUF:.+]] = vectorchain.shuffle input(%[[LOAD]]) {indices = [0 : i32, 1 : i32], repetition = 16 : i32} : vector<2xf32>, vector<32xf32>
-// CHECK-NEXT:      %{{.*}} = uniform.def_immutable_mapping
-// CHECK-NEXT:      %{{.*}} = uniform.query_map
 // CHECK-NEXT:      dataflow.send %{{.*}}, %[[SEND_SHUF]] : vector<32xf32>
 // --- compute-unit program_unit: the receive and the sub-SIMD shuffle ---
 // CHECK:       dataflow.program_unit iter_arg : %[[ITER_C:.+]] -> (%[[V0]], %[[V1]]) :

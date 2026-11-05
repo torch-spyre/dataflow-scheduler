@@ -125,6 +125,13 @@ struct KTDFLowToDFIRPass
         continue;
       }
 
+      // Before the work is split into program units, which leaves each unit
+      // only its own end of a FIFO: both ends have to agree on how many
+      // vectors a conversion's wide slot is moved as.
+      if (mlir::failed(markWideConversionSlots(func))) {
+        return signalPassFailure();
+      }
+
       ResourceToUnits components;
       if (mlir::failed(discoverUnitTypes(split.work_ops, components))) {
         return signalPassFailure();

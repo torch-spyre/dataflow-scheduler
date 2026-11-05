@@ -114,7 +114,8 @@ struct KTIRPipelinePass : public impl::KTIRPipelinePassBase<KTIRPipelinePass> {
 
  private:
   static auto createPipeline(mlir::RewriterBase& rewriter, mlir::Location loc,
-                             mlir::DominanceInfo& dominance)
+                             mlir::DominanceInfo& dominance,
+                             mlir::Operation* root_store = nullptr)
       -> mlir::ktdf::PipelineOp;
 };
 
@@ -318,6 +319,71 @@ struct EraseStageMapping : mlir::OpRewritePattern<mlir::ktdf::StageOp> {
   return nullptr;
 }
 
+/// Materializes the wide side of a direct cast pair in a tile-sized scratch
+/// buffer. The returned store terminates the first pipeline; the reload and
+/// narrowing conversion belong to the following pipeline in the same loop.
+/// Keeping the pipelines sequential lets both use the same compute unit and
+/// finishes reading the scratch tile before the next iteration overwrites it.
+[[nodiscard]] auto materializeFloatConversionBoundary(
+    mlir::RewriterBase& rewriter, mlir::Block* block,
+    mlir::ktdf_arch::Mapping& mapping, mlir::Attribute memory_space)
+    -> llvm::FailureOr<mlir::ktdp_lowering::StoreOp> {
+  mlir::linalg::GenericOp widening, narrowing;
+  for (auto consumer : block->getOps<mlir::linalg::GenericOp>()) {
+    auto producer = getRoundTripProducer(consumer);
+    if (!producer) continue;
+    if (widening) {
+      consumer.emitError(
+          "only one direct f16 to f32 to f16 conversion pair is supported "
+          "in a tiled loop");
+      return llvm::failure();
+    }
+    widening = producer;
+    narrowing = consumer;
+  }
+  if (!widening) return mlir::ktdp_lowering::StoreOp{};
+
+  const auto type =
+      mlir::cast<mlir::RankedTensorType>(widening->getResult(0).getType());
+  if (!type.hasStaticShape() || type.getNumElements() != 64 ||
+      !type.getElementType().isF32()) {
+    widening.emitError(
+        "a direct f16 to f32 to f16 conversion requires a static tile of "
+        "64 f32 elements");
+    return llvm::failure();
+  }
+  const auto memory =
+      mlir::dyn_cast<mlir::ktdf_arch::ResourceSpecAttr>(memory_space);
+  if (!memory || !mapping.lookup<mlir::ktdf_arch::MemoryOp>(memory)) {
+    widening.emitError(
+        "a direct f16 to f32 to f16 conversion requires ct_local memory");
+    return llvm::failure();
+  }
+
+  mlir::OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(widening);
+  const auto alloc_type =
+      mlir::MemRefType::get(type.getShape(), type.getElementType(),
+                            mlir::MemRefLayoutAttrInterface{}, memory_space);
+  auto scratch =
+      mlir::memref::AllocOp::create(rewriter, widening.getLoc(), alloc_type);
+  scratch->setAttr("alignment", rewriter.getI64IntegerAttr(128));
+
+  rewriter.setInsertionPointAfter(widening);
+  auto store = mlir::ktdp_lowering::StoreOp::create(
+      rewriter, widening.getLoc(), widening->getResult(0), scratch,
+      mlir::ValueRange{}, type.getShape());
+  setThrottle(store, 64);
+  rewriter.setInsertionPoint(narrowing);
+  auto load = mlir::ktdp_lowering::LoadOp::create(
+      rewriter, narrowing.getLoc(), scratch, mlir::ValueRange{},
+      type.getShape(), type.getElementType());
+  setThrottle(load, 64);
+  rewriter.modifyOpInPlace(
+      narrowing, [&]() { narrowing.getDpsInputOperand(0)->set(load); });
+  return store;
+}
+
 }  // namespace
 
 void KTIRPipelinePass::runOnOperation() {
@@ -337,13 +403,33 @@ void KTIRPipelinePass::runOnOperation() {
   }
   mlir::ktdf_arch::Mapping mapping(default_device.getRef());
 
+  AttrMapping mem_space_map;
+  if (auto map = default_device->getAttrOfType<mlir::ktdf_arch::MapAttr>(
+          "mem_space_mapping")) {
+    mem_space_map.insert_range(map);
+  }
+  const auto scratch_memory_space =
+      mem_space_map.map(mlir::ktdp::MemorySpaceAttr::get(
+          &getContext(), mlir::ktdp::MemorySpaceKind::ct_local, -1));
+
   // Create the pipelines.
-  const auto pipelines = llvm::map_to_vector(
-      func.getOps<mlir::scf::ForOp>(),
-      [&](mlir::scf::ForOp outermost) -> mlir::Operation* {
-        rewriter.setInsertionPointToEnd(findInnermost(outermost).getBody());
-        return createPipeline(rewriter, outermost->getLoc(), dominance);
-      });
+  llvm::SmallVector<mlir::Operation*> pipelines;
+  for (auto outermost : func.getOps<mlir::scf::ForOp>()) {
+    auto* const block = findInnermost(outermost).getBody();
+    auto boundary = materializeFloatConversionBoundary(rewriter, block, mapping,
+                                                       scratch_memory_space);
+    if (failed(boundary)) {
+      signalPassFailure();
+      return;
+    }
+    rewriter.setInsertionPointToEnd(block);
+    if (*boundary) {
+      pipelines.push_back(
+          createPipeline(rewriter, outermost->getLoc(), dominance, *boundary));
+    }
+    pipelines.push_back(
+        createPipeline(rewriter, outermost->getLoc(), dominance));
+  }
 
   // Normalize the pipelines.
   {
@@ -378,7 +464,8 @@ void KTIRPipelinePass::runOnOperation() {
 
 auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
                                       mlir::Location loc,
-                                      mlir::DominanceInfo& dominance)
+                                      mlir::DominanceInfo& dominance,
+                                      mlir::Operation* root_store)
     -> mlir::ktdf::PipelineOp {
   // Create the pipeline at the end of the insertion block.
   mlir::OpBuilder::InsertionGuard guard(rewriter);
@@ -466,6 +553,7 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
   llvm::SmallVector<mlir::Operation*> ind_ops;
   llvm::DenseSet<mlir::Value> ind_addr_bufs;
   block->walk([&](mlir::Operation* op) {
+    if (op->getParentOfType<mlir::ktdf::PipelineOp>()) return;
     if (auto ind_addr_buf = getIndAddrBuf(op); ind_addr_buf) {
       ind_ops.push_back(op);
       ind_addr_bufs.insert(getRootView(ind_addr_buf));
@@ -478,14 +566,21 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
   // program order to get program order in the stage. Stores to one memory space
   // share a stage and are paired with their consumers by position.
   llvm::SmallVector<mlir::Operation*> stores;
-  block->walk([&](mlir::Operation* op) {
-    if (auto store = llvm::dyn_cast<mlir::ktdp_lowering::StoreOp>(op);
-        store && !ind_addr_bufs.contains(getRootView(store.getDest()))) {
-      stores.push_back(op);
-    } else if (llvm::isa<mlir::ktdp_lowering::IndStoreOp>(op)) {
-      stores.push_back(op);
-    }
-  });
+  if (root_store) {
+    stores.push_back(root_store);
+  } else {
+    block->walk([&](mlir::Operation* op) {
+      // A cast pair can already have a preceding pipeline in this block.
+      // Its stores and dependencies must remain in that pipeline.
+      if (op->getParentOfType<mlir::ktdf::PipelineOp>()) return;
+      if (auto store = llvm::dyn_cast<mlir::ktdp_lowering::StoreOp>(op);
+          store && !ind_addr_bufs.contains(getRootView(store.getDest()))) {
+        stores.push_back(op);
+      } else if (llvm::isa<mlir::ktdp_lowering::IndStoreOp>(op)) {
+        stores.push_back(op);
+      }
+    });
+  }
   for (auto* const store : llvm::reverse(stores)) {
     builder.insert({store}, place, dominance);
   }
@@ -505,6 +600,7 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
     const auto ind_addr_buf = getRootView(getIndAddrBuf(ind_op));
     llvm::SmallVector<mlir::Operation*> fills;
     block->walk([&](mlir::Operation* op) {
+      if (op->getParentOfType<mlir::ktdf::PipelineOp>()) return;
       const auto dest = getWrittenMemRef(op);
       if (!dest || getRootView(dest) != ind_addr_buf || builder.getStage(op)) {
         return;

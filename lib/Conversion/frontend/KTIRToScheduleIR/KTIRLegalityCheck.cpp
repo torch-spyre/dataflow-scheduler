@@ -20,8 +20,10 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "Utils.h"
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "ktir/Dialect/SpyreOp/SpyreOpDialect.h"
 #include "llvm/Support/DebugLog.h"
@@ -77,8 +79,88 @@ namespace {
     return true;
   }
 
-  // Reject everything else.
-  return false;
+  // Accept the conversions between f16 and f32 in either direction, the two the
+  // device converts with dl16tofp32 and fp32todl16. Any other width is not one
+  // it has an instruction for. Where in the body one may stand is checked by
+  // checkFloatConversionBody. Reject everything else.
+  return isDeviceFloatConversion(op);
+}
+
+/// Recognizes an index-preserving f32 unary op between standalone casts.
+[[nodiscard]] auto isF32UnaryBetweenConversions(mlir::Operation* op) -> bool {
+  auto generic = mlir::dyn_cast_if_present<mlir::linalg::GenericOp>(op);
+  if (!generic || !generic.hasPureTensorSemantics() ||
+      generic.getNumDpsInputs() != 1 || generic.getNumDpsInits() != 1 ||
+      generic.getNumResults() != 1 ||
+      generic.getNumParallelLoops() != generic.getNumLoops())
+    return false;
+  auto maps = generic.getIndexingMapsArray();
+  if (!maps[0].isPermutation() || maps[0] != maps[1]) return false;
+  mlir::Block& body = generic.getRegion().front();
+  if (!llvm::hasSingleElement(body.without_terminator())) return false;
+  auto& unary = body.front();
+  if (!isLegalGenericBodyOp(&unary) || unary.getNumOperands() != 1 ||
+      unary.getNumResults() != 1 || !unary.getOperand(0).getType().isF32() ||
+      !unary.getResult(0).getType().isF32() ||
+      unary.getOperand(0) != body.getArgument(0) ||
+      body.getTerminator()->getOperands() !=
+          mlir::ValueRange(unary.getResult(0)))
+    return false;
+  if (!isStandaloneFloatConversion(generic.getDpsInputs()[0].getDefiningOp()))
+    return false;
+  auto result = generic.getResult(0);
+  return !result.use_empty() &&
+         llvm::all_of(result.getUsers(), [&](mlir::Operation* user) {
+           return isStandaloneFloatConversion(user) &&
+                  mlir::cast<mlir::linalg::GenericOp>(user).getDpsInputs()[0] ==
+                      result;
+         });
+}
+
+/// Checks that a conversion between f16 and f32 in the body of \p generic is
+/// all the body does: it converts its one input and yields the result.
+///
+/// The device converts a whole vector of f16 into two of f32, or two back into
+/// one, so the conversion is lowered with the FIFO on its wide side, not as a
+/// lane-wise op that others in the body could share a vector with.
+[[nodiscard]] auto checkFloatConversionBody(mlir::linalg::GenericOp generic)
+    -> mlir::LogicalResult {
+  mlir::Block& body = generic.getRegion().front();
+  for (auto& op : body.without_terminator()) {
+    if (!mlir::isa<mlir::arith::ExtFOp, mlir::arith::TruncFOp>(op)) continue;
+    if (!isStandaloneFloatConversion(generic)) {
+      return op.emitError(
+          "V1 only supports a conversion between f16 and f32 as the only "
+          "operation of its linalg.generic, converting its one input");
+    }
+    // Keep casts separate, allowing an index-preserving f32 unary op between
+    // them. FIFO packet compatibility is checked during lowering.
+    const bool widens = mlir::isa<mlir::arith::ExtFOp>(op);
+    auto touches_compute = [](mlir::Operation* other) {
+      return other && mlir::isa<mlir::linalg::LinalgOp>(other);
+    };
+    if (widens) {
+      for (auto* user : generic->getUsers()) {
+        if (touches_compute(user) &&
+            ((!isStandaloneFloatConversion(user) &&
+              !isF32UnaryBetweenConversions(user)) ||
+             mlir::cast<mlir::linalg::GenericOp>(user).getDpsInputs()[0] !=
+                 generic.getResult(0))) {
+          return generic.emitError(
+              "V1 only supports a dl16tofp32 conversion whose result is "
+              "stored, not computed on");
+        }
+      }
+    } else if (auto* producer = generic.getDpsInputs()[0].getDefiningOp();
+               touches_compute(producer) &&
+               !isStandaloneFloatConversion(producer) &&
+               !isF32UnaryBetweenConversions(producer)) {
+      return generic.emitError(
+          "V1 only supports a fp32todl16 conversion whose input is loaded, "
+          "not computed");
+    }
+  }
+  return mlir::success();
 }
 
 struct KTIRLegalityCheckPass
@@ -132,7 +214,9 @@ struct KTIRLegalityCheckPass
                 }
                 return mlir::WalkResult::advance();
               });
-          if (bodyResult.wasInterrupted()) {
+          if (bodyResult.wasInterrupted() ||
+              mlir::failed(checkFloatConversionBody(
+                  mlir::cast<mlir::linalg::GenericOp>(op)))) {
             failed = true;
             return mlir::WalkResult::interrupt();
           }
@@ -145,9 +229,19 @@ struct KTIRLegalityCheckPass
           return mlir::WalkResult::advance();
         }
         if (mlir::isa<mlir::linalg::ReduceOp>(op)) {
-          // Inspect the reduce body: every op must be a legal body op.
+          // Inspect the reduce body: every op must be a legal body op. A
+          // conversion between f16 and f32 is only one in a linalg.generic of
+          // its own.
           mlir::WalkResult bodyResult = op->getRegion(0).walk(
               [&](mlir::Operation* inner) -> mlir::WalkResult {
+                if (mlir::isa<mlir::arith::ExtFOp, mlir::arith::TruncFOp>(
+                        inner)) {
+                  inner->emitError(
+                      "V1 only supports a conversion between f16 and f32 as "
+                      "the only operation of its linalg.generic, converting "
+                      "its one input");
+                  return mlir::WalkResult::interrupt();
+                }
                 if (!isLegalGenericBodyOp(inner)) {
                   inner->emitError(
                       "V1 only supports add/mul/sub compute ops; found "

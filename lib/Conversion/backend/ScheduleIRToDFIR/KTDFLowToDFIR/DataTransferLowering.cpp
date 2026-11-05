@@ -32,6 +32,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Analysis/Presburger/IntegerRelation.h"
 #include "mlir/Analysis/Presburger/PresburgerSpace.h"
@@ -103,6 +104,19 @@ struct TransferTimeDims {
   }
 };
 
+/// Describe how a per-vector box traverses the whole transfer over time.
+TransferTimeDims describeTransferTimeDims(
+    llvm::ArrayRef<int64_t> sizes, llvm::ArrayRef<int64_t> vector_sizes) {
+  TransferTimeDims dims(sizes.size());
+  for (unsigned i = 0; i < sizes.size(); ++i) {
+    if (sizes[i] > vector_sizes[i]) {
+      dims.steps.push_back({i, vector_sizes[i]});
+      dims.extents.push_back(sizes[i] / vector_sizes[i]);
+    }
+  }
+  return dims;
+}
+
 /// Describe how `sizes` is traversed over time. Every non-unit dimension
 /// except the innermost contributes a time dimension stepping by one; the
 /// innermost contributes one stepping by a whole vector, and only when it
@@ -130,6 +144,20 @@ TransferTimeDims describeTransferTimeDims(llvm::ArrayRef<int64_t> sizes,
     addDim(sizes.size() - 1, vectors, /*index_step=*/lanes);
   }
   return dims;
+}
+
+/// Split a contiguous vector across trailing axes, e.g. 32 lanes in [4, 16]
+/// occupy [2, 16]. Reject shapes that require a non-rectangular packet.
+bool splitTransferVectorSizes(llvm::ArrayRef<int64_t> sizes, int64_t lanes,
+                              llvm::SmallVectorImpl<int64_t>& vector_sizes) {
+  vector_sizes.assign(sizes.size(), 1);
+  for (size_t i = sizes.size(); i > 0 && lanes > 1; --i) {
+    const int64_t extent = std::min(sizes[i - 1], lanes);
+    if (extent <= 0 || sizes[i - 1] % extent || lanes % extent) return false;
+    vector_sizes[i - 1] = extent;
+    lanes /= extent;
+  }
+  return lanes == 1;
 }
 
 /// The coefficient of each dimension of `map`, which must have one result, or
@@ -603,8 +631,9 @@ struct LowerIndDataTransferPattern
 struct LowerDataTransferPattern
     : public mlir::OpRewritePattern<mlir::ktdf::DataTransferOp> {
   LowerDataTransferPattern(mlir::MLIRContext* context,
-                           const ResourceToUnits& components)
-      : OpRewritePattern(context), components_(components) {}
+                           const ResourceToUnits& components,
+                           mlir::ktdf_arch::ExecutionUnitOp compute)
+      : OpRewritePattern(context), components_(components), compute_(compute) {}
 
   mlir::LogicalResult matchAndRewrite(
       mlir::ktdf::DataTransferOp data_transfer_op,
@@ -750,6 +779,55 @@ struct LowerDataTransferPattern
 
  private:
   const ResourceToUnits& components_;
+  mlir::ktdf_arch::ExecutionUnitOp compute_;
+
+  /// Where the vectors a FIFO slot is moved as are in a transfer of it: each
+  /// is the next run of the slot's elements in row-major order, which is a
+  /// box of the transfer's sizes cut along its outermost dimension of more
+  /// than one element.
+  struct SlotParts {
+    /// The dimension the parts are cut along.
+    unsigned dim = 0;
+    /// The sizes of one part.
+    llvm::SmallVector<int64_t> sizes;
+  };
+
+  /// Gets how \p sizes, the sizes of a transfer through a FIFO slot, are cut
+  /// into \p parts vectors, or fails with an error on \p transfer if the
+  /// parts are not boxes of them.
+  static mlir::FailureOr<SlotParts> cutIntoParts(mlir::Operation* transfer,
+                                                 llvm::ArrayRef<int64_t> sizes,
+                                                 mlir::AffineMap map,
+                                                 int64_t parts) {
+    SlotParts cut{0, llvm::SmallVector<int64_t>(sizes)};
+    if (parts <= 1) return cut;
+    if (map.getNumResults() != sizes.size()) {
+      return transfer->emitError("a FIFO slot moved as ")
+             << parts << " vectors must be transferred through a map with a "
+             << "result for each of its " << sizes.size() << " sizes";
+    }
+    const auto* outer =
+        llvm::find_if(sizes, [](int64_t size) { return size != 1; });
+    if (outer == sizes.end() || *outer % parts != 0) {
+      return transfer->emitError("a FIFO slot moved as ")
+             << parts << " vectors must have a dimension that splits into "
+             << parts << " parts, outside all others of more than one element";
+    }
+    cut.dim = static_cast<unsigned>(outer - sizes.begin());
+    cut.sizes[cut.dim] /= parts;
+    return cut;
+  }
+
+  /// Gets \p map moved to part \p part of \p cut.
+  static mlir::AffineMap shiftToPart(mlir::AffineMap map, const SlotParts& cut,
+                                     int64_t part) {
+    const int64_t offset = part * cut.sizes[cut.dim];
+    if (offset == 0) return map;
+    llvm::SmallVector<mlir::AffineExpr> results(map.getResults());
+    results[cut.dim] = results[cut.dim] + offset;
+    return mlir::AffineMap::get(map.getNumDims(), map.getNumSymbols(), results,
+                                map.getContext());
+  }
 
   /// Lower as CompositeLoadAndStore.
   ///
@@ -767,11 +845,15 @@ struct LowerDataTransferPattern
     auto* context = rewriter.getContext();
     const int64_t total = vector_type.getNumElements();
 
-    const auto throttle = getThrottle(data_transfer_op);
+    auto throttle = getThrottle(data_transfer_op);
     if (!throttle) {
       return data_transfer_op.emitError()
              << "missing '" << kThrottleAttrName << "' attribute";
     }
+    // A cast's throttle counts narrow elements; memory packets use the
+    // transferred element type's SIMD width.
+    *throttle = std::min(
+        *throttle, getVectorLanes(vector_type.getElementType(), compute_));
 
     // Sizes describing the elements covered by one AGEN vector transfer, and
     // the dimensions (if any) walked over time to cover the rest. Narrowed
@@ -794,19 +876,18 @@ struct LowerDataTransferPattern
         return mlir::failure();
       }
 
-      if (src_static_sizes.back() % *throttle != 0 ||
-          dst_static_sizes.back() % *throttle != 0) {
+      if (!splitTransferVectorSizes(src_static_sizes, *throttle, load_sizes) ||
+          !splitTransferVectorSizes(dst_static_sizes, *throttle, store_sizes)) {
         data_transfer_op.emitError()
             << "data transfer of " << total
             << " elements exceeds the throttle of " << *throttle
-            << "; splitting requires the innermost source and destination "
-               "sizes to be a multiple of the throttle, but they are "
-            << src_static_sizes.back() << " and " << dst_static_sizes.back();
+            << "; source and destination must split into contiguous "
+               "rectangular vectors of that size";
         return mlir::failure();
       }
 
-      src_time_dims = describeTransferTimeDims(src_static_sizes, *throttle);
-      dst_time_dims = describeTransferTimeDims(dst_static_sizes, *throttle);
+      src_time_dims = describeTransferTimeDims(src_static_sizes, load_sizes);
+      dst_time_dims = describeTransferTimeDims(dst_static_sizes, store_sizes);
 
       // Only the extents are compared, not positions or coefficients: the
       // two sides may reach the same walk through different shapes, e.g.
@@ -821,10 +902,6 @@ struct LowerDataTransferPattern
 
       load_iv_type =
           mlir::VectorType::get({*throttle}, vector_type.getElementType());
-      load_sizes.assign(src_static_sizes.size(), 1);
-      load_sizes.back() = *throttle;
-      store_sizes.assign(dst_static_sizes.size(), 1);
-      store_sizes.back() = *throttle;
 
       // A time dimension is one step count shared by both sides, so it is only
       // realizable when both sides move the same distance per step: one count
@@ -960,54 +1037,73 @@ struct LowerDataTransferPattern
       return mlir::failure();
     }
 
-    auto load_type = transfer_mode != mlir::ktdf::TransferMode::Copy
-                         ? mlir::VectorType::get({load_elements},
-                                                 vector_type.getElementType())
-                         : vector_type;
+    auto is_copy = transfer_mode == mlir::ktdf::TransferMode::Copy;
+    const auto vectors = data_transfer_op->getAttrOfType<mlir::IntegerAttr>(
+        kVectorsPerSlotAttrName);
+    if (!is_copy && vectors && vectors.getInt() > 1) {
+      return data_transfer_op.emitError(
+          "splat/pad transfer cannot fill a FIFO slot moved as multiple "
+          "vectors");
+    }
+
+    // One send per vector the slot is moved as, each loading the next run of
+    // the slot's elements. A splat is one load broadcast to the whole
+    // destination, which is never wider than one vector:
+    // markWideConversionSlots rejects one into a slot moved as several.
+    const auto send_type = getFifoVectorType(data_transfer_op, vector_type);
+    const int64_t lanes = send_type.getNumElements();
+    const int64_t sends = vector_type.getNumElements() / lanes;
+    auto cut = cutIntoParts(data_transfer_op, src_static_sizes, src_map, sends);
+    if (mlir::failed(cut)) return mlir::failure();
+
+    auto load_type = is_copy
+                         ? send_type
+                         : mlir::VectorType::get({load_elements},
+                                                 vector_type.getElementType());
 
     mlir::IntegerSet load_set =
-        buildIntegerSetFromSizes(rewriter.getContext(), src_static_sizes);
+        buildIntegerSetFromSizes(rewriter.getContext(), cut->sizes);
     mlir::AffineMap load_order = mlir::AffineMap::getMultiDimIdentityMap(
         num_dims, rewriter.getContext());
 
-    // Create vector_load operation
-    auto vector_load_op = mlir::agen::VectorLoadOp::create(
-        rewriter, data_transfer_op.getLoc(), load_type, src_memref,
-        /*dbgName=*/nullptr, src_map, src_indices, load_set, load_order);
-
-    // Widen the load to the full destination width.
-    mlir::Value send_value = vector_load_op.getResult();
-    switch (transfer_mode) {
-      case mlir::ktdf::TransferMode::Copy:
-        break;
-      case mlir::ktdf::TransferMode::Splat:
-        send_value = scheduler::emitSplatShuffle(
-            rewriter, data_transfer_op.getLoc(), send_value,
-            vector_type.getNumElements());
-        break;
-      case mlir::ktdf::TransferMode::ZeroPadBack:
-      case mlir::ktdf::TransferMode::ZeroPadFront:
-        send_value = scheduler::emitZeroPadShuffle(
-            rewriter, data_transfer_op.getLoc(), send_value,
-            vector_type.getNumElements(),
-            transfer_mode == mlir::ktdf::TransferMode::ZeroPadFront);
-        break;
-    }
-
     // Resolve the destination unit from the FIFO dest attribute
-    auto dest_unit_result = resolveUnitFromFifoAttr(
+    auto dest_unit = resolveUnitFromFifoAttr(
         dst_fifo_slot_type.getDest(), components_, rewriter, program_unit,
         data_transfer_op.getLoc(), data_transfer_op.getOperation());
-    if (mlir::failed(dest_unit_result)) {
-      return mlir::failure();
-    }
-    mlir::Value dest_unit = *dest_unit_result;
+    if (mlir::failed(dest_unit)) return mlir::failure();
 
-    // Create dataflow.send operation
-    mlir::dataflow::SendOp::create(rewriter, data_transfer_op.getLoc(),
-                                   dest_unit, send_value,
-                                   /*dir=*/nullptr,
-                                   /*dbgName=*/nullptr);
+    for (int64_t part = 0; part < sends; ++part) {
+      // Create vector_load operation
+      auto vector_load_op = mlir::agen::VectorLoadOp::create(
+          rewriter, data_transfer_op.getLoc(), load_type, src_memref,
+          /*dbgName=*/nullptr, shiftToPart(src_map, *cut, part), src_indices,
+          load_set, load_order);
+
+      // Widen the load to the full destination width.
+      mlir::Value send_value = vector_load_op.getResult();
+      switch (transfer_mode) {
+        case mlir::ktdf::TransferMode::Copy:
+          break;
+        case mlir::ktdf::TransferMode::Splat:
+          send_value = scheduler::emitSplatShuffle(
+              rewriter, data_transfer_op.getLoc(), send_value,
+              vector_type.getNumElements());
+          break;
+        case mlir::ktdf::TransferMode::ZeroPadBack:
+        case mlir::ktdf::TransferMode::ZeroPadFront:
+          send_value = scheduler::emitZeroPadShuffle(
+              rewriter, data_transfer_op.getLoc(), send_value,
+              vector_type.getNumElements(),
+              transfer_mode == mlir::ktdf::TransferMode::ZeroPadFront);
+          break;
+      }
+
+      // Create dataflow.send operation
+      mlir::dataflow::SendOp::create(rewriter, data_transfer_op.getLoc(),
+                                     *dest_unit, send_value,
+                                     /*dir=*/nullptr,
+                                     /*dbgName=*/nullptr);
+    }
 
     // Erase the original data_transfer operation
     rewriter.eraseOp(data_transfer_op);
@@ -1021,9 +1117,16 @@ struct LowerDataTransferPattern
       mlir::ValueRange dst_indices, llvm::ArrayRef<int64_t> dst_static_sizes,
       unsigned num_dims, mlir::VectorType vector_type, mlir::AffineMap dst_map,
       mlir::ktdf::FifoSlotType src_fifo_slot_type) const {
-    // Build store_set from destination sizes
+    // One receive per vector the slot is moved as, each storing the next run of
+    // the slot's elements.
+    const auto receive_type = getFifoVectorType(data_transfer_op, vector_type);
+    const int64_t lanes = receive_type.getNumElements();
+    const int64_t receives = vector_type.getNumElements() / lanes;
+    auto cut =
+        cutIntoParts(data_transfer_op, dst_static_sizes, dst_map, receives);
+    if (mlir::failed(cut)) return mlir::failure();
     auto store_set =
-        buildIntegerSetFromSizes(rewriter.getContext(), dst_static_sizes);
+        buildIntegerSetFromSizes(rewriter.getContext(), cut->sizes);
 
     // Build store_order
     auto store_order = mlir::AffineMap::getMultiDimIdentityMap(
@@ -1046,15 +1149,15 @@ struct LowerDataTransferPattern
     }
     mlir::Value src_unit = *src_unit_result;
 
-    // Create dataflow.receive operation
-    auto receive_op = mlir::dataflow::ReceiveOp::create(
-        rewriter, data_transfer_op.getLoc(), vector_type, src_unit,
-        /*dbgName=*/nullptr);
-
-    // Create vector_store operation
-    mlir::agen::VectorStoreOp::create(
-        rewriter, data_transfer_op.getLoc(), receive_op.getData(), dst_memref,
-        /*dbgName=*/nullptr, dst_map, dst_indices, store_set, store_order);
+    for (int64_t part = 0; part < receives; ++part) {
+      auto receive_op = mlir::dataflow::ReceiveOp::create(
+          rewriter, data_transfer_op.getLoc(), receive_type, src_unit,
+          /*dbgName=*/nullptr);
+      mlir::agen::VectorStoreOp::create(
+          rewriter, data_transfer_op.getLoc(), receive_op.getData(), dst_memref,
+          /*dbgName=*/nullptr, shiftToPart(dst_map, *cut, part), dst_indices,
+          store_set, store_order);
+    }
 
     // Erase the original data_transfer operation
     rewriter.eraseOp(data_transfer_op);
@@ -1065,7 +1168,9 @@ struct LowerDataTransferPattern
 }  // namespace
 
 void scheduler::populateDataTransferLoweringPatterns(
-    mlir::RewritePatternSet& patterns, const ResourceToUnits& components) {
+    mlir::RewritePatternSet& patterns, const ResourceToUnits& components,
+    mlir::ktdf_arch::ExecutionUnitOp compute) {
   patterns.add<LowerIndDataTransferPattern>(patterns.getContext(), components);
-  patterns.add<LowerDataTransferPattern>(patterns.getContext(), components);
+  patterns.add<LowerDataTransferPattern>(patterns.getContext(), components,
+                                         compute);
 }

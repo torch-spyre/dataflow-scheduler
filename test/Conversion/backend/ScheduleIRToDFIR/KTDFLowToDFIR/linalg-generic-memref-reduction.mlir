@@ -18,9 +18,9 @@
 // CHECK-NEXT:     dataflow.program_unit iter_arg : %[[VAL_0:.*]] -> (%[[GET_UNIT_0]], %[[GET_UNIT_1]]) : {
 // CHECK-NEXT:       %[[ALLOC_0:.*]] = memref.alloc() : memref<1x256x64xf16, "L1">
 // CHECK-NEXT:       scf.for %[[VAL_1:.*]] = %[[CONSTANT_2]] to %[[CONSTANT_0]] step %[[CONSTANT_1]] {
-// CHECK-NEXT:         %[[VECTOR_LOAD_0:.*]] = agen.vector_load %[[ALLOC_0]]{{\[}}%[[CONSTANT_2]], %[[VAL_1]], %[[CONSTANT_2]]] {load_order = #[[$ATTR_0]], load_set = #[[$ATTR_3]]} : memref<1x256x64xf16, "L1">, vector<64xf16>
 // CHECK-NEXT:         %[[DEF_IMMUTABLE_MAPPING_0:.*]] = uniform.def_immutable_mapping({{\[}}%[[GET_UNIT_0]] -> %[[GET_UNIT_2]]], {{\[}}%[[GET_UNIT_1]] -> %[[GET_UNIT_3]]]):index
 // CHECK-NEXT:         %[[QUERY_MAP_0:.*]] = uniform.query_map(map:%[[DEF_IMMUTABLE_MAPPING_0]], key:%[[VAL_0]]) : index
+// CHECK-NEXT:         %[[VECTOR_LOAD_0:.*]] = agen.vector_load %[[ALLOC_0]]{{\[}}%[[CONSTANT_2]], %[[VAL_1]], %[[CONSTANT_2]]] {load_order = #[[$ATTR_0]], load_set = #[[$ATTR_3]]} : memref<1x256x64xf16, "L1">, vector<64xf16>
 // CHECK-NEXT:         dataflow.send %[[QUERY_MAP_0]], %[[VECTOR_LOAD_0]] : vector<64xf16>
 // CHECK-NEXT:       }
 // CHECK-NEXT:     }

@@ -34,9 +34,9 @@
 // CHECK-NEXT:           %[[LMV_0:.*]] = dataflow.get_logical_memory_view %[[L1_TGT_0]], %[[C128]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
 // CHECK-NEXT:           scf.for %[[I0:.*]] = %[[C0]] to %[[C12]] step %[[C1]] {
 // CHECK-NEXT:             scf.for %[[J0:.*]] = %[[C0]] to %[[C64]] step %[[C1]] {
-// CHECK-NEXT:               %[[VL_0:.*]] = agen.vector_load %[[LMV_0]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:               %[[MAP_SFU_0:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:               %[[SFU_TGT_0:.*]] = uniform.query_map(map:%[[MAP_SFU_0]], key:%[[ARG1]]) : index
+// CHECK-NEXT:               %[[VL_0:.*]] = agen.vector_load %[[LMV_0]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:               dataflow.send %[[SFU_TGT_0]], %[[VL_0]] : vector<49152xf16>
 // CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -53,9 +53,9 @@
 // CHECK-NEXT:           %[[LMV_1:.*]] = dataflow.get_logical_memory_view %[[L1_TGT_1]], %[[C128]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
 // CHECK-NEXT:           scf.for %[[I1:.*]] = %[[C0]] to %[[C12]] step %[[C1]] {
 // CHECK-NEXT:             scf.for %[[J1:.*]] = %[[C0]] to %[[C64]] step %[[C1]] {
-// CHECK-NEXT:               %[[VL_1:.*]] = agen.vector_load %[[LMV_1]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:               %[[MAP_SFU_1:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:               %[[SFU_TGT_1:.*]] = uniform.query_map(map:%[[MAP_SFU_1]], key:%[[ARG5]]) : index
+// CHECK-NEXT:               %[[VL_1:.*]] = agen.vector_load %[[LMV_1]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:               dataflow.send %[[SFU_TGT_1]], %[[VL_1]] : vector<49152xf16>
 // CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -72,9 +72,9 @@
 // CHECK-NEXT:           %[[LMV_2:.*]] = dataflow.get_logical_memory_view %[[L1_TGT_2]], %[[C128]] {layout_map = #[[$ATTR_0]]} : index, index, memref<12x1x64x64xf16>
 // CHECK-NEXT:           scf.for %[[I2:.*]] = %[[C0]] to %[[C12]] step %[[C1]] {
 // CHECK-NEXT:             scf.for %[[J2:.*]] = %[[C0]] to %[[C64]] step %[[C1]] {
-// CHECK-NEXT:               %[[VL_2:.*]] = agen.vector_load %[[LMV_2]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:               %[[MAP_SFU_2:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:               %[[SFU_TGT_2:.*]] = uniform.query_map(map:%[[MAP_SFU_2]], key:%[[ARG9]]) : index
+// CHECK-NEXT:               %[[VL_2:.*]] = agen.vector_load %[[LMV_2]]{{\[}}%[[C0]], %[[C0]], %[[C0]], %[[C0]]] {load_order = #[[$ATTR_1]], load_set = #[[$ATTR_2]]} : memref<12x1x64x64xf16>, vector<49152xf16>
 // CHECK-NEXT:               dataflow.send %[[SFU_TGT_2]], %[[VL_2]] : vector<49152xf16>
 // CHECK-NEXT:             } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:           } {loop_type = #ktdf.loop_type<parallel_loop>}

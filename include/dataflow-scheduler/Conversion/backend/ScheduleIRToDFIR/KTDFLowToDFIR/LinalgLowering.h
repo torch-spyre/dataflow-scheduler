@@ -20,13 +20,18 @@
 #define DATAFLOW_SCHEDULER_CONVERSION_KTDFLOWTODFIR_LINALGLOWERING_H_
 
 #include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/SymbolicStartAddress.h"
+#include "dataflow-scheduler/Conversion/backend/ScheduleIRToDFIR/KTDFLowToDFIR/UnitTypeDiscovery.h"
 #include "mlir/IR/PatternMatch.h"
 
 namespace scheduler {
 
 /// Register LowerLinalgGenericPattern into the given pattern set.
+///
+/// A conversion between f16 and f32 lowers the FIFO on its wide side along
+/// with it, so it needs the \p components the FIFO ends resolve to.
 void populateLinalgLoweringPatterns(mlir::RewritePatternSet& patterns,
-                                    SymbolAllocator& symbols);
+                                    SymbolAllocator& symbols,
+                                    const ResourceToUnits& components);
 
 }  // namespace scheduler
 

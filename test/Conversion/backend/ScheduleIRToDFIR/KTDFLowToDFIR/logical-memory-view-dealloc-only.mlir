@@ -23,9 +23,9 @@
 // CHECK-NEXT:       dataflow.program_unit iter_arg : %[[ARG0:.*]] -> (%[[L1LU_0]], %[[L1LU_1]]) : {
 // CHECK-NEXT:         dataflow.program_unit iter_arg : %[[ARG1:.*]] -> (%[[L1LU_0]], %[[L1LU_1]]) : {
 // CHECK-NEXT:           %[[ALLOC_0:.*]] = memref.alloc() : memref<64xf16, "L1">
-// CHECK-NEXT:           %[[VL_0:.*]] = agen.vector_load %[[ALLOC_0]]{{\[}}%[[C0]]] {load_order = #[[$ATTR_0]], load_set = #[[$ATTR_1]]} : memref<64xf16, "L1">, vector<64xf16>
 // CHECK-NEXT:           %[[MAP_0:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:           %[[TGT_0:.*]] = uniform.query_map(map:%[[MAP_0]], key:%[[ARG1]]) : index
+// CHECK-NEXT:           %[[VL_0:.*]] = agen.vector_load %[[ALLOC_0]]{{\[}}%[[C0]]] {load_order = #[[$ATTR_0]], load_set = #[[$ATTR_1]]} : memref<64xf16, "L1">, vector<64xf16>
 // CHECK-NEXT:           dataflow.send %[[TGT_0]], %[[VL_0]] : vector<64xf16>
 // CHECK-NEXT:         }
 // CHECK-NEXT:         dataflow.program_unit iter_arg : %[[ARG2:.*]] -> (%[[SFU_0]], %[[SFU_1]]) : {
@@ -36,9 +36,9 @@
 // CHECK-NEXT:       dataflow.program_unit iter_arg : %[[ARG4:.*]] -> (%[[SFU_0]], %[[SFU_1]]) : {
 // CHECK-NEXT:         dataflow.program_unit iter_arg : %[[ARG5:.*]] -> (%[[L1LU_0]], %[[L1LU_1]]) : {
 // CHECK-NEXT:           %[[ALLOC_1:.*]] = memref.alloc() : memref<64xf16, "L1">
-// CHECK-NEXT:           %[[VL_1:.*]] = agen.vector_load %[[ALLOC_1]]{{\[}}%[[C0]]] {load_order = #[[$ATTR_0]], load_set = #[[$ATTR_1]]} : memref<64xf16, "L1">, vector<64xf16>
 // CHECK-NEXT:           %[[MAP_1:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:           %[[TGT_1:.*]] = uniform.query_map(map:%[[MAP_1]], key:%[[ARG5]]) : index
+// CHECK-NEXT:           %[[VL_1:.*]] = agen.vector_load %[[ALLOC_1]]{{\[}}%[[C0]]] {load_order = #[[$ATTR_0]], load_set = #[[$ATTR_1]]} : memref<64xf16, "L1">, vector<64xf16>
 // CHECK-NEXT:           dataflow.send %[[TGT_1]], %[[VL_1]] : vector<64xf16>
 // CHECK-NEXT:         }
 // CHECK-NEXT:         dataflow.program_unit iter_arg : %[[ARG6:.*]] -> (%[[SFU_0]], %[[SFU_1]]) : {
@@ -49,9 +49,9 @@
 // CHECK-NEXT:       dataflow.program_unit iter_arg : %[[ARG8:.*]] -> (%[[L1SU_0]], %[[L1SU_1]]) : {
 // CHECK-NEXT:         dataflow.program_unit iter_arg : %[[ARG9:.*]] -> (%[[L1LU_0]], %[[L1LU_1]]) : {
 // CHECK-NEXT:           %[[ALLOC_2:.*]] = memref.alloc() : memref<64xf16, "L1">
-// CHECK-NEXT:           %[[VL_2:.*]] = agen.vector_load %[[ALLOC_2]]{{\[}}%[[C0]]] {load_order = #[[$ATTR_0]], load_set = #[[$ATTR_1]]} : memref<64xf16, "L1">, vector<64xf16>
 // CHECK-NEXT:           %[[MAP_2:.*]] = uniform.def_immutable_mapping({{\[}}%[[L1LU_0]] -> %[[SFU_0]]], {{\[}}%[[L1LU_1]] -> %[[SFU_1]]]):index
 // CHECK-NEXT:           %[[TGT_2:.*]] = uniform.query_map(map:%[[MAP_2]], key:%[[ARG9]]) : index
+// CHECK-NEXT:           %[[VL_2:.*]] = agen.vector_load %[[ALLOC_2]]{{\[}}%[[C0]]] {load_order = #[[$ATTR_0]], load_set = #[[$ATTR_1]]} : memref<64xf16, "L1">, vector<64xf16>
 // CHECK-NEXT:           dataflow.send %[[TGT_2]], %[[VL_2]] : vector<64xf16>
 // CHECK-NEXT:         }
 // CHECK-NEXT:         dataflow.program_unit iter_arg : %[[ARG10:.*]] -> (%[[SFU_0]], %[[SFU_1]]) : {
