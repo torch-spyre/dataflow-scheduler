@@ -18,6 +18,7 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFUtils
 
   LINK_MLIR_LIBS
     MLIRAffineUtils
+    MLIRArithDialect
     MLIRDialectUtils
     MLIRLinalgDialect
     MLIRLoopLikeInterface

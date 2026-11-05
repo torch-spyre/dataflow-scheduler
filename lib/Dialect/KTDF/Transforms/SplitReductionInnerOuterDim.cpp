@@ -24,6 +24,7 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
@@ -419,6 +420,9 @@ static LogicalResult splitDim(CandidateInfo& info) {
   const unsigned results = static_cast<unsigned>(generic_op.getNumResults());
   auto inter_tensor_type = RankedTensorType::get(inter_shape, elem_type);
 
+  // G1 starts from the combiner's neutral element: a tensor.empty. Every
+  // element of its intermediate is combined into the output by G2, so an init
+  // there would be counted once per element of the reduced inner dim.
   SmallVector<Type> inter_types(results, inter_tensor_type);
   SmallVector<Value> inter_inits;
   for (unsigned r = 0; r < results; ++r) {
@@ -458,11 +462,18 @@ static LogicalResult splitDim(CandidateInfo& info) {
   }
 
   SmallVector<Type> out_types(results, output_type);
+  // G2 starts from the original init, which has the output's type: G2 then
+  // combines the init in exactly once, whatever the combiner. A tensor.empty
+  // init is rebuilt next to G2, as before.
   SmallVector<Value> out_inits;
   for (unsigned r = 0; r < results; ++r) {
-    out_inits.push_back(
-        tensor::EmptyOp::create(builder, loc, output_type.getShape(), elem_type)
-            .getResult());
+    Value init = generic_op.getDpsInitOperand(r)->get();
+    if (init.getDefiningOp<tensor::EmptyOp>()) {
+      init = tensor::EmptyOp::create(builder, loc, output_type.getShape(),
+                                     elem_type)
+                 .getResult();
+    }
+    out_inits.push_back(init);
   }
 
   SmallVector<AffineMap> g2_maps(results, g2_in_map);
@@ -493,10 +504,8 @@ static LogicalResult splitDim(CandidateInfo& info) {
   }
   SmallVector<Value> orig_inits(generic_op.getOutputs());
   generic_op.erase();
-  for (Value init : orig_inits) {
-    if (!init.use_empty()) continue;
-    if (auto* def = init.getDefiningOp()) def->erase();
-  }
+  // An init G2 took over still has a use, and is left in place.
+  for (Value init : orig_inits) ktdf::eraseDeadReductionInit(init);
   return success();
 }
 
