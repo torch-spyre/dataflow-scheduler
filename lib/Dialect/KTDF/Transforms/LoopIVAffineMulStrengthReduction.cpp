@@ -39,6 +39,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/ADT/MapVector.h"
 #include "llvm/Support/Debug.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -312,6 +313,16 @@ struct LoopIVAffineMulStrengthReductionPass
   void runOnOperation() override {
     if (DisableThisPass) return;
 
+    auto in_scheduled_program = [&](Operation* op) {
+      if (!::scheduler::isInScheduledProgram(op))
+        return false;
+      LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME
+                                 "] skipping op in a scheduled "
+                                 "program at "
+                              << op->getLoc() << "\n");
+      return true;
+    };
+
     // -----------------------------------------------------------------------
     // Sub-transformation 1: affine.apply weighted-sum -> iter-arg recurrences.
     //
@@ -323,8 +334,9 @@ struct LoopIVAffineMulStrengthReductionPass
     // an enclosing loop that is also an ancestor of the current apply.
     // -----------------------------------------------------------------------
     SmallVector<affine::AffineApplyOp> applies;
-    getOperation()->walk(
-        [&](affine::AffineApplyOp op) { applies.push_back(op); });
+    getOperation()->walk([&](affine::AffineApplyOp op) {
+      if (!in_scheduled_program(op)) applies.push_back(op);
+    });
 
     IRRewriter rewriter(&getContext());
 
@@ -389,7 +401,9 @@ struct LoopIVAffineMulStrengthReductionPass
     // but moves the body intact, keeping nested loop handles valid.
     // -----------------------------------------------------------------------
     SmallVector<scf::ForOp> loops;
-    getOperation()->walk([&](scf::ForOp loop) { loops.push_back(loop); });
+    getOperation()->walk([&](scf::ForOp loop) {
+      if (!in_scheduled_program(loop)) loops.push_back(loop);
+    });
     for (scf::ForOp loop : loops) {
       if (runMuliOnLoop(loop, rewriter))
         LLVM_DEBUG(llvm::dbgs()

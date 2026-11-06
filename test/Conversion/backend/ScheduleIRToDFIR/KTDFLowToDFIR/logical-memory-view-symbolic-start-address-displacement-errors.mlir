@@ -19,7 +19,7 @@ module {
     }
     func.func private @sched_0(index)
   }
-  module {
+  module @sched_0 {
     func.func private @sched_0(%base: index) attributes {grid = [2]} {
       %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
       %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
@@ -40,7 +40,7 @@ module {
         // A bitwise and of the tile id: a number per core in principle, but not
         // one written as arithmetic a symbol's definition can be read back from,
         // so there is nothing to work the offset out with.
-        // expected-error @below {{displaced by a value only known while the program runs}}
+        // expected-error @below {{displaced by an offset that depends on a run input, a loop variable or anything else only known while the program runs, is not supported}}
         %shift = arith.andi %tile, %c128 : index
         %10 = ktdp.construct_memory_view %base, sizes: [12, 1, 64, 64], strides: [4096, 4096, 64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<12x1x64x64xf16>
         %msc = memref.memory_space_cast %10 : memref<12x1x64x64xf16> to memref<12x1x64x64xf16, "DDR">

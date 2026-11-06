@@ -50,6 +50,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
 #include "dataflow-scheduler/Transforms/Utils/IndirectAccessTileNarrowing.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 
 #define PASS_NAME "ktir-bufferize"
@@ -1106,6 +1107,12 @@ void KTIRBufferizePass::runOnOperation() {
   }
 
   mlir::func::FuncOp func = getOperation();
+
+  if (isInScheduledProgram(func)) {
+    LDBG() << "@" << func.getName() << " is in a scheduled program; skipped";
+    return;
+  }
+
   // Obtain the default device and start a mapping.
   auto& default_device = getAnalysis<mlir::ktdf_arch::DefaultDevice>();
   if (!default_device) {

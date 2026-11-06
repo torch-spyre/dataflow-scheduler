@@ -51,6 +51,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 
 #define PASS_NAME "ktir-pipeline"
 #define DEBUG_TYPE PASS_NAME
@@ -326,6 +327,21 @@ void KTIRPipelinePass::runOnOperation() {
   }
 
   mlir::func::FuncOp func = getOperation();
+
+  // The orchestration module holds calls, not pipelines: an outermost loop
+  // there runs programs, and has nothing in it to build a pipeline from.
+  if (auto child = getTopLevelChildModule(func);
+      child && isOrchestratorModule(child)) {
+    LDBG(1) << "@" << func.getName()
+            << " is in the declaration module; no pipeline to build";
+    return;
+  }
+
+  if (isInScheduledProgram(func)) {
+    LDBG() << "@" << func.getName() << " is in a scheduled program; skipped";
+    return;
+  }
+
   mlir::IRRewriter rewriter(func);
   mlir::DominanceInfo dominance;
 

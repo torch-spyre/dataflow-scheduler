@@ -58,6 +58,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
 #include "dataflow-scheduler/Transforms/Utils/LoopSimplification.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 
 #define PASS_NAME "ktir-map-and-tile"
 #define DEBUG_TYPE PASS_NAME
@@ -643,6 +644,12 @@ void KTIRMapAndTilePass::runOnOperation() {
   }
 
   mlir::func::FuncOp func = getOperation();
+
+  if (isInScheduledProgram(func)) {
+    LDBG() << "@" << func.getName() << " is in a scheduled program; skipped";
+    return;
+  }
+
   mlir::IRRewriter rewriter(func);
 
   // Compute operations already nested in loops (e.g. by

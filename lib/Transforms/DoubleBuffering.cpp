@@ -31,6 +31,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDPAttrs.h"
 #include "ktir/Dialect/KTDP/KTDPDialect.h"
@@ -547,6 +548,12 @@ struct DoubleBufferingPass
         per_pipeline_shapes;
     module_op.walk<mlir::WalkOrder::PreOrder>(
         [&](mlir::ktdf::PipelineOp pipeline) {
+          if (isInScheduledProgram(pipeline)) {
+            LDBG(2) << "skip pipeline at " << pipeline.getLoc()
+                    << ": in a scheduled program";
+            return;
+          }
+
           auto scope = mlir::ktdf::getPipelineEnclosingScope(pipeline);
           if (!isPipelineEligible(pipeline, scope)) {
             return;

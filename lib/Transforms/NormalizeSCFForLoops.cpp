@@ -19,6 +19,8 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/SCFTilingUtils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/AffineMap.h"
@@ -49,11 +51,17 @@ namespace {
 /// operand into the map until no affine.apply results remain. Operands that are
 /// not affine.apply results are left completely unchanged, so this is always
 /// safe to call regardless of whether normalization actually introduced any new
-/// affine.apply ops.
+/// affine.apply ops. Transfers in a program an earlier run scheduled are left
+/// alone, as the loops there are.
 void foldAffineApplyIntoDataTransfers(mlir::Operation* root,
                                       mlir::IRRewriter& rewriter) {
   llvm::SmallVector<mlir::ktdf::DataTransferOp> transfers;
   root->walk([&](mlir::ktdf::DataTransferOp transfer) {
+    if (isInScheduledProgram(transfer)) {
+      LDBG(2) << "skipping transfer at " << transfer.getLoc()
+              << " in a scheduled program";
+      return;
+    }
     transfers.push_back(transfer);
   });
 
@@ -94,7 +102,14 @@ struct NormalizeSCFForLoopsPass
     mlir::IRRewriter rewriter(op->getContext());
 
     llvm::SmallVector<mlir::scf::ForOp> loops;
-    op->walk([&](mlir::scf::ForOp for_op) { loops.push_back(for_op); });
+    op->walk([&](mlir::scf::ForOp for_op) {
+      if (isInScheduledProgram(for_op)) {
+        LDBG(2) << "skipping loop at " << for_op.getLoc()
+                << " in a scheduled program";
+        return;
+      }
+      loops.push_back(for_op);
+    });
 
     normalizeSCFLoops(loops, rewriter);
 

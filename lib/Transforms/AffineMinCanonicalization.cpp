@@ -44,11 +44,13 @@
 #include <memory>
 
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/AffineExpr.h"
 #include "mlir/IR/AffineMap.h"
 #include "mlir/IR/Matchers.h"
@@ -237,13 +239,40 @@ struct AffineMinCanonicalizationPass
     // Add our canonicalization pattern
     patterns.add<CanonicalizeToAffineMin>(ctx);
 
+    const mlir::FrozenRewritePatternSet frozen_patterns(std::move(patterns));
+
+    // A program an earlier run scheduled is final; leave it as it is. The
+    // patterns then go to the orchestration module and to each program module
+    // the run schedules, instead of to the whole module. The greedy driver
+    // folds and erases dead ops as well as applying the patterns, so a
+    // scheduled module must not be under any root. When there is none to
+    // leave, the whole module is rewritten as before.
+    mlir::ModuleOp top = getOperation();
+    llvm::SmallVector<mlir::Operation*> roots;
+    bool skipped_any = false;
+    for (auto child : top.getOps<mlir::ModuleOp>()) {
+      switch (classifyModule(child)) {
+        case ModuleKind::Orchestration:
+        case ModuleKind::New:
+          roots.push_back(child);
+          break;
+        case ModuleKind::Scheduled:
+          LDBG() << "Skipping @" << child.getSymName().value_or("")
+                  << ": already scheduled";
+          skipped_any = true;
+          break;
+      }
+    }
+    if (!skipped_any) roots.assign({top.getOperation()});
+
     // Apply patterns greedily
-    if (mlir::failed(
-            mlir::applyPatternsGreedily(getOperation(), std::move(patterns)))) {
-      getOperation()->emitError(
-          "affine-min canonicalization: pattern application failed");
-      signalPassFailure();
-      return;
+    for (mlir::Operation* root : roots) {
+      if (mlir::failed(mlir::applyPatternsGreedily(root, frozen_patterns))) {
+        getOperation()->emitError(
+            "affine-min canonicalization: pattern application failed");
+        signalPassFailure();
+        return;
+      }
     }
 
     LDBG(1) << "Canonicalization complete";

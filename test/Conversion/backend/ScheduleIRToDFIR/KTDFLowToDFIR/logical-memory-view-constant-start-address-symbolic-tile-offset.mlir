@@ -72,7 +72,7 @@ module {
     }
     func.func private @sched_0(index)
   }
-  module {
+  module @sched_0 {
     func.func private @sched_0(%row: index) attributes {grid = [2]} {
       %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
       %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index

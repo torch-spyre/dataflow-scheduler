@@ -6,14 +6,14 @@
 // CHECK:   module {
 // CHECK:     module {
 // CHECK:     func.func @test() attributes {grid = [2]} {
-// CHECK-NEXT:       call @"local-schedule-0"() : () -> ()
+// CHECK-NEXT:       call @local_schedule_0() : () -> ()
 // CHECK-NEXT:       return
 // CHECK-NEXT:     }
-// CHECK-NEXT:     func.func private @"local-schedule-0"()
+// CHECK-NEXT:     func.func private @local_schedule_0()
 // CHECK-NEXT:   }
 
-// CHECK:     module {
-// CHECK:     func.func private @"local-schedule-0"() attributes {grid = [2]} {
+// CHECK:     module @local_schedule_0 {
+// CHECK:     func.func private @local_schedule_0() attributes {grid = [2]} {
 // CHECK-NEXT:       %[[C128:.*]] = arith.constant 128 : index
 // CHECK-NEXT:       %[[C64:.*]] = arith.constant 64 : index
 // CHECK-NEXT:       %[[C12:.*]] = arith.constant 12 : index
@@ -110,13 +110,13 @@ module {
   ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
   module {
     func.func @test() attributes {grid = [2]} {
-      call @"local-schedule-0"() : () -> ()
+      call @local_schedule_0() : () -> ()
       return
     }
-    func.func private @"local-schedule-0"()
+    func.func private @local_schedule_0()
   }
-  module {
-    func.func private @"local-schedule-0"() attributes {grid = [2]} {
+  module @local_schedule_0 {
+    func.func private @local_schedule_0() attributes {grid = [2]} {
       %0 = dataflow.get_unit {core = 0 : i32, name = "C0-L1LU", type = "L1LU"} : index
       %1 = dataflow.get_unit {core = 1 : i32, name = "C1-L1LU", type = "L1LU"} : index
       %2 = dataflow.get_unit {core = 0 : i32, name = "C0-SFU", type = "SFU"} : index

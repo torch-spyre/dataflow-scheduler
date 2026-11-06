@@ -40,6 +40,11 @@ def KTIRLegalityCheckPass : Pass<"ktir-legality-check", "mlir::ModuleOp"> {
     constructs: scf.for with loop-carried args, scf.while, compute ops outside
     {add, mul, sub}, or the ktdp distributed-memory-view / indirect-access-tile
     ops. Mutates nothing; legal input passes through.
+
+    On a module with no orchestration module (a first run), all of it is
+    checked. Otherwise the orchestration module is skipped and the rules apply
+    only to the program modules without the dataflow_scheduler.scheduled
+    marker.
   }];
   let constructor = "::scheduler::createKTIRLegalityCheckPass()";
   let dependentDialects = [

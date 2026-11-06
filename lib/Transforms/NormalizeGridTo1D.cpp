@@ -23,6 +23,7 @@
 #include <memory>
 
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/CommandLine.h"
@@ -101,6 +102,12 @@ struct NormalizeGridTo1DPass
 
     mlir::WalkResult result =
         module.walk([&](mlir::func::FuncOp func) -> mlir::WalkResult {
+          if (isInScheduledProgram(func)) {
+            LDBG() << "Skipping " << func.getSymName()
+                    << " in a scheduled program";
+            return mlir::WalkResult::advance();
+          }
+
           auto grid_attr = func->getAttrOfType<mlir::ArrayAttr>("grid");
           if (!grid_attr) return mlir::WalkResult::advance();
 

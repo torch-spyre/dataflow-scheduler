@@ -8,7 +8,7 @@
 // CHECK: #[[$ATTR_4:.+]] = affine_set<(d0, d1, d2, d3) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 >= 0, d2 >= 0, -d2 + 63 >= 0, d3 >= 0, -d3 + 63 >= 0)>
 // CHECK: #[[$ATTR_5:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK: #[[$ATTR_6:.+]] = affine_set<(d0, d1, d2, d3, d4) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 >= 0, d2 >= 0, -d2 >= 0, d3 >= 0, -d3 + 63 >= 0, d4 >= 0, -d4 + 63 >= 0)>
-// CHECK-LABEL:   func.func private @"local-schedule-0"() attributes {grid = [2]} {
+// CHECK-LABEL:   func.func private @local_schedule_0() attributes {grid = [2]} {
 // CHECK-NEXT:       %[[GET_UNIT_0:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnilu", type = "mnilu"} : index
 // CHECK-NEXT:       %[[GET_UNIT_1:.*]] = dataflow.get_unit {core = 1 : i32, corelet = 0 : i32, name = "C1-mnilu", type = "mnilu"} : index
 // CHECK-NEXT:       %[[GET_UNIT_2:.*]] = dataflow.get_unit {core = 0 : i32, corelet = 0 : i32, name = "C0-mnisu", type = "mnisu"} : index
@@ -189,13 +189,13 @@ module {
   ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
   module {
     func.func @Add_1414() attributes {grid = [2]} {
-      call @"local-schedule-0"() : () -> ()
+      call @local_schedule_0() : () -> ()
       return
     }
-    func.func private @"local-schedule-0"()
+    func.func private @local_schedule_0()
   }
-  module {
-    func.func private @"local-schedule-0"() attributes {grid = [2]} {
+  module @local_schedule_0 {
+    func.func private @local_schedule_0() attributes {grid = [2]} {
       %c32 = arith.constant 32 : index
       %c6 = arith.constant 6 : index
       %c2 = arith.constant 2 : index

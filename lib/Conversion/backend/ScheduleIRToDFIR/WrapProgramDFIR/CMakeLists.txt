@@ -1,4 +1,5 @@
 add_dataflow_scheduler_library(DataflowSchedulerWrapProgramDFIR
+    MarkScheduledPrograms.cpp
     WrapProgramDFIR.cpp
 
   GROUP CONVERSION
@@ -10,6 +11,7 @@ add_dataflow_scheduler_library(DataflowSchedulerWrapProgramDFIR
   LINK_LIBS PUBLIC
     DataflowSchedulerDialects::DataflowDialect
     DataflowSchedulerDialects::SymbolDialect
+    DataflowScheduler::Utils
 
   LINK_MLIR_LIBS
     MLIRFuncDialect

@@ -50,6 +50,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Transforms/Utils/PipelineTreeLegalizer.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "ktir/Dialect/SpyreOp/SpyreOpDialect.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
@@ -192,6 +193,11 @@ void StageCoarseningPass::identifyTransformCandidates(
     ModuleOp module_op, llvm::SmallVector<TransformCandidate>& candidates) {
   // Walk all functions in the module
   module_op.walk([&](func::FuncOp func_op) {
+    if (::scheduler::isInScheduledProgram(func_op)) {
+      LDBG() << "Skipping function in a scheduled program: "
+              << func_op.getName();
+      return;
+    }
     LDBG(1) << "Analyzing function: " << func_op.getName() << "";
 
     // Find all pipelines in this function

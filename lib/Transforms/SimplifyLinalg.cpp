@@ -24,6 +24,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/SmallVectorExtras.h>
 #include <llvm/Support/CommandLine.h>
+#include <llvm/Support/DebugLog.h>
 #include <llvm/Support/LogicalResult.h>
 #include <llvm/Support/MathExtras.h>
 #include <mlir/Analysis/FlatLinearValueConstraints.h>
@@ -59,6 +60,7 @@
 #include <utility>
 
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 
 #define PASS_NAME "simplify-linalg"
 #define DEBUG_TYPE PASS_NAME
@@ -525,6 +527,12 @@ struct SimplifyLinalgPass
 
   void runOnOperation() override {
     if (disable_this_pass) {
+      return;
+    }
+
+    if (isInScheduledProgram(getOperation())) {
+      LDBG() << "@" << getOperation().getName()
+             << " is in a scheduled program; skipped";
       return;
     }
 

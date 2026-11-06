@@ -28,6 +28,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/RegionClonePrune.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -129,12 +130,19 @@ LogicalResult performHoist(const ktdf::reuse::Candidate& c) {
 }
 
 /// Walk pipelines in post-order; sets `did_hoist` to true iff a hoist was
-/// performed. Returns failure if the hoist itself failed.
+/// performed. Returns failure if the hoist itself failed. Pipelines in a
+/// program an earlier run scheduled are passed over, so they never count as a
+/// hoist and the caller's fixpoint loop still terminates.
 LogicalResult tryHoistOneBroadcast(ModuleOp module, bool& did_hoist) {
   did_hoist = false;
   LogicalResult result = success();
   module.walk<WalkOrder::PostOrder>(
       [&](ktdf::PipelineOp pipeline) -> WalkResult {
+        if (::scheduler::isInScheduledProgram(pipeline)) {
+          LDBG(2) << " skipping pipeline in a scheduled program at "
+                  << pipeline.getLoc();
+          return WalkResult::advance();
+        }
         if (auto c = ktdf::reuse::findFirstCandidate(pipeline)) {
           if (failed(performHoist(*c))) {
             result = failure();

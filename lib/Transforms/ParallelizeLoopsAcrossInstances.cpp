@@ -38,6 +38,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/CommandLine.h"
@@ -404,6 +405,11 @@ struct ParallelizeLoopsAcrossInstancesPass
     llvm::SmallVector<Candidate> candidates;
     module_op.walk<mlir::WalkOrder::PreOrder>(
         [&](mlir::ktdf::PipelineOp pipeline) {
+          if (isInScheduledProgram(pipeline)) {
+            LDBG(2) << " skip pipeline at " << pipeline.getLoc()
+                    << ": in a scheduled program";
+            return;
+          }
           auto c = findCandidate(pipeline, resource_kinds);
           if (!c) return;
           const Candidate* outer =

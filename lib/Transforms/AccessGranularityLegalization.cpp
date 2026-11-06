@@ -65,6 +65,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -248,6 +249,11 @@ struct AccessGranularityLegalizationPass
     // Collect first to avoid invalidating the walk while rewriting.
     llvm::SmallVector<mlir::ktdf::DataTransferOp> transfers;
     module_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
+      if (scheduler::isInScheduledProgram(transfer)) {
+        LDBG(2) << "skipping transfer at " << transfer.getLoc()
+                << " in a scheduled program";
+        return;
+      }
       transfers.push_back(transfer);
     });
 

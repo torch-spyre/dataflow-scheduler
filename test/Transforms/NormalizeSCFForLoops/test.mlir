@@ -4,7 +4,7 @@
 
 
 
-// CHECK-LABEL:   func.func private @"local-schedule-0"() attributes {grid = [4 : index, 4 : index]} {
+// CHECK-LABEL:   func.func private @local_schedule_0() attributes {grid = [4 : index, 4 : index]} {
 // CHECK-NEXT:     %[[VAL_0:.*]] = arith.constant 3 : index
 // CHECK-NEXT:     %[[VAL_1:.*]] = arith.constant 15 : index
 // CHECK-NEXT:     %[[VAL_2:.*]] = arith.constant 1024 : index
@@ -69,7 +69,7 @@
 #set = affine_set<(d0, d1, d2) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 + 63 >= 0, d2 >= 0, -d2 + 63 >= 0)>
 #set1 = affine_set<(d0, d1, d2, d3) : (d0 >= 0, -d0 >= 0, d1 >= 0, -d1 + 11 >= 0, d2 >= 0, -d2 + 63 >= 0, d3 >= 0, -d3 + 63 >= 0)>
 module {
-  func.func private @"local-schedule-0"() attributes {grid = [4 : index, 4 : index]} {
+  func.func private @local_schedule_0() attributes {grid = [4 : index, 4 : index]} {
     %c1024 = arith.constant 1024 : index
     %c786432 = arith.constant 786432 : index
     %c0 = arith.constant 0 : index

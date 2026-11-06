@@ -3,7 +3,7 @@
 // CHECK: #[[$ATTR_0:.+]] = affine_set<(d0, d1, d2, d3) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 >= 0, d2 >= 0, -d2 + 63 >= 0, d3 >= 0, -d3 + 63 >= 0)>
 // CHECK: #[[$ATTR_1:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK: #[[$ATTR_2:.+]] = affine_set<(d0, d1, d2, d3, d4) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 >= 0, d2 >= 0, -d2 >= 0, d3 >= 0, -d3 + 63 >= 0, d4 >= 0, -d4 + 63 >= 0)>
-// CHECK-LABEL:   func.func private @"local-schedule-0"() attributes {grid = [2]} {
+// CHECK-LABEL:   func.func private @local_schedule_0() attributes {grid = [2]} {
 // CHECK-NEXT:     %[[CONSTANT_0:.*]] = arith.constant 0 : index
 // CHECK-NEXT:     %[[CONSTANT_1:.*]] = arith.constant 1 : index
 // CHECK-NEXT:     %[[CONSTANT_2:.*]] = arith.constant 64 : index
@@ -87,7 +87,7 @@
 #set2 = affine_set<(d0, d1, d2, d3, d4) : (d0 >= 0, -d0 + 11 >= 0, d1 >= 0, -d1 >= 0, d2 >= 0, -d2 >= 0, d3 >= 0, -d3 + 63 >= 0, d4 >= 0, -d4 + 63 >= 0)>
 module {
   ktdf_arch.device @sample_device attributes {} import("../../Dialect/KTDFArch/sample_device.mlir")
-  func.func private @"local-schedule-0"() attributes {grid = [2]} {
+  func.func private @local_schedule_0() attributes {grid = [2]} {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
     %c64 = arith.constant 64 : index

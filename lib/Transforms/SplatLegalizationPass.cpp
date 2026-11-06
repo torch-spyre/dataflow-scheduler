@@ -46,6 +46,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Utils/StaticValueUtils.h"
@@ -229,6 +230,11 @@ struct SplatLegalizationPass
 
     llvm::SmallVector<mlir::ktdf::DataTransferOp> splats;
     module_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
+      if (scheduler::isInScheduledProgram(transfer)) {
+        LDBG(2) << "skipping transfer at " << transfer.getLoc()
+                << " in a scheduled program";
+        return;
+      }
       if (transfer.isDestFifo() &&
           transfer.getTransferMode() == mlir::ktdf::TransferMode::Splat)
         splats.push_back(transfer);

@@ -29,6 +29,8 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
+#include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/AffineExpr.h"
@@ -108,8 +110,13 @@ struct SubsumeLinearizeIndexPass
     if (DisableThisPass) return;
     IRRewriter rewriter(&getContext());
     llvm::SmallVector<ktdf::DataTransferOp> transfers;
-    getOperation()->walk(
-        [&](ktdf::DataTransferOp op) { transfers.push_back(op); });
+    getOperation()->walk([&](ktdf::DataTransferOp op) {
+      if (!::scheduler::isInScheduledProgram(op))
+        transfers.push_back(op);
+      else
+        LDBG(2) << PASS_NAME ": skipping data transfer op in a scheduled "
+                << "program at " << op.getLoc();
+    });
 
     auto is_foldable = [](Value v) {
       auto op = v.getDefiningOp<ktdf::TilingLinearizeIndexOp>();
@@ -152,7 +159,12 @@ struct SubsumeLinearizeIndexPass
     // affine.apply.
     llvm::SmallVector<ktdf::TilingLinearizeIndexOp> remaining;
     getOperation()->walk([&](ktdf::TilingLinearizeIndexOp op) {
-      if (hasAllConstantStrides(op)) remaining.push_back(op);
+      if (::scheduler::isInScheduledProgram(op)) {
+        LDBG(2) << PASS_NAME ": skipping tiling linearize index op in a "
+                << "scheduled program at " << op.getLoc();
+      } else {
+        if (hasAllConstantStrides(op)) remaining.push_back(op);
+      }
     });
     for (ktdf::TilingLinearizeIndexOp op : remaining) {
       auto apply = buildSubscriptApply(rewriter, op, op);
@@ -162,7 +174,12 @@ struct SubsumeLinearizeIndexPass
     // Erase dead linearize ops.
     llvm::SmallVector<ktdf::TilingLinearizeIndexOp> dead;
     getOperation()->walk([&](ktdf::TilingLinearizeIndexOp op) {
-      if (op->use_empty()) dead.push_back(op);
+      if (::scheduler::isInScheduledProgram(op)) {
+        LDBG(2) << PASS_NAME ": skipping erasing tiling linearize index op in "
+                << "a scheduled program at " << op.getLoc();
+      } else {
+        if (op->use_empty()) dead.push_back(op);
+      }
     });
     for (ktdf::TilingLinearizeIndexOp op : dead) op->erase();
   }

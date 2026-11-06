@@ -60,9 +60,23 @@
 /// ```
 ///
 /// In KTIR the address reaches `ktdp.construct_memory_view` as an expression
-/// over a block argument: the kernel takes the argument in its own signature,
-/// and splitting the kernel into per-schedule programs threads it down as an
-/// argument of each program function that reads it.
+/// over block arguments: the kernel takes an argument in its own signature, or
+/// launches the program from a loop of its own, and splitting the kernel into
+/// per-schedule programs threads the argument or the loop variable down as an
+/// argument of each program function that reads it. An address may be computed
+/// from several of them -- a base the run hands in, advanced by the loop
+/// variable -- and is then one symbol defined over all of them:
+///
+/// ```mlir
+///   // -1 is the base, -2 the loop variable; -4 is (-1 + -2 * 128) / 64.
+///   symbol.create_id %a {symbol_id = -1 : si64} : index
+///   symbol.create_id %i {symbol_id = -2 : si64} : index
+///   %0 = arith.muli %i, %c128 : index
+///   symbol.create_id %0 {symbol_id = -3 : si64} : index
+///   %1 = arith.addi %a, %0 : index
+///   %2 = arith.divsi %1, %c64 : index
+///   symbol.create_id %2 {symbol_id = -4 : si64} : index
+/// ```
 ///
 //
 //===----------------------------------------------------------------------===//
@@ -77,32 +91,56 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringMap.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Location.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Value.h"
+#include "mlir/Support/LLVM.h"
 
 namespace scheduler {
 
-/// Hands out the symbol ids of one run and says which id each of its inputs is.
+/// What one operand of one step of an expression is.
 ///
-/// The run's inputs come first, one per argument of the functions nothing calls
-/// -- the kernels -- and each is `-(position + 1)`. Everything derived from
-/// them is numbered after, continuing downward in the order it is asked for.
-///
-/// Symbol ids are negative and are drawn from a single sequence: nothing sets a
-/// range aside, so an id used for one thing cannot be used for another, and the
-/// numbering has to be arrived at once for the whole run rather than per
-/// function. That is why this is owned by the pass rather than by a walk.
-///
-/// Whatever resolves the symbols downstream has to arrive at the same numbering
-/// for the inputs, and to leave everything this allocator handed out alone. The
-/// declarations this writes into the IR are what say so: a consumer reads the
-/// ids rather than working them out again.
+/// Every operand says which of four things it is, rather than only whether it
+/// is a constant, so that a key describes the tree of the expression and not
+/// just its sequence of operators: with only "constant or not",
+/// `a * 4 + b` and `a + b * 4` are the same list of steps, and two different
+/// addresses would get one symbol.
+struct OperandRef {
+  enum class Kind : uint8_t {
+    /// A compile-time integer; `value` is the integer.
+    Constant,
+    /// A value a symbol of the run already stands for -- in a program, one of
+    /// its inputs; in a kernel, a root. `value` is its position in the roots of
+    /// the expression, not its id, so that two copies of the same arithmetic
+    /// over different values in two places are told apart by those values.
+    Input,
+    /// A value that differs per grid element but is known on each one; `value`
+    /// is its position in the per-unit leaves, and what it is worth on a unit
+    /// is in DerivedKey::terms.
+    PerUnitLeaf,
+    /// The result of another step of the same expression; `value` is that
+    /// step's position, always lower than the step reading it.
+    Step,
+  };
+  Kind kind = Kind::Constant;
+  int64_t value = 0;
+
+  bool operator==(const OperandRef& other) const {
+    return kind == other.kind && value == other.value;
+  }
+  bool operator!=(const OperandRef& other) const { return !(*this == other); }
+};
+
+inline llvm::hash_code hash_value(const OperandRef& ref) {
+  return llvm::hash_combine(static_cast<uint8_t>(ref.kind), ref.value);
+}
+
 /// One step of the expression a derived address is built by: which operation it
-/// is, and which of its operands are constants.
+/// is, and what each of its operands is.
 ///
 /// Not the operation itself. Two program units running one tensor's address are
 /// two copies of the same arithmetic, so an `Operation*` would make them two
@@ -112,10 +150,9 @@ namespace scheduler {
 /// pointer and outlives the IR the key was built from.
 struct ExpressionStep {
   mlir::OperationName op;
-  /// One entry per operand, in operand order: the constant it carries, or
-  /// std::nullopt where it carries none. In order because the order is part of
-  /// the address -- `root - 5` and `5 - root` are two different ones.
-  llvm::SmallVector<std::optional<int64_t>, 2> operands;
+  /// One entry per operand, in operand order. In order because the order is
+  /// part of the address -- `root - 5` and `5 - root` are two different ones.
+  llvm::SmallVector<OperandRef, 2> operands;
 
   bool operator==(const ExpressionStep& other) const {
     return op == other.op && operands == other.operands;
@@ -124,78 +161,129 @@ struct ExpressionStep {
 
 /// So that a DerivedKey's expression can be hashed with the rest of it.
 inline llvm::hash_code hash_value(const ExpressionStep& step) {
-  llvm::hash_code hash = mlir::hash_value(step.op);
-  for (const std::optional<int64_t>& operand : step.operands)
-    hash = llvm::hash_combine(hash, operand.has_value(), operand.value_or(0));
-  return hash;
+  return llvm::hash_combine(mlir::hash_value(step.op),
+                            llvm::hash_combine_range(step.operands.begin(),
+                                                     step.operands.end()));
 }
 
-/// What identifies a derived address: the input it is rooted at, the expression
-/// over it, the offset added to it, the constants its per-unit operands take,
-/// and the word size it is divided by. The word size is part of it because one
-/// tensor read through units that address in different word sizes is two
-/// different numbers.
+/// What identifies a derived address: the values it is rooted at, the
+/// expression over them, the offset added to it, the constants its per-unit
+/// operands take, and the word size it is divided by. The word size is part of
+/// it because one tensor read through units that address in different word
+/// sizes is two different numbers.
 struct DerivedKey {
-  mlir::Value root;
+  /// The values the expression's `OperandRef::Input`s refer to, by position:
+  /// program arguments, or in a kernel its arguments and loop variables. Values
+  /// rather than ids, so that an address is only ever shared within the
+  /// function that reads it, which is where its definition has to be declared.
+  llvm::SmallVector<mlir::Value, 2> roots;
   int64_t offset = 0;
   llvm::SmallVector<int64_t> terms;
   int64_t word_size = 1;
-  /// The steps the address is built from the input by, outermost last. What
-  /// tells two addresses apart that agree in root, offset, terms and word size.
+  /// The steps the address is built from its roots by, operands before the
+  /// steps reading them. What tells two addresses apart that agree in roots,
+  /// offset, terms and word size.
   ///
   /// `(1024 + (tile * 6 + row) * 4096) * 2`, for a row the run hands in taken
   /// to a grid element's slab of a tensor the compiler placed at 1024, is:
   ///
   /// ```
-  ///   arith.muli  [_, 6]      the grid element's share, in rows
-  ///   arith.addi  [_, _]      displaced by the row the run hands in
-  ///   arith.muli  [_, 4096]   rows to elements
-  ///   arith.addi  [1024, _]   the address the compiler picked
-  ///   arith.muli  [_, 2]      elements to bytes
+  ///   0: arith.muli  [leaf 0, 6]      the grid element's share, in rows
+  ///   1: arith.addi  [step 0, input 0] displaced by the row the run hands in
+  ///   2: arith.muli  [step 1, 4096]   rows to elements
+  ///   3: arith.addi  [1024, step 2]   the address the compiler picked
+  ///   4: arith.muli  [step 3, 2]      elements to bytes
   /// ```
   ///
   /// A second tensor read the same way differs in that 1024 and nothing else.
   llvm::SmallVector<ExpressionStep> expression;
 
   bool operator==(const DerivedKey& other) const {
-    return root == other.root && offset == other.offset &&
+    return roots == other.roots && offset == other.offset &&
            terms == other.terms && word_size == other.word_size &&
            expression == other.expression;
   }
 };
 
+/// Hands out the symbol ids of one run and says which id each of its inputs is.
+///
+/// A symbol chain starts at a *root*: an index-typed argument of the kernel --
+/// the one function with a body in the orchestration module -- or the
+/// induction variable of any loop in it. The kernel's arguments come first, in
+/// signature order, then its loops' induction variables in pre-order.
+/// Everything derived from them is numbered after, continuing downward in the
+/// order it is asked for.
+///
+/// A loop variable is a root because the kernel's loops are where the programs
+/// are launched from: a program reading one reads a number only the run knows,
+/// as much as one reading an address. It is never folded or enumerated, even
+/// where the trip count is known, so what this writes holds whether a later
+/// stage keeps the loop or unrolls it.
+///
+/// Symbol ids are negative and are drawn from a single sequence: nothing sets a
+/// range aside, so an id used for one thing cannot be used for another, and the
+/// numbering has to be arrived at once for the whole run rather than per
+/// function. That is why this is owned by the pass rather than by a walk.
+///
+/// Whatever resolves the symbols downstream has to arrive at the same numbering
+/// for the roots, and to leave everything this allocator handed out alone. The
+/// declarations this writes into the IR are what say so: a consumer reads the
+/// ids rather than working them out again.
 class SymbolAllocator {
  public:
-  /// Numbers the inputs of every kernel under \p top and declares each on the
-  /// argument it arrives as, so that what an id means is said in the IR.
-  /// Derived ids start after the last input's.
+  /// Numbers the roots of the kernel under \p top and declares on the value it
+  /// is each one a call reads, so that what an id means is said in the IR: a
+  /// kernel argument at the top of the kernel, a loop variable at the top of
+  /// the loop's body. Derived ids start after the last root's.
   ///
-  /// A kernel is a function nothing under \p top calls. Its index-typed
-  /// arguments are the run's inputs; an argument of any other type is not
-  /// something a symbol can stand for and is passed over.
-  explicit SymbolAllocator(mlir::ModuleOp top);
+  /// Before anything is numbered, every `symbol.create_id` and
+  /// `symbol.create_symbol` anywhere under \p top is read, and numbering starts
+  /// below the lowest id they use, so that no id an earlier run handed out is
+  /// handed out again. A root already declared -- by an earlier run -- keeps
+  /// the id it was declared as and is not declared a second time.
+  ///
+  /// Beyond that scan, only the kernel is walked, once; the programs are not.
+  /// Where \p top has no
+  /// orchestration module there is no kernel and so no roots: the allocator
+  /// is empty, and no value of the run is one a symbol stands for.
+  ///
+  /// Every root is numbered, but declared only if a call is passed it or
+  /// something the kernel computes from it: one no program reads keeps its id
+  /// reserved and says nothing.
+  ///
+  /// A value the kernel computes and passes to a call is declared too, in place,
+  /// as a symbol derived from the roots it is computed from, so that the
+  /// program it is passed to can say what its argument is. Fails, having
+  /// reported it at the operation responsible, when such a value is not
+  /// something a symbol's definition can be written for -- the program would
+  /// otherwise read an address nothing ever writes.
+  ///
+  /// An argument of any other type than index is not something a symbol can
+  /// stand for and is passed over, though it still counts a position.
+  static mlir::FailureOr<SymbolAllocator> build(mlir::ModuleOp top);
 
-  /// Declares on \p func's own arguments the input each one arrives as.
+  /// Declares on \p func's own arguments the symbol each one arrives as.
   ///
   /// Splitting a kernel into programs hands each of them the subset of the
-  /// inputs it reads, and a program has to say what its own arguments are for:
+  /// values it reads, and a program has to say what its own arguments are for:
   /// what corrects it is written against what it declares, not against the
-  /// kernel's signature. A kernel needs no call of this -- its arguments were
+  /// kernel's signature. A kernel needs no call of this -- its roots were
   /// declared when this was built.
   ///
   /// Call it once the program units exist. Before that a declaration counts as
   /// work to be done on a unit and is copied into every one of them.
   void declareInputsIn(mlir::func::FuncOp func, mlir::OpBuilder& builder) const;
 
-  /// Returns the symbol id standing for \p address if it is a run input,
-  /// std::nullopt if it is not.
+  /// Returns the symbol id standing for \p value if a symbol of the run stands
+  /// for it, std::nullopt if none does.
   ///
-  /// An input is a block argument of a function's entry block, traced back
-  /// through the calls that pass it along until the kernel is reached. Its
-  /// position in the *kernel's* signature is what identifies it: a program
-  /// function takes only the inputs it reads, so two programs' first arguments
-  /// are in general two different tensors.
-  std::optional<int64_t> inputSymbolIdFor(mlir::Value address) const;
+  /// That is a root itself, or an argument of a function's entry block traced
+  /// back through the calls that pass it along to what the kernel passed: a
+  /// root, or a value the kernel computed from roots and that was declared when
+  /// this was built. What the kernel passed is what identifies it, not the
+  /// argument's position: a program function takes only the values it reads,
+  /// so two programs' first arguments are in general two different tensors.
+  std::optional<int64_t> inputSymbolIdFor(mlir::Value value) const;
 
   /// Returns the id for the symbol \p key describes, and whether that id is
   /// newly handed out.
@@ -206,50 +294,95 @@ class SymbolAllocator {
   /// there are units, all meaning the same thing and each resolved separately.
   std::pair<int64_t, bool> derivedIdFor(const DerivedKey& key);
 
-  /// How many inputs the run takes, i.e. how many ids are the inputs' own.
-  int64_t numInputs() const { return -next_input_ - 1; }
-
  private:
-  /// One past the last input id handed out, so `-(count + 1)`.
+  SymbolAllocator() = default;
+
+  /// The next id of a root, and of a derived symbol, handed out and counted
+  /// down.
+  int64_t takeRootId();
+  int64_t takeDerivedId();
+  void numberKernelArguments(mlir::func::FuncOp kernel);
+  /// Numbers the kernel's loop variables and, in the same walk, fills `calls_`
+  /// and returns the kernel's calls in walk order.
+  llvm::SmallVector<mlir::func::CallOp> numberLoopInductionVarsAndCollectCalls(
+      mlir::func::FuncOp kernel);
+  /// Which roots have been declared so far, and where the next declaration in
+  /// each block goes. Lives only as long as one declareComputedCallOperands.
+  struct RootDeclarations;
+
+  /// Declares what each index operand of \p calls is: the roots it reads,
+  /// and, where the kernel computes it, the derived symbol it is. Inserts
+  /// through \p builder, restoring its insertion point.
+  mlir::LogicalResult declareComputedCallOperands(
+      llvm::ArrayRef<mlir::func::CallOp> calls, mlir::OpBuilder& builder);
+  /// Declares what \p operand of \p call is, as declareComputedCallOperands
+  /// does for each.
+  mlir::LogicalResult declareCallOperand(mlir::func::CallOp call,
+                                         mlir::Value operand,
+                                         mlir::OpBuilder& builder,
+                                         RootDeclarations& declared);
+  /// Declares \p root at the top of the block it is an argument of, after any
+  /// root declared there before it, unless it is declared already.
+  void declareRoot(mlir::Value root, mlir::OpBuilder& builder,
+                   RootDeclarations& declared);
+
+  /// The one call to \p func, or null if there is no call or more than one.
+  mlir::func::CallOp soleCallTo(mlir::func::FuncOp func) const;
+
+  /// One past the last root id handed out.
   int64_t next_input_ = -1;
   int64_t next_derived_ = -1;
-  /// The id handed out for each derived address, keyed by the three things that
-  /// identify one: the input it is rooted at, the offset added to it, and the
-  /// constants its per-unit operands take. Nothing iterates it, so the order
-  /// does not matter.
+  /// Every root -- a kernel argument or a kernel loop variable, nothing else --
+  /// and its id.
+  llvm::DenseMap<mlir::Value, int64_t> roots_;
+  /// Every value the kernel computes from roots and passes to a call, and the
+  /// id of the derived symbol declared on it. Not roots: each is defined over
+  /// them.
+  llvm::DenseMap<mlir::Value, int64_t> derived_operands_;
+  /// Each callee's call in the kernel, by the callee's name, or null where it
+  /// has more than one. Built once: the pass never adds, removes or rewrites a
+  /// call, so this stays right for as long as the allocator lives.
+  llvm::StringMap<mlir::func::CallOp> calls_;
+  /// The id handed out for each derived address. Nothing iterates it, so the
+  /// order does not matter.
   llvm::DenseMap<DerivedKey, int64_t> derived_;
 };
 
-/// A start address that is an expression over a run input, taken apart: which
-/// input it is rooted at, and what each grid element's own address is.
+/// A start address that is an expression over values symbols stand for, taken
+/// apart: which values it is rooted at, and what each grid element's own
+/// address is.
 struct SymbolicAddress {
-  /// The symbol id of the input the address is computed from.
-  int64_t input = 0;
-  /// The block argument that input arrives as. Every per-unit expression is
-  /// rebuilt over this value.
-  mlir::Value root;
+  /// The values the address is computed from that symbols stand for, each
+  /// once, in the order a walk of the expression meets them -- operand 0 first.
+  /// Every per-unit expression is rebuilt over these values. Never empty.
+  llvm::SmallVector<mlir::Value, 2> roots;
+  /// The symbol id of each of `roots`, in the same order.
+  llvm::SmallVector<int64_t, 2> inputs;
   /// One entry per unit the address is read on: the unit, and the constant each
   /// of `per_unit_leaves` takes there, in the same order. Empty when the
   /// address does not vary with the grid element, which is the common case.
   llvm::SmallVector<std::pair<mlir::Value, llvm::SmallVector<int64_t>>>
       per_unit_terms;
-  /// The operations of the expression, operands before results, so rebuilding
-  /// them in order works. Empty when the address is the input itself.
+  /// The operations of the expression, every operand before the operations
+  /// reading it, so rebuilding them in order works even where one value is read
+  /// twice. Empty when the address is a root itself.
   llvm::SmallVector<mlir::Operation*> expression;
+  /// `expression` as a key describes it, one entry per operation.
+  llvm::SmallVector<ExpressionStep> steps;
   /// The operands of the expression whose value differs per unit -- each a
   /// `uniform.query_map` over per-unit constants. `per_unit_terms` gives what
   /// each is worth on each unit.
   llvm::SmallVector<mlir::Value> per_unit_leaves;
 };
 
-/// Takes \p address apart as an expression over a run input, or returns
-/// std::nullopt if it is not one -- a constant, or rooted at something that is
-/// not an input.
+/// Takes \p address apart as an expression over values symbols stand for, or
+/// returns std::nullopt if it is not one -- a constant, or rooted at nothing a
+/// symbol stands for.
 ///
 /// Fails, rather than returning std::nullopt, when the address *is* rooted at
-/// an input but is not something a symbol can be written for: more than one
-/// input in it, an operator whose definition could not be read back, or a
-/// per-grid term that is not a query over constants. Reporting that here is
+/// a symbol but is not something a symbol can be written for: an operator whose
+/// definition could not be read back, a value only known while the program
+/// runs, or a per-grid term that is not a query over constants. Reporting that here is
 /// deliberate -- the alternative is a program that resolves to the wrong
 /// address at runtime.
 mlir::FailureOr<std::optional<SymbolicAddress>> takeSymbolicAddressApart(
@@ -290,8 +423,10 @@ struct Displacement {
 /// by this point.
 ///
 /// Fails when \p offset is neither, i.e. when it is only known while the
-/// program runs. A symbol's definition has to be written down at compile time,
-/// and such an offset cannot be.
+/// program runs -- computed from a run input or a loop variable, say. A symbol
+/// whose base is a run input and whose offset is itself symbolic is not
+/// supported; the offset would have to be part of an expression over several
+/// symbols rather than a number per grid element.
 mlir::FailureOr<Displacement> takeDisplacementApart(
     mlir::OpFoldResult offset, mlir::dataflow::ProgramUnitOp pu);
 
@@ -305,11 +440,11 @@ mlir::FailureOr<Displacement> takeDisplacementApart(
 /// with one symbol per step, since a definition is a single operator over
 /// symbols and constants.
 ///
-/// If \p value is one of the run's inputs, that input's own symbol is returned
-/// and nothing is declared.
+/// If \p value is one a symbol already stands for, that symbol is returned and
+/// nothing is declared.
 ///
-/// Fails if \p value is not an expression over exactly one input, or if a step
-/// of it cannot be written as a definition.
+/// Fails if \p value is not an expression over values symbols stand for, or if
+/// a step of it cannot be rebuilt.
 mlir::FailureOr<int64_t> declareScalarSymbol(mlir::Value value,
                                              mlir::func::FuncOp program,
                                              SymbolAllocator& symbols);
@@ -329,7 +464,7 @@ mlir::FailureOr<int64_t> declareScalarSymbol(mlir::Value value,
 /// grid element's own displacement asks for just as much as an address that
 /// already differs per element. The declaration saying what each of those
 /// symbols is computed from goes at \p definitions_at, which has to be
-/// somewhere \p taken's root is in scope and outside the region a single grid
+/// somewhere \p taken's roots are in scope and outside the region a single grid
 /// element's program is read from.
 mlir::FailureOr<mlir::Value> emitSymbolicStartAddress(
     const SymbolicAddress& taken, const Displacement& displacement,
@@ -350,14 +485,15 @@ namespace llvm {
 template <>
 struct DenseMapInfo<scheduler::DerivedKey> {
   static scheduler::DerivedKey getEmptyKey() {
-    return {DenseMapInfo<mlir::Value>::getEmptyKey(), 0, {}, 1, {}};
+    return {{DenseMapInfo<mlir::Value>::getEmptyKey()}, 0, {}, 1, {}};
   }
   static scheduler::DerivedKey getTombstoneKey() {
-    return {DenseMapInfo<mlir::Value>::getTombstoneKey(), 0, {}, 1, {}};
+    return {{DenseMapInfo<mlir::Value>::getTombstoneKey()}, 0, {}, 1, {}};
   }
   static unsigned getHashValue(const scheduler::DerivedKey& key) {
     return static_cast<unsigned>(
-        hash_combine(key.root, key.offset, hash_combine_range(key.terms),
+        hash_combine(hash_combine_range(key.roots), key.offset,
+                     hash_combine_range(key.terms),
                      key.word_size, hash_combine_range(key.expression)));
   }
   static bool isEqual(const scheduler::DerivedKey& lhs,

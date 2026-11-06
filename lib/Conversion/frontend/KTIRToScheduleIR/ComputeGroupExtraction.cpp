@@ -75,14 +75,36 @@
 /// - Handles iter args (block arguments) by passing them as function parameters
 /// - Recursively materializes dependencies (constants, memory views, etc.)
 /// - Creates nested module structure with forward declarations
+///
+/// Re-runs:
+/// --------
+/// A top-level module that already holds an orchestration module -- an unnamed
+/// child module -- has been through this pass before: the pipeline is being run
+/// again on it. The pass then extracts nothing, because it cannot work out
+/// where a new call belongs in an existing orchestration module. The caller
+/// writes a new kernel in the form this pass would have produced instead:
+/// a named program module whose name the orchestration module calls. The pass
+/// checks that form:
+///
+/// - a named child module the orchestration module calls is already extracted,
+///   whether it is new or an earlier run scheduled it, and is left as it is;
+/// - a named child module the orchestration module does not call is an error: a
+///   program with no call site;
+/// - a named child module the orchestration module calls more than once is an
+///   error: extraction calls each program once, and what is downstream reads a
+///   program's arguments as what its one call passes;
+/// - a function at the top level, outside any module, is an error: there is no
+///   defined place for its call.
 //
 //===----------------------------------------------------------------------===//
 
 #include "dataflow-scheduler/Conversion/frontend/KTIRToScheduleIR/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "llvm/ADT/EquivalenceClasses.h"
+#include "llvm/ADT/MapVector.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -130,6 +152,13 @@ struct ComputeGroupExtractionPass
   };
 
   void runOn(mlir::ModuleOp module_op);
+
+  /// Checks the extracted form a re-run finds, with \p orchestrator (the
+  /// orchestration module) already in \p top (the super module). Fails and
+  /// reports on a program module nothing calls, a call with no program module
+  /// of its callee's name, or a function outside any module.
+  mlir::LogicalResult validateExtractedForm(mlir::ModuleOp top,
+                                            mlir::ModuleOp orchestrator);
 
   /// Walks the ancestor tree of a StoreOp's data operand and unions access
   /// tiles from any LoadOps found with the StoreOp's access tile.
@@ -662,10 +691,81 @@ void ComputeGroupExtractionPass::runOn(mlir::ModuleOp module_op) {
   (void)mlir::runRegionDCE(rewriter, module_op->getRegions());
 }
 
+mlir::LogicalResult ComputeGroupExtractionPass::validateExtractedForm(
+    mlir::ModuleOp top, mlir::ModuleOp orchestrator) {
+  bool failed = false;
+
+  // Each function the orchestration module calls, and whether a program module
+  // of that name was found. MLIR verifies each call against its forward
+  // declaration, but nothing ties a declaration to a program module.
+  //
+  // Extraction calls each program it makes exactly once, and what reads a
+  // program's arguments later relies on that: each is what its one call passes
+  // it. So a second call to a function is reported where it is met.
+  llvm::MapVector<mlir::StringAttr, bool> called;
+  orchestrator.walk([&](mlir::func::CallOp call) {
+    if (called.try_emplace(call.getCalleeAttr().getAttr(), false).second)
+      return;
+    call.emitError() << "@" << call.getCallee()
+                     << " is called more than once by the orchestration "
+                        "module; each program must be called exactly once";
+    failed = true;
+  });
+  if (failed) return mlir::failure();
+
+  for (mlir::Operation& op : *top.getBody()) {
+    if (auto func = mlir::dyn_cast<mlir::func::FuncOp>(op)) {
+      func.emitError()
+          << "function outside any module alongside an orchestration module";
+      failed = true;
+      continue;
+    }
+    auto child = mlir::dyn_cast<mlir::ModuleOp>(op);
+    if (!child || child == orchestrator) continue;
+    if (isOrchestratorModule(child)) {
+      child.emitError() << "more than one orchestration module (unnamed child "
+                           "module) at the top level";
+      failed = true;
+      continue;
+    }
+    auto it = called.find(child.getSymNameAttr());
+    if (it == called.end()) {
+      child.emitError() << "program module @" << *child.getSymName()
+                        << " is not called by the orchestration module";
+      failed = true;
+      continue;
+    }
+    it->second = true;
+  }
+
+  // Report each called function no program module provides, in call order.
+  for (auto [callee, found] : called) {
+    if (found) continue;
+    orchestrator.emitError() << "calls @" << callee.getValue()
+                             << ", but there is no program module @"
+                             << callee.getValue();
+    failed = true;
+  }
+  return mlir::failure(failed);
+}
+
 void ComputeGroupExtractionPass::runOnOperation() {
   if (DisableThisPass) return;
   LDBG(1) << "========= " PASS_NAME " =========";
   mlir::ModuleOp module_op = getOperation();
+
+  // An orchestration module already there means the pipeline has run on this
+  // module before. Its programs are extracted already, and a new kernel is
+  // written in extracted form by the caller. No extraction should be done,
+  // instead the IR form should be validated.
+  for (auto child : module_op.getOps<mlir::ModuleOp>()) {
+    if (!isOrchestratorModule(child)) continue;
+    LDBG(1) << "  orchestration module already present, validating";
+    if (mlir::failed(validateExtractedForm(module_op, child)))
+      signalPassFailure();
+    return;
+  }
+
   runOn(module_op);
 }
 

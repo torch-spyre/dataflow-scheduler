@@ -6,7 +6,12 @@
 // CHECK: #[[$ATTR_3:.+]] = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK: #[[$ATTR_4:.+]] = affine_set<(d0, d1) : (d0 == 0, d1 >= 0, -d1 + 63 >= 0)>
 // CHECK: #[[$ATTR_5:.+]] = affine_set<(d0) : (d0 == 0)>
-// CHECK-LABEL:   func.func @single_stage_pipeline(
+// The kernel's argument is one of the run's inputs, so which symbol it is gets
+// said in the kernel.
+// CHECK:         func.func @kernel(%[[KARG:.*]]: index)
+// CHECK-NEXT:      symbol.create_id %[[KARG]] {symbol_id = -1 : si64} : index
+// CHECK-LABEL:   module @single_stage_pipeline {
+// CHECK:         func.func private @single_stage_pipeline(
 // CHECK-SAME:      %[[ARG0:.*]]: index) attributes {grid = [2]} {
 // CHECK-NEXT:     %[[C3:.*]] = arith.constant 3 : index
 // CHECK-NEXT:     %[[C1024:.*]] = arith.constant 1024 : index
@@ -15,10 +20,8 @@
 // CHECK-NEXT:     %[[MNILU_0:.*]] = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
 // CHECK-NEXT:     %[[MNILU_1:.*]] = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
 // CHECK-NEXT:     dataflow.program_unit iter_arg : %[[ARG_MNILU:.*]] -> (%[[MNILU_0]], %[[MNILU_1]]) : {
-// The argument is one of the run's inputs, so which symbol it is gets said here.
 // This tensor's own address is a constant, so nothing about the view is symbolic
 // -- the input only displaces within it, which stays plain arithmetic.
-// CHECK-NEXT:       symbol.create_id %[[ARG0]] {symbol_id = -1 : si64} : index
 // CHECK-NEXT:       %[[MAP_CORE:.*]] = uniform.def_immutable_mapping({{\[}}%[[MNILU_0]] -> %[[C0]]], {{\[}}%[[MNILU_1]] -> %[[C3]]]):index
 // CHECK-NEXT:       %[[CORE_IDX:.*]] = uniform.query_map(map:%[[MAP_CORE]], key:%[[ARG_MNILU]]) : index
 // CHECK-NEXT:       %[[ADDI_0:.*]] = arith.addi %[[CORE_IDX]], %[[ARG0]] : index
@@ -46,42 +49,51 @@
 #set = affine_set<(d0, d1) : (d0 >= 0, -d0 + 95 >= 0, d1 >= 0, -d1 + 63 >= 0)>
 module {
   ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
-  func.func @single_stage_pipeline(%arg0: index) attributes {grid = [2]} {
-    %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
-    %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
-    %2 = ktdp.get_compute_tile_id : index
-    %c0 = arith.constant 0 : index
-    %c1 = arith.constant 1 : index
-    %3 = uniform.def_immutable_mapping([%c0 -> %0], [%c1 -> %1]):index
-    %4 = uniform.query_map(map:%3, key:%2) : index
-    %c0_0 = arith.constant 0 : index
-    %c0_1 = arith.constant 0 : index
-    %c1_2 = arith.constant 1 : index
-    %c64 = arith.constant 64 : index
-    %c3 = arith.constant 3 : index
-    %c1024 = arith.constant 1024 : index
-    %5 = ktdp.get_compute_tile_id : index
-    %6 = arith.muli %5, %c3 : index
-    %7 = arith.addi %6, %arg0 : index
-    %c0_3 = arith.constant 0 : index
-    %c1_4 = arith.constant 1 : index
-    %c0_5 = arith.constant 0 : index
-    %c64_6 = arith.constant 64 : index
-    %8 = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
-    %c64_7 = arith.constant 64 : index
-    %9 = arith.muli %7, %c64_7 : index
-    %reinterpret_cast = memref.reinterpret_cast %8 to offset: [%9], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
-    scf.for %arg1 = %c0_3 to %c1_4 step %c1_2 {
-      scf.for %arg2 = %c0_5 to %c64_6 step %c64 {
-        ktdf_lowering.execute_on %4 {
-          %alloc = memref.alloc() : memref<1x64xf16, "L1">
-          %10 = ktdf.create_token : !ktdf.token
+  module {
+    func.func @kernel(%arg0: index) attributes {grid = [2]} {
+      call @single_stage_pipeline(%arg0) : (index) -> ()
+      return
+    }
+    func.func private @single_stage_pipeline(index)
+  }
+  module @single_stage_pipeline {
+    func.func private @single_stage_pipeline(%arg0: index) attributes {grid = [2]} {
+      %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
+      %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
+      %2 = ktdp.get_compute_tile_id : index
+      %c0 = arith.constant 0 : index
+      %c1 = arith.constant 1 : index
+      %3 = uniform.def_immutable_mapping([%c0 -> %0], [%c1 -> %1]):index
+      %4 = uniform.query_map(map:%3, key:%2) : index
+      %c0_0 = arith.constant 0 : index
+      %c0_1 = arith.constant 0 : index
+      %c1_2 = arith.constant 1 : index
+      %c64 = arith.constant 64 : index
+      %c3 = arith.constant 3 : index
+      %c1024 = arith.constant 1024 : index
+      %5 = ktdp.get_compute_tile_id : index
+      %6 = arith.muli %5, %c3 : index
+      %7 = arith.addi %6, %arg0 : index
+      %c0_3 = arith.constant 0 : index
+      %c1_4 = arith.constant 1 : index
+      %c0_5 = arith.constant 0 : index
+      %c64_6 = arith.constant 64 : index
+      %8 = ktdp.construct_memory_view %c1024, sizes: [96, 64], strides: [64, 1] {coordinate_set = #set, memory_space = #ktdp.memory_space<global>} : memref<96x64xf16, "DDR">
+      %c64_7 = arith.constant 64 : index
+      %9 = arith.muli %7, %c64_7 : index
+      %reinterpret_cast = memref.reinterpret_cast %8 to offset: [%9], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
+      scf.for %arg1 = %c0_3 to %c1_4 step %c1_2 {
+        scf.for %arg2 = %c0_5 to %c64_6 step %c64 {
           ktdf_lowering.execute_on %4 {
-            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %alloc[%c0_0, %c0_0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+            %alloc = memref.alloc() : memref<1x64xf16, "L1">
+            %10 = ktdf.create_token : !ktdf.token
+            ktdf_lowering.execute_on %4 {
+              ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %alloc[%c0_0, %c0_0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+            }
           }
-        }
+        } {loop_type = #ktdf.loop_type<parallel_loop>}
       } {loop_type = #ktdf.loop_type<parallel_loop>}
-    } {loop_type = #ktdf.loop_type<parallel_loop>}
-    return
+      return
+    }
   }
 }

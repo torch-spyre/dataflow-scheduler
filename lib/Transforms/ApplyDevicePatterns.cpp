@@ -44,6 +44,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Transforms/ApplyPatterns.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "ktir/Dialect/KTDP/KTDPDialect.h"  // IWYU pragma: keep
 
 #define PASS_NAME "apply-device-patterns"
@@ -366,6 +367,12 @@ struct ApplyDevicePatternsPass
 
   void runOnOperation() override {
     if (disable_this_pass) {
+      return;
+    }
+
+    if (isInScheduledProgram(getOperation())) {
+      LDBG() << "skipping " << getOperation().getSymName()
+             << " in a scheduled program";
       return;
     }
 

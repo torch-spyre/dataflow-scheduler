@@ -20,6 +20,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/Support/CommandLine.h>
+#include <llvm/Support/DebugLog.h>
 #include <llvm/Support/LogicalResult.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
@@ -41,6 +42,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchAttributes.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 
 #define PASS_NAME "fuse-linalg"
 #define DEBUG_TYPE PASS_NAME
@@ -257,6 +259,11 @@ struct FuseLinalgPass : public impl::FuseLinalgPassBase<FuseLinalgPass> {
     }
 
     mlir::func::FuncOp func = getOperation();
+
+    if (isInScheduledProgram(func)) {
+      LDBG() << "@" << func.getName() << " is in a scheduled program; skipped";
+      return;
+    }
 
     // Collect all fusable linalg.generic candidate operations.
     llvm::SetVector<mlir::Operation*> candidates;

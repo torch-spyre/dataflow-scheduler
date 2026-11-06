@@ -60,6 +60,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLoweringDialect.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "ktir/Dialect/KTDP/KTDPAttrs.h"
 #include "ktir/Dialect/KTDP/KTDPTypes.h"
@@ -360,16 +361,18 @@ struct AddressBufferInfo {
 /// orchestrator at all, which is how a bare test input arrives.
 struct OrchestratorInfo {
   ModuleOp module;
-  /// Call site keyed by callee — each function can only be called once.
-  DenseMap<StringAttr, func::CallOp> call_sites;
+  /// Every call the orchestrator makes, keyed by callee, in IR order. A
+  /// function the pass splits must be called only once (analyzeCandidate
+  /// checks); any other may be called any number of times.
+  DenseMap<StringAttr, SmallVector<func::CallOp, 1>> call_sites;
   /// Symbol table of `module`, kept alive so that the forward declaration added
   /// for each candidate does not rebuild it.
   std::optional<SymbolTable> symbol_table;
 
-  /// Returns the call to @p callee, null if there are none.
-  func::CallOp getCallSite(StringAttr callee) const {
+  /// Returns every call to @p callee, empty if there are none.
+  ArrayRef<func::CallOp> getCallSites(StringAttr callee) const {
     auto it = call_sites.find(callee);
-    return it == call_sites.end() ? func::CallOp() : it->second;
+    return it == call_sites.end() ? ArrayRef<func::CallOp>() : it->second;
   }
 };
 
@@ -413,30 +416,22 @@ struct SplitCandidate {
 // Analysis
 //===----------------------------------------------------------------------===//
 
-/// Returns true if @p child is the orchestrator (original-content) module.
-///
-/// After ComputeGroupExtraction the top-level module contains:
-///   - An optional ktdf_arch.device op (not a ModuleOp)
-///   - The orchestrator child module — created without a sym_name
-///   - One or more extracted child modules — named "local_schedule_N"
-///
-/// We distinguish them by the presence of a sym_name: extracted modules always
-/// have one (assigned by SymbolTable::renameToUnique); the orchestrator does
-/// not carry a user-visible symbol.
-static bool isOrchestratorModule(ModuleOp child) {
-  return !child.getSymName().has_value();
-}
-
 /// Collects the indirect access tile of every function defined in every
 /// extracted child module of @p top.  A child module may define more than one
 /// function; each is considered independently.
 ///
 /// Functions without one are skipped silently: the pass is a no-op on them.
+/// So is a program module an earlier run scheduled.
 static LogicalResult collectCandidateOps(
     ModuleOp top,
     SmallVectorImpl<ktdp::ConstructIndirectAccessTilesOp>& candidate_ops) {
   for (auto child : top.getOps<ModuleOp>()) {
     if (isOrchestratorModule(child)) continue;
+    if (isInScheduledProgram(child)) {
+      LDBG() << "@" << child.getSymName().value_or("<unnamed>")
+              << " is a scheduled program; skipping";
+      continue;
+    }
 
     for (auto func : child.getOps<func::FuncOp>()) {
       // Forward declarations carry no body to search.
@@ -559,10 +554,10 @@ static FailureOr<AddressBufferInfo> resolveAddressBufferInfo(
 
 /// Locates the orchestrator module, its function and every call that function
 /// makes.  All candidates update the same function, so this is looked up once
-/// instead of being rediscovered per candidate.  Validates that each function
-/// is called at most once, as the indirect compute group split requires a
-/// single address buffer per function.
-static FailureOr<OrchestratorInfo> resolveOrchestrator(ModuleOp top) {
+/// instead of being rediscovered per candidate.  A function may be called any
+/// number of times here; only one the pass splits must be called once, which
+/// analyzeCandidate() checks.
+static OrchestratorInfo resolveOrchestrator(ModuleOp top) {
   OrchestratorInfo orchestrator;
   for (auto child : top.getOps<ModuleOp>()) {
     if (!isOrchestratorModule(child)) continue;
@@ -570,27 +565,14 @@ static FailureOr<OrchestratorInfo> resolveOrchestrator(ModuleOp top) {
     break;
   }
   if (!orchestrator.module) {
-    LDBG(1) << "no orchestrator module; call sites will not be updated";
+    LDBG(1) << "no orchestrator module; call sites cannot be updated";
     return orchestrator;
   }
 
-  // Each function can only be called once, as the address buffer is filled by a
-  // single @<name>_idx_to_addr call placed before that call site.
-  LogicalResult walk_status = success();
   orchestrator.module.walk([&](func::CallOp call_op) {
-    StringAttr callee = call_op.getCalleeAttr().getAttr();
-    if (orchestrator.call_sites.contains(callee)) {
-      call_op->emitError(PASS_NAME ": the orchestrator calls '")
-          << callee.getValue()
-          << "' more than once; only a single call site per indirect compute "
-             "group is supported";
-      walk_status = failure();
-      return WalkResult::interrupt();
-    }
-    orchestrator.call_sites[callee] = call_op;
-    return WalkResult::advance();
+    orchestrator.call_sites[call_op.getCalleeAttr().getAttr()].push_back(
+        call_op);
   });
-  if (failed(walk_status)) return failure();
 
   orchestrator.symbol_table.emplace(orchestrator.module);
   return orchestrator;
@@ -879,7 +861,19 @@ static FailureOr<SplitCandidate> analyzeCandidate(
              << "-byte word the indirect transfer addresses memory in";
   }
 
-  candidate.call_site = orchestrator.getCallSite(candidate.func.getNameAttr());
+  // The address buffer is filled by a single @<name>_idx_to_addr call placed
+  // before the call site, from that call's operands. A second call would gather
+  // with addresses resolved for the first one's arguments, so a function the
+  // pass splits must be called at most once.
+  ArrayRef<func::CallOp> call_sites =
+      orchestrator.getCallSites(candidate.func.getNameAttr());
+  if (call_sites.size() > 1)
+    return call_sites[1]->emitError(PASS_NAME ": the orchestrator calls '")
+           << candidate.func.getName()
+           << "' more than once; only a single call site per indirect compute "
+              "group is supported";
+  candidate.call_site =
+      call_sites.empty() ? func::CallOp() : call_sites.front();
 
   // The last check reads attributes and operand chains without cloning
   // anything.
@@ -1462,9 +1456,7 @@ struct IndirectComputeGroupSplitPass
         top, memory_tracker.getMemoryTree(), device_manager);
     if (failed(addr_info)) return signalPassFailure();
 
-    FailureOr<OrchestratorInfo> orchestrator_or_err = resolveOrchestrator(top);
-    if (failed(orchestrator_or_err)) return signalPassFailure();
-    OrchestratorInfo orchestrator = *orchestrator_or_err;
+    OrchestratorInfo orchestrator = resolveOrchestrator(top);
 
     // Symbol table of the top-level module, reused by every candidate to name
     // and insert its new @<name>_idx_to_addr child module.
