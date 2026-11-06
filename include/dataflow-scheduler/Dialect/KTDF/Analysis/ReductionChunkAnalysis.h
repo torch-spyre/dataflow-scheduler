@@ -93,8 +93,9 @@ std::optional<ReductionChunkResult> analyzeReductionChunks(
 /// Dimensions whose size is `ShapedType::kDynamic` are skipped without
 /// consuming budget.  Iteration stops once `remaining_chunk_size` reaches 1.
 ///
-/// The caller is responsible for not passing the innermost overall loop
-/// dimension — it is the pass's job to exclude that dim before calling here.
+/// The caller is responsible for not passing the reduction dim that indexes
+/// the innermost input dimension — it is the pass's job to exclude that dim
+/// before calling here.
 ///
 /// Returns std::nullopt if `remaining_chunk_size` is still > 1 after all
 /// dimensions have been visited (budget could not be fully distributed).

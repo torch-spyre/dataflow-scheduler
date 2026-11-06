@@ -192,21 +192,23 @@ class StageFactory {
   //   input_memref       — source buffer for the input chunk.
   //   input_memref_type  — type of input_memref (cached to avoid re-cast).
   //   partial_memref     — local memory buffer reused as the partial
-  //   accumulator. output_memref_type — type of partial_memref (cached to avoid
-  //   re-cast). reduction_dims     — linalg.generic dims that are being
-  //   chunked. chunk_sizes        — size of one chunk along each reduction dim.
-  //   dim_ivs            — loop IVs (or c0) for each reduction dim.
+  //                        accumulator.
+  //   output_memref_type — type of partial_memref (cached to avoid re-cast).
+  //   input_dims         — dims of the input tensor that are being chunked,
+  //                        one per chunked reduction loop dim.
+  //   chunk_sizes        — size of one chunk along each of input_dims.
+  //   dim_ivs            — loop IVs (or c0) for each of input_dims.
   //   cfg                — slot layout and token count for this pipeline.
   //
   // Input memref layout: dim-0 is the batch/local slot index; dims 1..rank-1
-  // correspond to linalg.generic dims 0..rank-2.  For reduction dims the
+  // correspond to input tensor dims 0..rank-2.  For chunked dims the
   // source offset is encoded as iv_j * chunk_size[j] in the AffineMap (to
   // avoid emitting arith.muli, which the backend does not accept as an index).
   // -------------------------------------------------------------------------
   void buildLoadStage(Value condition, Value input_memref,
                       MemRefType input_memref_type, Value partial_memref,
                       MemRefType output_memref_type,
-                      ArrayRef<unsigned> reduction_dims,
+                      ArrayRef<unsigned> input_dims,
                       ArrayRef<int64_t> chunk_sizes, ArrayRef<Value> dim_ivs,
                       const ChunkPipelineConfig& cfg);
 
