@@ -27,6 +27,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -56,15 +57,23 @@ std::string getUnitTypeFromQueryMap(mlir::Value query_map);
 /// up to the smallest access granularity of the load unit that covers all
 /// source elements.
 ///
-/// The memory space is not available at lowering time, so every space the Load
-/// feature of `kind` declares is tried and the smallest fitting granularity
-/// found across them wins.  Spaces that declare nothing usable are skipped.
-///
-/// Falls back to `src_total_elements` -- i.e. no widening -- when no space
-/// yields a fitting granularity.
-int64_t computeSplatGranularityElements(
+/// Uses the source memory space, or the unit's sole declared load space when
+/// memory spaces have already been stripped.  \p same_space decides whether a
+/// declared space names \p memory_space, so callers can resolve device aliases
+/// (e.g. with arch_view::MemoryTree::areAliases); without it the names must be
+/// equal.  Returns nullopt when the access cannot be resolved.
+std::optional<int64_t> computeSplatGranularityElements(
     int64_t src_total_elements, mlir::Type elem_type, ResourceType kind,
-    const mlir::ktdf_arch::ResourceKinds& resource_kinds);
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds,
+    mlir::Attribute memory_space = nullptr,
+    llvm::function_ref<bool(mlir::Attribute, mlir::Attribute)> same_space =
+        nullptr);
+
+/// Marks the `bufferization.to_tensor` that custom-linalg-bufferization creates
+/// over a materialized splat register, so the DFIR lowering rewrites only
+/// that view into a register load.
+static constexpr llvm::StringLiteral kSplatRegisterViewAttrName =
+    "dataflow_scheduler.splat_register_view";
 
 /// Build an IntegerSet from a size array: each size-1 entry becomes an equality
 /// constraint (d_i == 0); each size-N entry (N > 1) becomes a range pair

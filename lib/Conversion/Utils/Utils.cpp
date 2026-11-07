@@ -86,43 +86,41 @@ std::optional<int64_t> fittingGranularityElements(
 
   const size_t elem_bytes =
       (static_cast<size_t>(elem_type.getIntOrFloatBitWidth()) + 7) / 8;
-  // Words one element occupies, always >= 1, and from that the smallest load
-  // that still covers every source element.
-  const size_t elem_words = (elem_bytes + word_size - 1) / word_size;
-  auto best = granularity_list.fitAccess(
-      static_cast<size_t>(src_total_elements) * elem_words);
+  const size_t bytes = static_cast<size_t>(src_total_elements) * elem_bytes;
+  auto best = granularity_list.fitAccess((bytes + word_size - 1) / word_size);
   if (!best) return std::nullopt;
-
-  return static_cast<int64_t>(best.getSizeInWords() / elem_words);
+  const size_t load_bytes = best.getSizeInWords() * word_size;
+  if (load_bytes % elem_bytes != 0) return std::nullopt;
+  return static_cast<int64_t>(load_bytes / elem_bytes);
 }
 
 }  // namespace
 
-int64_t computeSplatGranularityElements(
+std::optional<int64_t> computeSplatGranularityElements(
     int64_t src_total_elements, mlir::Type elem_type, ResourceType kind,
-    const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
-  if (!kind) return src_total_elements;
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds,
+    mlir::Attribute memory_space,
+    llvm::function_ref<bool(mlir::Attribute, mlir::Attribute)> same_space) {
+  if (!kind || src_total_elements <= 0) return std::nullopt;
 
   auto load_feature =
       resource_kinds.getFeature<mlir::ktdf_arch::feature::Load>(kind);
-  if (!load_feature) return src_total_elements;
+  if (!load_feature) return std::nullopt;
 
   auto granularity_map = load_feature.getAccessGranularity();
-  if (!granularity_map) return src_total_elements;
-
-  // The memory space is stripped by buildLogicalMemoryViews, so it is not known
-  // here.  Take the narrowest load that fits in any space the feature declares,
-  // skipping the spaces that declare nothing usable rather than letting one of
-  // them stand in as a result.
-  std::optional<int64_t> narrowest;
+  if (!granularity_map) return std::nullopt;
+  auto matches = [&](mlir::Attribute space) {
+    return same_space ? same_space(space, memory_space) : space == memory_space;
+  };
+  mlir::Attribute selected;
   for (auto [space, _] : granularity_map) {
-    std::optional<int64_t> fitting = fittingGranularityElements(
-        load_feature, space, src_total_elements, elem_type);
-    if (fitting && (!narrowest || *fitting < *narrowest)) narrowest = fitting;
+    if (memory_space && !matches(space)) continue;
+    if (selected) return std::nullopt;
+    selected = space;
   }
-
-  // A granularity below the source width would drop elements, so it is no use.
-  return std::max(narrowest.value_or(src_total_elements), src_total_elements);
+  if (!selected) return std::nullopt;
+  return fittingGranularityElements(load_feature, selected, src_total_elements,
+                                    elem_type);
 }
 
 mlir::IntegerSet buildIntegerSetFromSizes(mlir::MLIRContext* ctx,

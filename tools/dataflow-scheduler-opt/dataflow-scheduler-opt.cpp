@@ -49,6 +49,15 @@ void registerPassPipelinesForScheduler() {
       llvm::cl::value_desc("filename"), llvm::cl::init(""));
 
   mlir::PassPipelineRegistration<>(
+      "ktir-to-ktdflow", "Schedule and lower KTIR to KTDFLow",
+      [&](mlir::OpPassManager& pm) {
+        const auto& context = scheduler::SchedulerExtContext::dummyContext();
+        scheduler::buildKTIRFrontendPipeline(pm, context);
+        scheduler::buildSchedulerOptimizationPipeline(pm, context);
+        scheduler::buildKTDFLowPipeline(pm, context);
+      });
+
+  mlir::PassPipelineRegistration<>(
       "ktir-to-dfir", "Schedule and lower KTIR to DataflowIR",
       [&](mlir::OpPassManager& pm) {
         scheduler::buildKTDPToDFIRPipeline(

@@ -153,10 +153,15 @@ void scheduler::buildSchedulerOptimizationPipeline(
   pm.addPass(createNormalizeGridTo1DPass());
 }
 
-void scheduler::buildDFIRBackendPipeline(
-    mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
+void scheduler::buildKTDFLowPipeline(mlir::OpPassManager& pm,
+                                     const SchedulerExtContext& scheduler_ctx) {
   pm.addPass(mlir::ktdf::createLoopIVAffineMulStrengthReductionPass());
   pm.addPass(createKTDFToKTDFLoweringPass(scheduler_ctx));
+}
+
+void scheduler::buildDFIRBackendPipeline(
+    mlir::OpPassManager& pm, const SchedulerExtContext& scheduler_ctx) {
+  buildKTDFLowPipeline(pm, scheduler_ctx);
 
   // Checkpoint 'post_lowering':
   //   - The input is a mix of 'ktdf' and 'ktdf_lowering', but has materialized

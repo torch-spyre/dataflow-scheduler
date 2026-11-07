@@ -52,6 +52,11 @@ void buildSchedulerOptimizationPipeline(
     mlir::OpPassManager& pm,
     const scheduler::SchedulerExtContext& scheduler_ctx);
 
+/// Lowers optimized Schedule IR to KTDFLow execution-unit scopes, retaining
+/// memory, FIFO and compute operations for the subsequent DFIR lowering.
+void buildKTDFLowPipeline(mlir::OpPassManager& pm,
+                          const scheduler::SchedulerExtContext& scheduler_ctx);
+
 /// Builds the DFIR backend stage: lowers the optimized Schedule IR through
 /// KTDFLow into Dataflow IR (DFIR).
 ///

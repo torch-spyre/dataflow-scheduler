@@ -33,6 +33,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
@@ -162,6 +163,61 @@ static mlir::LogicalResult absorbIntoConsumer(
   return mlir::success();
 }
 
+/// FP32 splats the compute unit finishes can forward directly, but arithmetic
+/// must read their result from the unit's register file. Materialize once at
+/// the original read to preserve FIFO order.
+static mlir::LogicalResult materializeSplat(
+    mlir::ktdf::ReadFromFifoOp read,
+    const scheduler::arch_view::GroupLocalMemory& group_local_mem,
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
+  auto type = mlir::dyn_cast<mlir::ShapedType>(read.getType());
+  auto fifo =
+      mlir::cast<mlir::ktdf::FifoSlotType>(read.getFifoSlot().getType());
+  if (!read.getSplat() || !type || !type.getElementType().isF32() ||
+      read->use_empty())
+    return mlir::success();
+  // The SIMD unit receiving the splat says how wide one register stick is.
+  auto simd = resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(
+      mlir::dyn_cast<scheduler::ResourceType>(fifo.getDest()));
+  const int64_t lanes = simd ? simd.getLanes(type.getElementType()) : 0;
+  if (lanes <= 0) return mlir::success();
+  if (read->hasOneUse() &&
+      mlir::isa<mlir::ktdf::WriteToFifoOp, mlir::memref::CopyOp>(
+          *read->user_begin()))
+    return mlir::success();
+
+  if (!type.hasStaticShape() || type.getNumElements() != lanes)
+    return read.emitError() << "splat register requires a static " << lanes
+                            << "-element " << type.getElementType() << " stick";
+  auto stage = read->getParentOfType<mlir::ktdf::StageOp>();
+  if (!stage) return read.emitError("splat register requires a compute stage");
+  // The register is the stage unit's own local memory.
+  auto space = group_local_mem.getLocalMemoryKindForStage(stage);
+  if (!space) return mlir::failure();
+
+  mlir::OpBuilder builder(read);
+  auto buffer = mlir::memref::AllocOp::create(
+      builder, read.getLoc(), scheduler::memRefTypeFor(type, space));
+  const bool is_tensor = mlir::isa<mlir::RankedTensorType>(type);
+  mlir::Value source =
+      is_tensor ? mlir::ktdf::convertFromTensorToMemref(builder, read)
+                : read.getResult();
+  if (!is_tensor) builder.setInsertionPointAfter(read);
+  auto copy =
+      mlir::memref::CopyOp::create(builder, read.getLoc(), source, buffer);
+  mlir::Value replacement = buffer;
+  if (is_tensor) {
+    auto view = mlir::bufferization::ToTensorOp::create(
+        builder, read.getLoc(), type, buffer, /*restrict=*/true,
+        /*writable=*/false);
+    view->setAttr(scheduler::kSplatRegisterViewAttrName, builder.getUnitAttr());
+    replacement = view;
+  }
+  read.getResult().replaceAllUsesExcept(replacement, copy);
+  if (is_tensor) read.erase();
+  return mlir::success();
+}
+
 struct CustomLinalgBufferizationPass
     : public scheduler::impl::CustomLinalgBufferizationPassBase<
           CustomLinalgBufferizationPass> {
@@ -183,6 +239,8 @@ struct CustomLinalgBufferizationPass
     auto& group_local_mem =
         device_manager.getOrCreateView<scheduler::arch_view::GroupLocalMemory>(
             *device);
+    auto& resource_kinds =
+        device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
     // Snapshot first: absorbing one rebuilds and erases ops around it, which is
     // not safe to do with a walk in flight.
@@ -192,6 +250,13 @@ struct CustomLinalgBufferizationPass
 
     for (mlir::bufferization::ToTensorOp op : to_tensors)
       if (mlir::failed(absorbIntoConsumer(op, group_local_mem)))
+        return signalPassFailure();
+
+    llvm::SmallVector<mlir::ktdf::ReadFromFifoOp> reads;
+    module_op.walk(
+        [&](mlir::ktdf::ReadFromFifoOp read) { reads.push_back(read); });
+    for (auto read : reads)
+      if (mlir::failed(materializeSplat(read, group_local_mem, resource_kinds)))
         return signalPassFailure();
   }
 };

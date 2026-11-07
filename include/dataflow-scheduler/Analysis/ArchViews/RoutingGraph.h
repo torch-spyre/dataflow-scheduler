@@ -94,6 +94,11 @@ class RoutingGraph : public mlir::ktdf_arch::DeviceView {
 
   std::optional<Path> findShortestPath(NodeId source, NodeId target) const;
 
+  /// Shortest path from any of \p sources to any of \p targets, found with a
+  /// single breadth-first search seeded with every source.
+  std::optional<Path> findShortestPath(llvm::ArrayRef<NodeId> sources,
+                                       llvm::ArrayRef<NodeId> targets) const;
+
   /// Get the node ID for a given resource attribute.
   /// Precondition: exactly one node carries \p resource. Use
   /// getNodeIdsForResource when a resource may map to multiple nodes

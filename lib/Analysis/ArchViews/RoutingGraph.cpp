@@ -18,6 +18,7 @@
 
 #include "dataflow-scheduler/Analysis/ArchViews/RoutingGraph.h"
 
+#include <algorithm>
 #include <cassert>
 #include <queue>
 #include <sstream>
@@ -329,6 +330,37 @@ std::optional<RoutingGraph::Path> RoutingGraph::findShortestPath(
     path.push_back(*it);
   }
   return path;
+}
+
+std::optional<RoutingGraph::Path> RoutingGraph::findShortestPath(
+    llvm::ArrayRef<NodeId> sources, llvm::ArrayRef<NodeId> targets) const {
+  const llvm::DenseSet<NodeId> target_set(targets.begin(), targets.end());
+  std::queue<NodeId> worklist;
+  llvm::DenseMap<NodeId, NodeId> predecessor;
+  llvm::DenseSet<NodeId> visited;
+  for (NodeId source : sources) {
+    if (!hasNode(source) || !visited.insert(source).second) continue;
+    worklist.push(source);
+  }
+
+  while (!worklist.empty()) {
+    NodeId current = worklist.front();
+    worklist.pop();
+    if (target_set.contains(current)) {
+      Path path{current};
+      for (auto it = predecessor.find(current); it != predecessor.end();
+           it = predecessor.find(it->second))
+        path.push_back(it->second);
+      std::reverse(path.begin(), path.end());
+      return path;
+    }
+    for (NodeId neighbor : getNeighbors(current)) {
+      if (!visited.insert(neighbor).second) continue;
+      predecessor[neighbor] = current;
+      worklist.push(neighbor);
+    }
+  }
+  return std::nullopt;
 }
 
 RoutingGraph::NodeId RoutingGraph::getNodeIdForResource(

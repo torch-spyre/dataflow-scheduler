@@ -388,8 +388,10 @@ static bool isComputeAnchor(StageNode* stage, const RoutingGraph& arch_graph) {
   if (!units || units->size() != 1) return false;
   auto unit = llvm::dyn_cast<ResourceType>(units->getValue()[0]);
   if (!unit) return false;
-  auto node = arch_graph.getNode(unit);
-  return node && node->kind == ResourceKind::Compute;
+  auto nodes = arch_graph.getNodeIdsForResource(unit);
+  return !nodes.empty() && llvm::all_of(nodes, [&](auto id) {
+    return arch_graph.getNode(id)->kind == ResourceKind::Compute;
+  });
 }
 
 /// Decide, for every original stage, whether it is on the load side, is a
@@ -954,9 +956,9 @@ static mlir::LogicalResult routeDataFlows(llvm::MutableArrayRef<DataFlow> flows,
 
   for (DataFlow& flow : flows) {
     std::optional<RoutingGraph::Path> path = arch_graph.findShortestPath(
-        arch_graph.getNodeIdForResource(
+        arch_graph.getNodeIdsForResource(
             plan->stage_info.at(flow.producer).stage_resource),
-        arch_graph.getNodeIdForResource(
+        arch_graph.getNodeIdsForResource(
             plan->stage_info.at(flow.consumer).stage_resource));
     if (!path || path->empty()) {
       LDBG(1) << "No routing path from stage " << flow.producer->getStageId()
@@ -990,12 +992,13 @@ static mlir::LogicalResult routeDataFlows(llvm::MutableArrayRef<DataFlow> flows,
   return mlir::success();
 }
 
-/// Return true if path expansion has to add stages: some path passes through
-/// a memory or compute unit that is part of neither the producer nor the
-/// consumer. A load/store unit with no stage does not count on its own.
+/// Routing must materialize absorbed endpoint units even when no intermediate
+/// stage is needed, so both the stage assignment and FIFO endpoints are
+/// updated.
 static bool needsExpansion(llvm::ArrayRef<DataFlow> flows,
                            const RoutingGraph& arch_graph) {
   for (const DataFlow& flow : flows) {
+    if (flow.producer_unit || flow.consumer_unit) return true;
     for (size_t i = flow.middleBegin(); i < flow.middleEnd(); ++i)
       if (pathNode(arch_graph, flow, i).kind != ResourceKind::LoadStoreUnit)
         return true;
@@ -1021,8 +1024,10 @@ static mlir::LogicalResult assignOriginalStageUnits(
   // A stage whose resource is a compute or load/store unit runs on it.
   for (StageNode* stage : sorted_stages) {
     StageMaterializationInfo& info = plan->getStageInfo(stage);
-    auto node = arch_graph.getNode(info.stage_resource);
-    if (node && node->kind != ResourceKind::Memory)
+    auto nodes = arch_graph.getNodeIdsForResource(info.stage_resource);
+    if (!nodes.empty() && llvm::all_of(nodes, [&](auto id) {
+          return arch_graph.getNode(id)->kind != ResourceKind::Memory;
+        }))
       info.applicable_unit = info.stage_resource;
   }
 
@@ -1728,12 +1733,20 @@ static mlir::LogicalResult retypeFifosBetweenOriginalStages(
       StageMaterializationInfo& consumer_info =
           plan->stage_info[slot.consumer.stage];
 
-      // Use a dummy edge when no direct edge exists between the stage
-      // resources (they usually go through LS-unit nodes).
-      RoutingGraph::NodeId src_node_id =
-          arch_graph.getNodeIdForResource(producer_info.stage_resource);
-      RoutingGraph::NodeId dst_node_id =
-          arch_graph.getNodeIdForResource(consumer_info.stage_resource);
+      // The route picks which instance of each stage resource the FIFO joins.
+      // Use a dummy edge between them when they are not directly connected
+      // (they usually go through LS-unit nodes).
+      auto path = arch_graph.findShortestPath(
+          arch_graph.getNodeIdsForResource(producer_info.stage_resource),
+          arch_graph.getNodeIdsForResource(consumer_info.stage_resource));
+      if (!path || path->empty())
+        return slot.producer.op->emitError()
+               << "path-expansion: no route from "
+               << producer_info.stage_resource << " to "
+               << consumer_info.stage_resource
+               << " for the FIFO slot this op writes";
+      RoutingGraph::NodeId src_node_id = path->front();
+      RoutingGraph::NodeId dst_node_id = path->back();
       RoutingGraph::EdgeInfo edge{src_node_id, dst_node_id, 1};
       if (auto edge_opt = arch_graph.getEdgeInfo(src_node_id, dst_node_id))
         edge = *edge_opt;

@@ -39,6 +39,7 @@
 #include <memory>
 #include <numeric>
 
+#include "dataflow-scheduler/Analysis/ArchViews/MemoryTree.h"
 #include "dataflow-scheduler/Conversion/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
@@ -50,6 +51,7 @@
 #include "llvm/Support/DebugLog.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Interfaces/ValueBoundsOpInterface.h"
 #include "mlir/Pass/Pass.h"
 
 #define PASS_NAME "splat-legalization"
@@ -104,7 +106,8 @@ static mlir::LogicalResult validateSplatCapability(
 /// what was asked for as it stands.
 mlir::LogicalResult legalizeSplatTransfer(
     mlir::RewriterBase& rewriter, mlir::ktdf::DataTransferOp transfer,
-    const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds,
+    const scheduler::arch_view::MemoryTree& memory_tree) {
   scheduler::ResourceType load_unit_kind = resolveLoadUnitKind(transfer);
 
   auto static_src_sizes = transfer.getStaticSourceSizesArray();
@@ -118,12 +121,62 @@ mlir::LogicalResult legalizeSplatTransfer(
                       int64_t{1}, std::multiplies<>());
   auto fifo_slot_type =
       mlir::cast<mlir::ktdf::FifoSlotType>(transfer.getDestination().getType());
-  const int64_t load_elements = scheduler::computeSplatGranularityElements(
-      src_elements, fifo_slot_type.getElementType(), load_unit_kind,
-      resource_kinds);
+  auto source_type =
+      mlir::cast<mlir::MemRefType>(transfer.getSource().getType());
+  // A unit that declares no granularity for the source memory loads any
+  // width, so it can splat what was asked for as it stands.
+  const int64_t load_elements =
+      scheduler::computeSplatGranularityElements(
+          src_elements, fifo_slot_type.getElementType(), load_unit_kind,
+          resource_kinds, source_type.getMemorySpace(),
+          [&](mlir::Attribute a, mlir::Attribute b) -> bool {
+            auto kind_a = mlir::dyn_cast<scheduler::ResourceType>(a);
+            auto kind_b = mlir::dyn_cast<scheduler::ResourceType>(b);
+            return kind_a && kind_b ? memory_tree.areAliases(kind_a, kind_b)
+                                    : a == b;
+          })
+          .value_or(src_elements);
 
   // The hardware can splat the source as it stands: nothing to record.
   if (load_elements <= src_elements) return mlir::success();
+
+  if (src_elements != 1)
+    return transfer.emitError("widening splat requires one source element");
+  const int64_t lanes = fifo_slot_type.getNumElements();
+  auto simd = resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(
+      mlir::dyn_cast<scheduler::ResourceType>(fifo_slot_type.getDest()));
+  const int64_t group =
+      simd ? simd.getSubSimdLanes(fifo_slot_type.getElementType()) : 0;
+  if (group <= 0 || lanes <= 0 || lanes % load_elements != 0 ||
+      lanes % group != 0 || group % load_elements != 0)
+    return transfer.emitError(
+        "incompatible splat load width, FIFO width, or "
+        "sub-SIMD group width");
+
+  // Widen within the declared view, never into an assumed backing allocation.
+  llvm::SmallVector<int64_t> strides;
+  int64_t offset;
+  if (source_type.getRank() == 0 ||
+      mlir::failed(source_type.getStridesAndOffset(strides, offset)) ||
+      strides.back() != 1)
+    return transfer.emitError(
+        "widened splat requires a contiguous innermost "
+        "source dimension");
+  auto map = transfer.getSourceMap().value_or(
+      rewriter.getMultiDimIdentityMap(source_type.getRank()));
+  const unsigned dim = source_type.getRank() - 1;
+  auto start_map = map.getSubMap({dim});
+  auto end_map = mlir::AffineMap::get(map.getNumDims(), map.getNumSymbols(),
+                                      map.getResult(dim) + load_elements);
+  using Bounds = mlir::ValueBoundsConstraintSet;
+  using Variable = Bounds::Variable;
+  if (!Bounds::compare(Variable(start_map, transfer.getSourceIndices()),
+                       Bounds::GE, Variable(rewriter.getIndexAttr(0))) ||
+      !Bounds::compare(Variable(end_map, transfer.getSourceIndices()),
+                       Bounds::LE, Variable(transfer.getSource(), dim)))
+    return transfer.emitError(
+        "cannot prove widened splat load is within the "
+        "source view");
 
   LDBG(1) << "legalizing splat load from " << src_elements << " to "
           << load_elements << " elements for " << transfer;
@@ -167,6 +220,9 @@ struct SplatLegalizationPass
     }
     auto& resource_kinds =
         device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
+    auto& memory_tree =
+        device_manager.getOrCreateView<scheduler::arch_view::MemoryTree>(
+            *device);
 
     llvm::SmallVector<mlir::ktdf::DataTransferOp> splats;
     module_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
@@ -178,8 +234,8 @@ struct SplatLegalizationPass
     mlir::IRRewriter rewriter(&getContext());
     for (auto transfer : splats) {
       if (mlir::failed(validateSplatCapability(transfer, resource_kinds)) ||
-          mlir::failed(
-              legalizeSplatTransfer(rewriter, transfer, resource_kinds))) {
+          mlir::failed(legalizeSplatTransfer(rewriter, transfer, resource_kinds,
+                                             memory_tree))) {
         signalPassFailure();
         return;
       }

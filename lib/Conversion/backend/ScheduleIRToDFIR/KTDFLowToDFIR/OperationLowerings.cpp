@@ -26,6 +26,7 @@
 #include <llvm/ADT/SmallVector.h>
 #include <llvm/ADT/StringExtras.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
+#include <mlir/Dialect/Bufferization/IR/Bufferization.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/Dialect/MemRef/IR/MemRef.h>
 #include <mlir/Dialect/SCF/IR/SCF.h>
@@ -64,6 +65,30 @@
 using namespace scheduler;
 
 namespace {
+
+/// A materialized splat is handed to tensor consumers as a register view.
+/// Only the view custom-linalg-bufferization tagged is rewritten; any other
+/// to_tensor over the same registers is left for the caller to report.
+struct LowerSplatRegisterViewPattern
+    : public mlir::OpRewritePattern<mlir::bufferization::ToTensorOp> {
+  using OpRewritePattern::OpRewritePattern;
+
+  mlir::LogicalResult matchAndRewrite(
+      mlir::bufferization::ToTensorOp op,
+      mlir::PatternRewriter& rewriter) const override {
+    if (!op->hasAttr(kSplatRegisterViewAttrName))
+      return rewriter.notifyMatchFailure(op, "not a splat register view");
+    // Custom-linalg-bufferization only tags a static register stick, so the
+    // view's own type is the vector to load.
+    auto vector_type =
+        getFlattenedVectorType(mlir::cast<mlir::ShapedType>(op.getType()));
+    if (!vector_type)
+      return rewriter.notifyMatchFailure(op, "register view is not a vector");
+    rewriter.replaceOp(
+        op, emitVectorLoad(rewriter, op.getLoc(), vector_type, op.getBuffer()));
+    return mlir::success();
+  }
+};
 
 /// Pattern to lower ktdf.read_from_fifo operations
 struct LowerReadFromFifoPattern
@@ -117,16 +142,8 @@ struct LowerReadFromFifoPattern
     // names before anything may consume it.
     mlir::Value received = receive_op.getData();
     if (read_op.getSplat()) {
-      // FIXME: Discover compute from op.
-      auto compute = resource_kinds_.getDefaultCompute();
-      if (!compute) {
-        read_op.emitError(
-            "a sub-SIMD splat needs the device to declare a default compute "
-            "unit to read the sub-SIMD group width off");
-        return mlir::failure();
-      }
-      auto splatted = emitSplatMode(rewriter, read_op, *read_op.getSplat(),
-                                    received, compute);
+      auto splatted =
+          emitSplatMode(rewriter, read_op, *read_op.getSplat(), received);
       if (mlir::failed(splatted)) {
         return mlir::failure();
       }
@@ -145,16 +162,18 @@ struct LowerReadFromFifoPattern
   /// The width it works over is an arch fact, not the device file's to repeat:
   /// a sub-SIMD group is as wide as the compute unit declares in
   /// `ktdf_arch.feature.simd = { sub_simd_lanes = ... }`.
-  static mlir::FailureOr<mlir::Value> emitSplatMode(
-      mlir::PatternRewriter& rewriter, mlir::ktdf::ReadFromFifoOp read_op,
-      mlir::ktdf::SplatMode mode, mlir::Value received,
-      mlir::ktdf_arch::ExecutionUnitOp compute) {
+  mlir::FailureOr<mlir::Value> emitSplatMode(mlir::PatternRewriter& rewriter,
+                                             mlir::ktdf::ReadFromFifoOp read_op,
+                                             mlir::ktdf::SplatMode mode,
+                                             mlir::Value received) const {
     auto vector_type = mlir::cast<mlir::VectorType>(received.getType());
     switch (mode) {
       case mlir::ktdf::SplatMode::FirstSubSimdLaneToEachSubSimd: {
+        auto fifo = read_op.getFifoSlot().getType();
+        auto simd = resource_kinds_.getFeature<mlir::ktdf_arch::feature::SIMD>(
+            mlir::dyn_cast<ResourceType>(fifo.getDest()));
         const int64_t group =
-            compute.getFeature<mlir::ktdf_arch::feature::SIMD>()
-                .getSubSimdLanes(vector_type.getElementType());
+            simd ? simd.getSubSimdLanes(vector_type.getElementType()) : 0;
         if (group <= 0) {
           return read_op.emitError(
               "a sub-SIMD splat needs the compute unit to declare "
@@ -927,7 +946,8 @@ mlir::LogicalResult scheduler::runOperationLowerings(
   // Lower linalg.generic compute operations and FIFO operations
   mlir::RewritePatternSet patterns(func.getContext());
   populateLinalgLoweringPatterns(patterns, symbols);
-  patterns.add<LowerMemRefCopyFromFifoPattern>(func.getContext());
+  patterns.add<LowerMemRefCopyFromFifoPattern, LowerSplatRegisterViewPattern>(
+      func.getContext());
   patterns.add<LowerReadFromFifoPattern>(func.getContext(), mapping.byKind(),
                                          components);
   patterns.add<LowerWriteToFifoPattern>(func.getContext(), components);

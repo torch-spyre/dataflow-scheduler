@@ -377,7 +377,9 @@ def SplatLegalizationPass : Pass<"splat-legalization", "mlir::ModuleOp"> {
       1. Validates that the load unit's SIMD feature declares the splat
          capability.
       2. Calls computeSplatGranularityElements to derive the effective load
-         width from the load unit's access_granularity arch attribute.
+         width from the load unit's access_granularity arch attribute.  A
+         unit that declares no granularity for the source memory is taken to
+         load any width, and the transfer is left as it is.
       3. When that width exceeds the source element count -- when the hardware
          really does have to load more than was asked for -- legalizes the
          innermost static_source_sizes dimension to it.  The size operand
@@ -391,9 +393,9 @@ def SplatLegalizationPass : Pass<"splat-legalization", "mlir::ModuleOp"> {
     holding one.  The splat mode says so, and names the shuffle that closes the
     gap; it is the pass's durable output.
 
-    The shuffle itself is emitted by the lowering to DFIR, which reads the group
-    width off the compute unit's sub_simd_lanes.  This pass queries the arch for
-    the load width and nothing else.  Splat placement (ensuring the splat lands
+    Before widening, this pass checks the source view's bounds and the load
+    width against the receiving unit's sub_simd_lanes. DFIR lowering uses
+    the same feature for the shuffle. Splat placement (ensuring the splat lands
     on the terminal FIFO load) is the responsibility of path expansion upstream.
   }];
   let constructor = "::scheduler::createSplatLegalizationPass()";
