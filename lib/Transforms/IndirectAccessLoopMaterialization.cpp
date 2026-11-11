@@ -552,11 +552,9 @@ mlir::LogicalResult materializeDirectAccessLoops(
       if (mlir::failed(pin_result)) return mlir::failure();
       deferred_out = *pin_result;
     }
-    if (is_indirect_store) {
-      if (mlir::failed(pinSourceAccessTile(current_op, scope_block, i_m,
-                                           pre_narrowed, loc, ctx)))
-        return mlir::failure();
-    }
+    if (mlir::failed(pinSourceAccessTile(current_op, scope_block, i_m,
+                                         pre_narrowed, loc, ctx)))
+      return mlir::failure();
 
     LDBG(1) << "  pinned access tile for loop var m=" << m << ", "
             << pre_narrowed.size() << " op(s) pre-narrowed";

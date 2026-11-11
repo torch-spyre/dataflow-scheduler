@@ -251,9 +251,9 @@ mlir::FailureOr<std::optional<DeferredExpand>> pinDestAccessTile(
     llvm::SmallVectorImpl<mlir::Operation*>& pre_narrowed, mlir::Location loc,
     mlir::MLIRContext* ctx);
 
-/// Pin-not-drop the source access tile for an indirect *store*
-/// (scatter), if @p current_op is written to by a store within
-/// @p scope_block whose source data chain reaches a direct-access-tile load.
+/// Pin-not-drop direct source access tiles in @p scope_block (for both
+/// scatter and gather compute groups), if any store connected to
+/// @p current_op has a source data chain reaching a direct-access-tile load.
 /// Unlike pinDestAccessTile() this is immediate (not deferred): the
 /// collapse_shape it inserts must be in place before propagateNarrowing
 /// narrows the generic that consumes it.

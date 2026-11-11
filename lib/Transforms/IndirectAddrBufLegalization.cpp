@@ -660,13 +660,11 @@ materializeWindowLoops(mlir::ktdp_lowering::ConstructIndirectAccessTileOp op,
       deferred_out = *pin_result;
     }
 
-    // ── Pin-not-drop for source access tiles (indirect store) ────────────
-    if (is_indirect_store) {
-      if (mlir::failed(pinSourceAccessTile(current_op, scope_block,
-                                           window_ivs.back(), pre_narrowed, loc,
-                                           ctx)))
-        return mlir::failure();
-    }
+    // ── Pin-not-drop for direct source access tiles ──────────────────────
+    if (mlir::failed(pinSourceAccessTile(current_op, scope_block,
+                                         window_ivs.back(), pre_narrowed, loc,
+                                         ctx)))
+      return mlir::failure();
 
     // Build the replacement op at the same position as current_op.
     mlir::OpBuilder replace_builder(current_op);
@@ -941,11 +939,9 @@ static mlir::LogicalResult materializeEntryLoop(
     if (mlir::failed(pin_result)) return mlir::failure();
     deferred_out = *pin_result;
   }
-  if (is_indirect_store) {
-    if (mlir::failed(pinSourceAccessTile(current_op, dst_block, i2,
-                                         pre_narrowed, loc, ctx)))
-      return mlir::failure();
-  }
+  if (mlir::failed(pinSourceAccessTile(current_op, dst_block, i2, pre_narrowed,
+                                       loc, ctx)))
+    return mlir::failure();
 
   // ── Rebuild construct_indirect_access_tile ──────────────────────────────
   // Unlike the window loops (which purely drop the absorbed dim), the entry

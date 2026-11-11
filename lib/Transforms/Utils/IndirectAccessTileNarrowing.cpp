@@ -363,10 +363,32 @@ mlir::LogicalResult pinSourceAccessTile(
   // that pinning rather than pin yet another dimension.
   llvm::DenseMap<mlir::Operation*, PinnedAccessTile> pinned_by_new_at;
 
-  for (mlir::Operation* user : current_op.getResult().getUsers()) {
-    auto store = mlir::dyn_cast<mlir::ktdp::StoreOp>(user);
-    if (!store || store->getBlock() != scope_block) continue;
+  // Collect all stores connected to current_op in scope_block.
+  // In scatter: current_op is the indirect destination tile used by ktdp.store.
+  // In gather: current_op is the indirect source tile loaded by ktdp.load,
+  //            which feeds into compute operations and eventually ktdp.store.
+  llvm::SmallVector<mlir::ktdp::StoreOp> target_stores;
+  llvm::SmallVector<mlir::Value> fwd_worklist{current_op.getResult()};
+  llvm::DenseSet<mlir::Value> fwd_visited{current_op.getResult()};
 
+  while (!fwd_worklist.empty()) {
+    mlir::Value cur = fwd_worklist.pop_back_val();
+    for (mlir::Operation* user : cur.getUsers()) {
+      if (user->getBlock() != scope_block) continue;
+      if (auto store = mlir::dyn_cast<mlir::ktdp::StoreOp>(user)) {
+        target_stores.push_back(store);
+        continue;
+      }
+      for (mlir::Value res : user->getResults()) {
+        if (mlir::isa<mlir::ktdp::AccessTileType, mlir::RankedTensorType>(
+                res.getType()) &&
+            fwd_visited.insert(res).second)
+          fwd_worklist.push_back(res);
+      }
+    }
+  }
+
+  for (mlir::ktdp::StoreOp store : target_stores) {
     llvm::SmallVector<mlir::Value> worklist{store.getDataTile()};
     llvm::DenseSet<mlir::Value> visited{store.getDataTile()};
 

@@ -98,19 +98,45 @@ llvm::SmallVector<ResourceType> memoriesFeeding(const RoutingGraph& graph,
   return result.takeVector();
 }
 
-/// Whether \p unit_kind can carry data from \p source to \p dest, i.e. has an
-/// incoming datapath from \p source and an outgoing one to \p dest.
-bool unitConnects(const RoutingGraph& graph, ResourceType unit_kind,
-                  ResourceType source, ResourceType dest) {
-  for (RoutingGraph::NodeId unit : graph.getNodeIdsForResource(unit_kind)) {
-    for (RoutingGraph::NodeId from : graph.getNodeIdsForResource(source)) {
-      if (!graph.getEdgeInfo(from, unit)) continue;
-      for (RoutingGraph::NodeId to : graph.getNodeIdsForResource(dest)) {
-        if (graph.getEdgeInfo(unit, to)) return true;
+/// A single step in a multi-hop transfer path: Memory -> LSU -> Memory.
+struct TransferHop {
+  ResourceType src_memory;
+  ResourceType unit;
+  ResourceType dst_memory;
+};
+
+/// Finds the shortest sequence of (Memory -> LSU -> Memory) hops connecting
+/// \p source to \p dest in \p graph .
+std::optional<llvm::SmallVector<TransferHop>> findTransferHops(
+    const RoutingGraph& graph, ResourceType source, ResourceType dest) {
+  auto src_ids = graph.getNodeIdsForResource(source);
+  auto dst_ids = graph.getNodeIdsForResource(dest);
+  if (src_ids.empty() || dst_ids.empty()) return std::nullopt;
+
+  std::optional<RoutingGraph::Path> best_path;
+  for (auto src_id : src_ids) {
+    for (auto dst_id : dst_ids) {
+      auto path = graph.findShortestPath(src_id, dst_id);
+      if (path && (!best_path || path->size() < best_path->size())) {
+        best_path = std::move(path);
       }
     }
   }
-  return false;
+
+  if (!best_path || best_path->size() < 3 || best_path->size() % 2 == 0)
+    return std::nullopt;
+
+  llvm::SmallVector<TransferHop> hops;
+  size_t num_hops = best_path->size() / 2;
+  for (size_t i = 0; i < num_hops; ++i) {
+    auto src_node = graph.getNode((*best_path)[2 * i]);
+    auto unit_node = graph.getNode((*best_path)[2 * i + 1]);
+    auto dst_node = graph.getNode((*best_path)[2 * i + 2]);
+    if (!src_node || !unit_node || !dst_node) return std::nullopt;
+    hops.push_back(
+        {src_node->resource, unit_node->resource, dst_node->resource});
+  }
+  return hops;
 }
 
 /// The single unit \p stage is mapped to, or null if it is not mapped to
@@ -170,11 +196,13 @@ mlir::AffineMap createZeroSubscript(int64_t rank, mlir::MLIRContext* ctx) {
   return mlir::AffineMap::get(/*dimCount=*/0, /*symbolCount=*/0, zeros, ctx);
 }
 
-/// Adds a buffer of \p type to \p pipeline 's private resources and returns the
-/// result handing it out. The private op is rebuilt, since results cannot be
-/// appended to an existing operation.
-mlir::Value appendPrivateBuffer(mlir::ktdf::PipelineOp pipeline,
-                                mlir::MemRefType type) {
+/// Adds a resource of \p type to \p pipeline 's private resources and returns
+/// the result handing it out. \p create builds the yielded value inside the
+/// private region. The private op is rebuilt, since results cannot be appended
+/// to an existing operation.
+mlir::Value appendPrivateResource(
+    mlir::ktdf::PipelineOp pipeline, mlir::Type type,
+    llvm::function_ref<mlir::Value(mlir::OpBuilder&, mlir::Location)> create) {
   mlir::ktdf::PrivateOp private_op = pipeline.getPrivateOp();
   assert(private_op && "pipeline must have a private region");
 
@@ -188,10 +216,10 @@ mlir::Value appendPrivateBuffer(mlir::ktdf::PipelineOp pipeline,
 
   mlir::ktdf::PrivateYieldOp yield = new_private.getYieldOp();
   builder.setInsertionPoint(yield);
-  auto alloc = mlir::memref::AllocOp::create(builder, yield.getLoc(), type);
+  mlir::Value resource = create(builder, yield.getLoc());
 
   llvm::SmallVector<mlir::Value> yield_operands(yield.getOperands());
-  yield_operands.push_back(alloc.getResult());
+  yield_operands.push_back(resource);
   mlir::ktdf::PrivateYieldOp::create(builder, yield.getLoc(), yield_operands);
   yield.erase();
 
@@ -202,6 +230,56 @@ mlir::Value appendPrivateBuffer(mlir::ktdf::PipelineOp pipeline,
   private_op.erase();
 
   return new_private.getResults().back();
+}
+
+/// Adds a buffer of \p type to \p pipeline 's private resources.
+mlir::Value appendPrivateBuffer(mlir::ktdf::PipelineOp pipeline,
+                                mlir::MemRefType type) {
+  return appendPrivateResource(
+      pipeline, type, [&](mlir::OpBuilder& builder, mlir::Location loc) {
+        return mlir::memref::AllocOp::create(builder, loc, type).getResult();
+      });
+}
+
+/// The earliest stage before \p fill_stage whose unit matches \p unit.
+mlir::ktdf::StageOp findStageOnUnit(mlir::ktdf::PipelineOp pipeline,
+                                    mlir::ktdf::StageOp fill_stage,
+                                    ResourceType unit) {
+  for (mlir::ktdf::StageOp stage : pipeline.getStages()) {
+    if (stage == fill_stage) break;
+    if (getStageUnit(stage) == unit) return stage;
+  }
+  return nullptr;
+}
+
+/// Adds a stage mapped to \p unit ahead of \p insert_before (or at pipeline
+/// start). It signals a fresh private token which \p dependent is made to wait
+/// on.
+mlir::ktdf::StageOp createStagingStage(mlir::ktdf::PipelineOp pipeline,
+                                       mlir::ktdf::StageOp insert_before,
+                                       mlir::ktdf::StageOp dependent,
+                                       ResourceType unit) {
+  auto token_type = mlir::ktdf::TokenType::get(pipeline.getContext());
+  mlir::Value token = appendPrivateResource(
+      pipeline, token_type, [&](mlir::OpBuilder& builder, mlir::Location loc) {
+        return mlir::ktdf::CreateTokenOp::create(builder, loc).getResult();
+      });
+
+  mlir::OpBuilder builder(insert_before ? insert_before.getOperation()
+                                        : *pipeline.getStages().begin());
+  mlir::Location loc =
+      insert_before ? insert_before.getLoc()
+                    : (dependent ? dependent.getLoc() : pipeline.getLoc());
+  auto staging_stage = mlir::ktdf::StageOp::create(
+      builder, loc, /*depends_in=*/mlir::ValueRange{},
+      /*depends_out=*/mlir::ValueRange{token});
+  staging_stage.setApplicableUnitsAttr(builder.getArrayAttr({unit}));
+
+  if (dependent) {
+    dependent.addInDependency(
+        mlir::cast<mlir::TypedValue<mlir::ktdf::TokenType>>(token));
+  }
+  return staging_stage;
 }
 
 /// Makes \p value available at \p builder 's insertion point. Values defined
@@ -271,21 +349,6 @@ mlir::LogicalResult collectGuards(
   return mlir::success();
 }
 
-/// The earliest stage before \p fill_stage whose unit can carry data from
-/// \p source to \p staging .
-mlir::ktdf::StageOp findStagingStage(mlir::ktdf::PipelineOp pipeline,
-                                     mlir::ktdf::StageOp fill_stage,
-                                     const RoutingGraph& graph,
-                                     ResourceType source,
-                                     ResourceType staging) {
-  for (mlir::ktdf::StageOp stage : pipeline.getStages()) {
-    if (stage == fill_stage) break;
-    ResourceType unit = getStageUnit(stage);
-    if (unit && unitConnects(graph, unit, source, staging)) return stage;
-  }
-  return nullptr;
-}
-
 /// Reroutes \p site 's fill through a memory its unit reads from, if it does
 /// not already read from the memory the fill sources.
 mlir::LogicalResult legalizeFillSite(const FillSite& site,
@@ -342,12 +405,11 @@ mlir::LogicalResult legalizeFillSite(const FillSite& site,
   }
   ResourceType staging_memory = reachable.front();
 
-  mlir::ktdf::StageOp staging_stage =
-      findStagingStage(pipeline, stage, graph, source_memory, staging_memory);
-  if (!staging_stage) {
-    return fill.emitError()
-           << PASS_NAME << ": no earlier stage can carry the index data from "
-           << source_memory << " to " << staging_memory;
+  // Discover the multi-hop path from source to staging memory.
+  auto hops = findTransferHops(graph, source_memory, staging_memory);
+  if (!hops || hops->empty()) {
+    return fill.emitError() << PASS_NAME << ": no routing path found from "
+                            << source_memory << " to " << staging_memory;
   }
 
   const auto buffer_shape = fill.getStaticSourceSizesArray();
@@ -367,70 +429,127 @@ mlir::LogicalResult legalizeFillSite(const FillSite& site,
   llvm::SmallVector<mlir::scf::IfOp> guards;
   if (mlir::failed(collectGuards(fill, stage, guards))) return mlir::failure();
 
-  LDBG(1) << "  staging fill of " << dest_memory << " through "
-          << staging_memory << " in stage on " << getStageUnit(staging_stage);
-
   mlir::MLIRContext* ctx = fill.getContext();
-  auto buffer_type =
-      mlir::MemRefType::get(*buffer_shape, source_type.getElementType(),
-                            mlir::MemRefLayoutAttrInterface(), staging_memory);
-  mlir::AffineMap buffer_subscript =
-      createZeroSubscript(buffer_type.getRank(), ctx);
-  mlir::Value buffer = appendPrivateBuffer(pipeline, buffer_type);
-
-  // The source -> staging copy, under the fill's own guards so that it only
-  // runs on the iterations the fill needs it.
-  mlir::OpBuilder builder(ctx);
-  builder.setInsertionPointToEnd(staging_stage.getBody());
-  mlir::IRMapping map;
-  for (mlir::scf::IfOp guard : guards) {
-    mlir::Value condition =
-        recreateOutside(guard.getCondition(), stage, builder, map);
-    if (!condition) {
-      return guard.emitError()
-             << PASS_NAME
-             << ": guard condition cannot be recreated in the staging stage";
-    }
-    auto staged_guard =
-        mlir::scf::IfOp::create(builder, guard.getLoc(), condition,
-                                /*withElseRegion=*/false);
-    builder.setInsertionPointToStart(staged_guard.thenBlock());
-  }
-
-  // The source view may itself be built inside the fill stage, e.g. under the
-  // same guard as the fill.
-  mlir::Value source = recreateOutside(fill.getSource(), stage, builder, map);
-  if (!source) {
-    return fill.emitError()
-           << PASS_NAME
-           << ": fill source cannot be recreated in the staging stage";
-  }
-
-  llvm::SmallVector<mlir::Value> source_indices;
-  for (mlir::Value index : fill.getSourceIndices()) {
-    mlir::Value recreated = recreateOutside(index, stage, builder, map);
-    if (!recreated) {
-      return fill.emitError()
-             << PASS_NAME
-             << ": fill source subscript cannot be recreated in the staging "
-                "stage";
-    }
-    source_indices.push_back(recreated);
-  }
-
-  // Both halves keep the fill's discardable attributes, e.g. its throttle.
+  mlir::AffineMap zero_subscript =
+      createZeroSubscript(buffer_shape->size(), ctx);
   mlir::DictionaryAttr fill_attrs = fill->getDiscardableAttrDictionary();
   llvm::SmallVector<mlir::OpFoldResult> sizes = fill.getMixedSourceSizes();
-  auto staging = mlir::ktdf::DataTransferOp::create(
-      builder, fill.getLoc(), source,
-      fill.getSourceMap().value_or(mlir::AffineMap()), source_indices, sizes,
-      buffer, buffer_subscript, /*dest_indices=*/mlir::ValueRange{}, sizes);
-  staging->setDiscardableAttrs(fill_attrs);
 
-  // The fill itself, now reading the staging buffer.
-  builder.setInsertionPoint(fill);
+  // 1. Resolve or synthesize stages for all hops.
+  // Rebuilding the private op invalidates the values it handed out earlier, so
+  // any stage tokens must be added before staging buffers are allocated.
+  llvm::SmallVector<mlir::ktdf::StageOp> hop_stages;
+  mlir::ktdf::StageOp prev_stage = nullptr;
+  for (size_t hop_idx = 0; hop_idx < hops->size(); ++hop_idx) {
+    const TransferHop& hop = (*hops)[hop_idx];
+    mlir::ktdf::StageOp hop_stage = findStageOnUnit(pipeline, stage, hop.unit);
+    if (!hop_stage) {
+      // The dependent stage is the next hop's stage, or the fill stage for the
+      // final hop.
+      mlir::ktdf::StageOp dependent =
+          (hop_idx + 1 == hops->size()) ? stage : nullptr;
+      mlir::ktdf::StageOp insert_before =
+          hop_stages.empty() ? *pipeline.getStages().begin() : stage;
+      hop_stage =
+          createStagingStage(pipeline, insert_before, dependent, hop.unit);
+    }
+    if (prev_stage && !hop_stage.getDependsOut().empty()) {
+      // Chain previous newly created hop stage to this hop stage.
+      if (!prev_stage.getDependsOut().empty()) {
+        auto prev_token = mlir::cast<mlir::TypedValue<mlir::ktdf::TokenType>>(
+            prev_stage.getDependsOut().front());
+        hop_stage.addInDependency(prev_token);
+      }
+    }
+    prev_stage = hop_stage;
+    hop_stages.push_back(hop_stage);
+  }
+
+  // 2. Allocate intermediate private buffers for each hop.
+  llvm::SmallVector<size_t> buffer_result_indices;
+  for (const TransferHop& hop : *hops) {
+    auto buffer_type = mlir::MemRefType::get(
+        *buffer_shape, source_type.getElementType(),
+        mlir::MemRefLayoutAttrInterface(), hop.dst_memory);
+    appendPrivateBuffer(pipeline, buffer_type);
+    buffer_result_indices.push_back(pipeline.getPrivateOp().getNumResults() -
+                                    1);
+  }
+
+  // 3. Emit intermediate transfers for each hop.
+  mlir::Value current_source = fill.getSource();
+  mlir::AffineMap current_source_map =
+      fill.getSourceMap().value_or(mlir::AffineMap());
+  llvm::SmallVector<mlir::Value> current_source_indices(
+      fill.getSourceIndices());
+
+  for (size_t hop_idx = 0; hop_idx < hops->size(); ++hop_idx) {
+    const TransferHop& hop = (*hops)[hop_idx];
+    mlir::ktdf::StageOp hop_stage = hop_stages[hop_idx];
+    mlir::Value dst_buffer =
+        pipeline.getPrivateOp().getResult(buffer_result_indices[hop_idx]);
+
+    LDBG(1) << "  staging fill hop " << hop_idx << " (" << hop.src_memory
+            << " -> " << hop.dst_memory << ") on " << hop.unit;
+
+    mlir::OpBuilder builder(ctx);
+    builder.setInsertionPointToEnd(hop_stage.getBody());
+    mlir::IRMapping map;
+    for (mlir::scf::IfOp guard : guards) {
+      mlir::Value condition =
+          recreateOutside(guard.getCondition(), stage, builder, map);
+      if (!condition) {
+        return guard.emitError()
+               << PASS_NAME
+               << ": guard condition cannot be recreated in the staging stage";
+      }
+      auto staged_guard =
+          mlir::scf::IfOp::create(builder, guard.getLoc(), condition,
+                                  /*withElseRegion=*/false);
+      builder.setInsertionPointToStart(staged_guard.thenBlock());
+    }
+
+    mlir::Value staged_source = current_source;
+    if (hop_idx == 0) {
+      staged_source = recreateOutside(fill.getSource(), stage, builder, map);
+      if (!staged_source) {
+        return fill.emitError()
+               << PASS_NAME
+               << ": fill source cannot be recreated in the staging stage";
+      }
+    }
+
+    llvm::SmallVector<mlir::Value> staged_indices;
+    if (hop_idx == 0) {
+      for (mlir::Value index : current_source_indices) {
+        mlir::Value recreated = recreateOutside(index, stage, builder, map);
+        if (!recreated) {
+          return fill.emitError()
+                 << PASS_NAME
+                 << ": fill source subscript cannot be recreated in the "
+                    "staging stage";
+        }
+        staged_indices.push_back(recreated);
+      }
+    }
+
+    auto staging = mlir::ktdf::DataTransferOp::create(
+        builder, fill.getLoc(), staged_source, current_source_map,
+        staged_indices, sizes, dst_buffer, zero_subscript,
+        /*dest_indices=*/mlir::ValueRange{}, sizes);
+    staging->setDiscardableAttrs(fill_attrs);
+
+    current_source = dst_buffer;
+    current_source_map = zero_subscript;
+    current_source_indices.clear();
+  }
+
+  // 4. The fill itself, now reading the final staging buffer.
+  mlir::Value final_buffer =
+      pipeline.getPrivateOp().getResult(buffer_result_indices.back());
+  mlir::OpBuilder builder(fill);
   auto staged_fill = mlir::ktdf::DataTransferOp::create(
-      builder, fill.getLoc(), buffer, buffer_subscript,
+      builder, fill.getLoc(), final_buffer, zero_subscript,
       /*source_indices=*/mlir::ValueRange{}, sizes, fill.getDestination(),
       fill.getDestMap().value_or(mlir::AffineMap()), fill.getDestIndices(),
       fill.getMixedDestSizes(), fill.getTransferMode());
