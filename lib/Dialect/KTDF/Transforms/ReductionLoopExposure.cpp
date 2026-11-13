@@ -23,7 +23,10 @@
 // Algorithm:
 //   1. Walk the module for any ktdf.stage containing a linalg.generic with
 //      a reduction iterator — this is the compute stage.
-//   2. Collect reduction_dims[] and their per-dimension sizes dim_sizes[].
+//   2. Collect reduction_dims[], their per-dimension sizes dim_sizes[] (loop
+//      ranges), and input_dims[], the dim of the first input each one indexes.
+//      The input is sliced along input_dims[], which differ from
+//      reduction_dims[] unless its indexing map is the identity.
 //      The total shrink factor R = product(dim_sizes[]).
 //   3. Get the parent ktdf.pipeline of the compute stage.
 //   4. Find the load stage via StageFactory::findLoadStage (upstream of
@@ -100,21 +103,29 @@ namespace {
 // ---------------------------------------------------------------------------
 struct ReductionInfo {
   SmallVector<int64_t> reduction_dims;  // indices into iterator-type list
-  SmallVector<int64_t> dim_sizes;       // size of each reduction dimension
-  int64_t reduction_size = 1;           // product of dim_sizes
+  SmallVector<int64_t> input_dims;  // dim of the first input each one indexes
+  SmallVector<int64_t> dim_sizes;   // size of each reduction dimension
+  int64_t reduction_size = 1;       // product of dim_sizes
 };
 
 // ---------------------------------------------------------------------------
 // Fill `info` with the reduction dimensions and sizes derived from
 // `generic_op`, excluding the inner reduction dimension so
 // that it is left for later handling by the ktdf.opaque wrapping pass.
-// Returns true on success.  Returns false (and emits a diagnostic or debug
-// message) when:
+//
+// Sizes are loop ranges, and each reduction dim is recorded with the dim of
+// the first input it indexes: loop dims and input dims only coincide under an
+// identity indexing map.
+//
+// Returns true on success.  Returns false (and emits a debug message) when:
 //   - there are no outer-dim reduction dimensions to expose, or
 //   - any qualifying reduction dimension has a dynamic size.
+// Fails (and emits an error) when the reduction has more than one input, or
+// when the first input cannot be sliced along the reduction dims: its map is
+// not a projected permutation, or a reduction dim to expose does not index it.
 // ---------------------------------------------------------------------------
-static bool collectReductionInfo(linalg::GenericOp generic_op,
-                                 ReductionInfo& info) {
+static FailureOr<bool> collectReductionInfo(linalg::GenericOp generic_op,
+                                            ReductionInfo& info) {
   // FIXME: Current implementation leads to invalid IR when processing
   //        contractions, so skip them for now to allow matmul to pass.
   if (linalg::isaContractionOpInterface(generic_op)) {
@@ -124,16 +135,11 @@ static bool collectReductionInfo(linalg::GenericOp generic_op,
 
   std::optional<unsigned> inner_dim = ktdf::findInnerDimLoopDim(generic_op);
 
-  auto input_type =
-      cast<RankedTensorType>(generic_op.getInputs().front().getType());
-  int64_t input_rank = input_type.getRank();
-
   // Collect reduction dims to expose as loops, excluding only the inner
-  // dim (loop dim at input axis input_rank-1).  Output-only reduction dims
-  // (i >= input_rank) are included.  Size-1 dims are skipped.
-  auto output_type =
-      cast<RankedTensorType>(generic_op.getOutputs().front().getType());
-  AffineMap output_map = generic_op.getIndexingMapsArray().back();
+  // dim (loop dim at input axis input_rank-1).  Size-1 dims are skipped.
+  AffineMap input_map =
+      generic_op.getMatchingIndexingMap(generic_op.getDpsInputOperand(0));
+  const auto loop_ranges = generic_op.getStaticLoopRanges();
 
   auto iter_types = generic_op.getIteratorTypesArray();
   for (int64_t i = 0; i < static_cast<int64_t>(iter_types.size()); ++i) {
@@ -143,28 +149,28 @@ static bool collectReductionInfo(linalg::GenericOp generic_op,
       continue;
     }
 
-    // Determine the size of this loop dim from the input tensor (if it
-    // appears there) or from the output tensor (output-only dim).
-    int64_t dim_sz = ShapedType::kDynamic;
-    if (i < input_rank) {
-      dim_sz = input_type.getDimSize(i);
-    } else {
-      for (unsigned r = 0; r < output_map.getNumResults(); ++r) {
-        auto expr = dyn_cast<AffineDimExpr>(output_map.getResult(r));
-        if (expr && expr.getPosition() == static_cast<unsigned>(i)) {
-          dim_sz = output_type.getDimSize(r);
-          break;
-        }
-      }
-    }
-
+    const int64_t dim_sz = loop_ranges[i];
     if (dim_sz == ShapedType::kDynamic) {
       LDBG(1) << PASS_NAME ": dynamic reduction size not supported — skipping";
       return false;
     }
     if (dim_sz == 1) continue;
 
+    // The loop below slices the first input, along the dim this one indexes.
+    if (!input_map.isProjectedPermutation())
+      return generic_op.emitError(PASS_NAME)
+             << ": the first input is not indexed by a projected permutation, "
+                "so it cannot be sliced along reduction dim "
+             << i;
+    auto input_dim = input_map.getResultPosition(
+        getAffineDimExpr(static_cast<unsigned>(i), generic_op.getContext()));
+    if (!input_dim)
+      return generic_op.emitError(PASS_NAME)
+             << ": reduction dim " << i
+             << " does not index the first input, so it cannot be exposed";
+
     info.reduction_dims.push_back(i);
+    info.input_dims.push_back(*input_dim);
     info.dim_sizes.push_back(dim_sz);
     info.reduction_size *= dim_sz;
   }
@@ -173,6 +179,15 @@ static bool collectReductionInfo(linalg::GenericOp generic_op,
     LDBG(1) << PASS_NAME ": no outer-dim reduction dims to expose — skipping";
     return false;
   }
+
+  // The rewrite can slice a single input. With more inputs the others would
+  // stay whole while the reduction reads them slice by slice, so the pass
+  // rejects the reduction instead of transforming it.
+  if (generic_op.getNumDpsInputs() != 1)
+    return generic_op.emitError(PASS_NAME)
+           << ": a reduction with " << generic_op.getNumDpsInputs()
+           << " inputs is not supported; the pass can slice only a single "
+              "input";
 
   LDBG(1) << PASS_NAME ": reduction_dims=[";
   for (size_t i = 0; i < info.reduction_dims.size(); ++i) {
@@ -191,23 +206,29 @@ static bool collectReductionInfo(linalg::GenericOp generic_op,
 // Generics whose first input is produced by another linalg.generic are
 // chained inner-dim ops (e.g. G2 after SplitReductionInnerOuterDim) and are
 // skipped (their reduction loops should not be exposed).
+//
+// Fails if collectReductionInfo fails for any of them.
 // ---------------------------------------------------------------------------
-static void collectReductionGenericOps(
+static LogicalResult collectReductionGenericOps(
     ktdf::StageOp stage, SmallVectorImpl<linalg::GenericOp>& result) {
   // PreOrder so we see a nested ktdf.stage before its children, allowing
   // WalkResult::skip() to prevent descent into a different pipeline.
-  stage.getBody()->walk<WalkOrder::PreOrder>([&](Operation* op) {
-    if (isa<ktdf::StageOp>(op)) return WalkResult::skip();
-    if (auto generic = dyn_cast<linalg::GenericOp>(op)) {
-      // Skip chained generics whose input comes from another generic — those
-      // are inner-dim ops left for a later pass.
-      if (generic.getInputs().front().getDefiningOp<linalg::GenericOp>())
+  WalkResult walk =
+      stage.getBody()->walk<WalkOrder::PreOrder>([&](Operation* op) {
+        if (isa<ktdf::StageOp>(op)) return WalkResult::skip();
+        if (auto generic = dyn_cast<linalg::GenericOp>(op)) {
+          // Skip chained generics whose input comes from another generic —
+          // those are inner-dim ops left for a later pass.
+          if (generic.getInputs().front().getDefiningOp<linalg::GenericOp>())
+            return WalkResult::advance();
+          ReductionInfo info;
+          FailureOr<bool> exposable = collectReductionInfo(generic, info);
+          if (failed(exposable)) return WalkResult::interrupt();
+          if (*exposable) result.push_back(generic);
+        }
         return WalkResult::advance();
-      ReductionInfo info;
-      if (collectReductionInfo(generic, info)) result.push_back(generic);
-    }
-    return WalkResult::advance();
-  });
+      });
+  return failure(walk.wasInterrupted());
 }
 
 // ---------------------------------------------------------------------------
@@ -445,12 +466,15 @@ struct ReductionLoopExposurePass
     // before outer ones.  Rewriting happens after the walk completes to avoid
     // iterator invalidation from mutations made during traversal.
     SmallVector<std::pair<ktdf::StageOp, linalg::GenericOp>> work_items;
-    module.walk<WalkOrder::PostOrder>([&](ktdf::StageOp stage) {
-      SmallVector<linalg::GenericOp> generics;
-      collectReductionGenericOps(stage, generics);
-      for (auto generic : generics) work_items.emplace_back(stage, generic);
-      return WalkResult::advance();
-    });
+    WalkResult walk =
+        module.walk<WalkOrder::PostOrder>([&](ktdf::StageOp stage) {
+          SmallVector<linalg::GenericOp> generics;
+          if (failed(collectReductionGenericOps(stage, generics)))
+            return WalkResult::interrupt();
+          for (auto generic : generics) work_items.emplace_back(stage, generic);
+          return WalkResult::advance();
+        });
+    if (walk.wasInterrupted()) return failure();
 
     // Process inner pipelines first (guaranteed by post-order collection).
     // Each generic is valid at the time its rewrite runs because inner rewrites
@@ -471,8 +495,11 @@ struct ReductionLoopExposurePass
     // Each reduction dimension gets its own scf.for loop.  The total shrink
     // factor R = product(dim_sizes[]) is used only for FIFO resizing.
     ReductionInfo reduction_info;
-    if (!collectReductionInfo(generic_op, reduction_info)) return success();
-    SmallVector<int64_t>& reduction_dims = reduction_info.reduction_dims;
+    FailureOr<bool> exposable =
+        collectReductionInfo(generic_op, reduction_info);
+    if (failed(exposable)) return failure();
+    if (!*exposable) return success();
+    SmallVector<int64_t>& input_dims = reduction_info.input_dims;
     SmallVector<int64_t>& dim_sizes = reduction_info.dim_sizes;
     int64_t reduction_size = reduction_info.reduction_size;
 
@@ -632,7 +659,7 @@ struct ReductionLoopExposurePass
         cast<RankedTensorType>(generic_op.getOutputs().front().getType());
 
     // Per-iteration input slice tensor: same shape as the generic input but
-    // size-1 in every reduction dimension.
+    // size-1 in every input dimension a reduction dimension indexes.
     // Example: input [1, 256, 64] with reduction dims [1] → slice [1, 1, 64].
     // For non-contiguous reduction dims (e.g. [0, 2] of [d0, d1, d2]) both
     // axes independently become 1, e.g. [1, d1, 1].
@@ -640,8 +667,8 @@ struct ReductionLoopExposurePass
         cast<RankedTensorType>(generic_op.getInputs().front().getType());
     SmallVector<int64_t> slice_shape(slice_tensor_type.getShape().begin(),
                                      slice_tensor_type.getShape().end());
-    for (int64_t reduction_dim : reduction_dims)
-      slice_shape[static_cast<size_t>(reduction_dim)] = 1;
+    for (int64_t input_dim : input_dims)
+      slice_shape[static_cast<size_t>(input_dim)] = 1;
     auto one_row_tensor_type =
         RankedTensorType::get(slice_shape, slice_tensor_type.getElementType());
 
@@ -686,8 +713,10 @@ struct ReductionLoopExposurePass
         rewriteConditionalStoreStage(rewriter, loc, ctx, stage, dim_sizes,
                                      start, step, last_vals);
       } else if (stage == load_stage) {
-        rewriteLoadStage(rewriter, loc, ctx, stage, dim_sizes, start, step,
-                         reduction_dims, slice_tensor_type.getRank(), fifo_in);
+        if (failed(rewriteLoadStage(rewriter, loc, ctx, stage, dim_sizes, start,
+                                    step, input_dims,
+                                    slice_tensor_type.getRank(), fifo_in)))
+          return failure();
       } else {
         rewritePlainStage(rewriter, loc, ctx, stage, dim_sizes, start, step);
       }
@@ -731,34 +760,47 @@ struct ReductionLoopExposurePass
 
   // -------------------------------------------------------------------------
   // Patch a single main-input data_transfer that is already inside the
-  // innermost reduction loop: shrink its source sizes at every reduction
-  // dimension to 1 and add the corresponding loop IV to its source map.
+  // innermost reduction loop: shrink its source sizes at every input
+  // dimension a reduction dimension indexes to 1 and add the corresponding
+  // loop IV to its source map.  `input_dims` holds those input dimensions,
+  // one per loop in `nested`.
   //
-  // Two cases for the map result at reduction dimension d:
+  // Two cases for the map result at input dimension d:
   //   a) Zero constant (pre-chunking) — replace with the loop IV.
   //   b) Non-zero expression (post-chunking chunk-base) — add the loop IV.
+  //
+  // Fails if an input dimension has no counterpart in the source memref.
   // -------------------------------------------------------------------------
-  void patchInputTransfer(ktdf::DataTransferOp dt,
-                          const NestedForResult& nested,
-                          ArrayRef<int64_t> reduction_dims, int64_t tensor_rank,
-                          MLIRContext* ctx) {
+  LogicalResult patchInputTransfer(ktdf::DataTransferOp dt,
+                                   const NestedForResult& nested,
+                                   ArrayRef<int64_t> input_dims,
+                                   int64_t tensor_rank, MLIRContext* ctx) {
     auto sizes_attr = dt.getStaticSourceSizes();
-    if (!sizes_attr) return;
+    if (!sizes_attr) return success();
     int64_t memref_rank = static_cast<int64_t>(sizes_attr->size());
     // Stage coarsening may have introduced extra leading dimensions into the
-    // source memref (to express additional granularity), so the reduction
+    // source memref (to express additional granularity), so the input
     // dimensions sit at an offset from the right relative to the linalg
     // tensor rank.
     int64_t rank_offset = memref_rank - tensor_rank;
 
+    // The memref dimension of each input dimension.  One that falls outside
+    // the memref would leave its loop reading the whole range every
+    // iteration, so it is an error rather than a dimension to skip.
+    SmallVector<unsigned> memref_dims;
+    for (int64_t input_dim : input_dims) {
+      int64_t dim = input_dim + rank_offset;
+      if (dim < 0 || dim >= memref_rank)
+        return dt.emitError(PASS_NAME)
+               << ": input dim " << input_dim
+               << " has no counterpart in the rank-" << memref_rank
+               << " source of the transfer";
+      memref_dims.push_back(static_cast<unsigned>(dim));
+    }
+
     // --- 1. Set size to 1 at each memref reduction dimension ---
     SmallVector<int64_t> new_sizes(sizes_attr->begin(), sizes_attr->end());
-    for (size_t i = 0; i < reduction_dims.size(); ++i) {
-      unsigned dim = static_cast<unsigned>(reduction_dims[i] + rank_offset);
-      if (dim < new_sizes.size()) {
-        new_sizes[dim] = 1;
-      }
-    }
+    for (unsigned dim : memref_dims) new_sizes[dim] = 1;
     dt.setStaticSourceSizesAttr(DenseI64ArrayAttr::get(ctx, new_sizes));
 
     // --- 2. Rewrite source_map + source_indices ---
@@ -782,7 +824,7 @@ struct ReductionLoopExposurePass
     // (d_j * chunk_size), not a bare AffineDimExpr, so we cannot use
     // dyn_cast<AffineDimExpr> as the discriminant — use isZero() instead.
     std::optional<AffineMap> maybe_map = dt.getSourceMap();
-    if (!maybe_map) return;
+    if (!maybe_map) return success();
     AffineMap map = *maybe_map;
 
     unsigned base_iv_dim = map.getNumDims();
@@ -791,12 +833,7 @@ struct ReductionLoopExposurePass
     SmallVector<Value> new_indices(dt.getSourceIndices().begin(),
                                    dt.getSourceIndices().end());
     unsigned extra_dims = 0;
-    for (size_t i = 0; i < reduction_dims.size(); ++i) {
-      unsigned dim = static_cast<unsigned>(reduction_dims[i] + rank_offset);
-      if (dim >= new_results.size()) {
-        continue;
-      }
-
+    for (auto [i, dim] : llvm::enumerate(memref_dims)) {
       AffineExpr existing = new_results[dim];
       unsigned new_dim = base_iv_dim + extra_dims++;
       AffineExpr new_iv_expr = getAffineDimExpr(new_dim, ctx);
@@ -815,6 +852,7 @@ struct ReductionLoopExposurePass
                                        map.getNumSymbols(), new_results, ctx);
     dt.setSourceMapAttr(AffineMapAttr::get(new_map));
     dt.getSourceIndicesMutable().assign(new_indices);
+    return success();
   }
 
   // -------------------------------------------------------------------------
@@ -825,7 +863,7 @@ struct ReductionLoopExposurePass
   //   - The main input transfer (dest == fifo_in) is moved inside the new
   //     reduction scf.for loop, with its source size and address patched.
   //
-  // Example (reduction_dim=1 in a 1x256x64 tensor, source memref 2x1x256x64):
+  // Example (input_dim=1 in a 1x256x64 tensor, source memref 2x1x256x64):
   //   before: data_transfer from %src[%b, 0, 0, 0] size [1, 1, 256, 64]
   //                          to fifo_in size [16384]
   //           scf.if %is_first {} else {
@@ -839,11 +877,11 @@ struct ReductionLoopExposurePass
   //                            to fifo_in size [64]
   //           }
   // -------------------------------------------------------------------------
-  void rewriteLoadStage(IRRewriter& rewriter, Location loc, MLIRContext* ctx,
-                        ktdf::StageOp stage, ArrayRef<int64_t> dim_sizes,
-                        Value start, Value step,
-                        ArrayRef<int64_t> reduction_dims, int64_t tensor_rank,
-                        Value fifo_in) {
+  LogicalResult rewriteLoadStage(IRRewriter& rewriter, Location loc,
+                                 MLIRContext* ctx, ktdf::StageOp stage,
+                                 ArrayRef<int64_t> dim_sizes, Value start,
+                                 Value step, ArrayRef<int64_t> input_dims,
+                                 int64_t tensor_rank, Value fifo_in) {
     Block* body = stage.getBody();
 
     // Find the main input transfer (dest == fifo_in).
@@ -856,19 +894,10 @@ struct ReductionLoopExposurePass
       return WalkResult::advance();
     });
 
-    // If we cannot identify the main transfer, fall back to wrapping everything
-    // (original behaviour) — keeps the pass safe for pipelines without a
-    // partial accumulator path.
-    if (!main_transfer) {
-      auto nested =
-          rewritePlainStage(rewriter, loc, ctx, stage, dim_sizes, start, step);
-      nested.innermost_loop.getBody()->walk([&](ktdf::DataTransferOp dt) {
-        if (dt.isDestFifo()) {
-          patchInputTransfer(dt, nested, reduction_dims, tensor_rank, ctx);
-        }
-      });
-      return;
-    }
+    // fifo_in is the destination of a transfer in this stage (that is how
+    // findFifoInTransfer chose it), so only that transfer is ever patched.
+    assert(main_transfer &&
+           "no data_transfer in the load stage writes fifo_in");
 
     // Build the reduction loop shell at the end of the stage body (after all
     // existing ops), so the scf.if for the partial stays before the loop.
@@ -883,7 +912,8 @@ struct ReductionLoopExposurePass
 
     // Patch sizes and address map of the main transfer now that it is inside
     // the reduction loop.
-    patchInputTransfer(main_transfer, nested, reduction_dims, tensor_rank, ctx);
+    return patchInputTransfer(main_transfer, nested, input_dims, tensor_rank,
+                              ctx);
   }
 
   // -------------------------------------------------------------------------

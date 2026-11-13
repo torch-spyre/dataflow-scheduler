@@ -23,8 +23,8 @@
 // chunking uses a GCD-based outer-to-inner strategy: starting from the
 // outermost reduction dimension, each step absorbs gcd(dim_size, remaining)
 // into that dimension and passes remaining/gcd inward.  Dimensions with a
-// symbolic (dynamic) size are skipped.  The innermost overall loop dimension
-// is never chunked — if it is a reduction dim it is excluded before
+// symbolic (dynamic) size are skipped.  The innermost dimension of the first
+// input is never chunked — the reduction dim indexing it is excluded before
 // distribution begins.
 //
 // When --num-chunks is given explicitly, multi-dim chunking is applied using
@@ -46,7 +46,12 @@
 // scf.for loops — one per reduction dimension that has more than one chunk.
 // Dimensions whose num_chunks==1 produce no loop (the single chunk covers
 // the entire dimension).  Each innermost iteration contains one ktdf.pipeline
-// with three stages built by ktdf::StageFactory (see ReductionUtils.h).
+// with three stages built by ktdf::StageFactory (see ReductionUtils.h).  It is
+// marked modulo(size: 1): each chunk reads the partial result the previous one
+// stored, so chunk iterations must not overlap.
+// The reduction body must be a single associative and commutative op over the
+// input element and the accumulator, since chunks are merged by reapplying it;
+// any other body is rejected.
 // First-vs-rest accumulation behaviour is selected at runtime via
 // %condition = AND(iv_j == 0 for all active chunk loop IVs):
 //
@@ -120,6 +125,44 @@ static linalg::GenericOp findReductionGenericOp(ktdf::StageOp stage) {
     return WalkResult::advance();
   });
   return found;
+}
+
+// ---------------------------------------------------------------------------
+// Helper: whether the body of `generic_op`, a reduction with one input and one
+// output, is exactly one associative and commutative op over its two block
+// arguments, followed by the yield of its result.
+//
+// Chunking reduces each chunk on its own and then merges a chunk's result into
+// the partial result of the chunks before it by reapplying the body, with the
+// partial result as the input element.  That merge is only the reduction when
+// the body is a plain combiner of the two: reassociating it across chunks then
+// gives the same result.  A body that does more, such as acc + x * x, would
+// apply the extra work to the partial result as well.
+// ---------------------------------------------------------------------------
+static bool isAssociativeCommutativeCombiner(linalg::GenericOp generic_op) {
+  Block* body = generic_op.getBody();
+  if (body->getNumArguments() != 2 || !llvm::hasNItems(*body, 2)) return false;
+
+  Operation& combiner = body->front();
+  if (!isa<arith::AddFOp, arith::AddIOp, arith::MulFOp, arith::MulIOp,
+           arith::MaximumFOp, arith::MinimumFOp, arith::MaxNumFOp,
+           arith::MinNumFOp, arith::MaxSIOp, arith::MinSIOp, arith::MaxUIOp,
+           arith::MinUIOp, arith::AndIOp, arith::OrIOp, arith::XOrIOp>(
+          combiner))
+    return false;
+
+  // The combiner's operands are the input element and the accumulator, in
+  // either order.
+  Value in = body->getArgument(0);
+  Value acc = body->getArgument(1);
+  if (combiner.getNumOperands() != 2) return false;
+  Value lhs = combiner.getOperand(0);
+  Value rhs = combiner.getOperand(1);
+  if (!((lhs == in && rhs == acc) || (lhs == acc && rhs == in))) return false;
+
+  auto yield = dyn_cast<linalg::YieldOp>(body->getTerminator());
+  return yield && yield->getNumOperands() == 1 &&
+         yield->getOperand(0) == combiner.getResult(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -218,30 +261,37 @@ struct ReductionDimChunkingPass
     // Determine reduction dims and per-dim chunk sizes.
     //
     // Threshold path (numChunks empty): GCD-based outer-to-inner chunking
-    // across all reduction dims; dynamic dims are skipped; the innermost
-    // overall loop dim is excluded if it is a reduction dim.
+    // across all reduction dims; dynamic dims are skipped; the reduction dim
+    // indexing the innermost dim of the first input is excluded.
     //
     // Explicit path (numChunks non-empty): one value per reduction dim;
     // nested scf.for loops; dims with count 1 produce no loop.
     // ------------------------------------------------------------------
     ReductionChunkResult reduction_chunk;
 
-    // FIXME: This implementation assumes that there is an injective mapping
-    //        from loop to shape space, i.e., for each iteration, there will be
-    //        a distinct element read from the first input tensor.
+    // Chunk sizes are chosen in loop space; rewriteComputeStage maps each
+    // chunked loop dim to the first-input dim it indexes.
     generic_op.getReductionDims(reduction_chunk.reduction_dims);
+
+    // Mapping a loop dim to the input dim it indexes needs a projected
+    // permutation.
+    AffineMap input_map =
+        generic_op.getMatchingIndexingMap(generic_op.getDpsInputOperand(0));
+    if (!input_map.isProjectedPermutation())
+      return inner_pipeline.emitError(PASS_NAME)
+             << ": the first input of the reduction is not indexed by a "
+                "projected permutation, so its chunk cannot be sliced";
 
     if (numChunks.empty()) {
       // Auto-infer via analysis — GCD-based outer-to-inner chunking.
 
-      // Collect all reduction dims, excluding the innermost overall loop dim
-      // if it is a reduction (the innermost loop dim must never be chunked,
-      // regardless of iterator type).
-      if (!reduction_chunk.reduction_dims.empty() &&
-          reduction_chunk.reduction_dims.back() ==
-              generic_op.getNumLoops() - 1) {
-        reduction_chunk.reduction_dims.pop_back();
-      }
+      // Collect all reduction dims, excluding the one that indexes the
+      // innermost dim of the first input (the innermost input dim must never
+      // be chunked). Under a non-identity map that is not necessarily the
+      // innermost loop dim.
+      if (std::optional<unsigned> innermost =
+              getInnermostInputLoopDim(generic_op))
+        llvm::erase(reduction_chunk.reduction_dims, *innermost);
       if (reduction_chunk.reduction_dims.empty()) {
         LDBG(1) << PASS_NAME
             ": could not find a chunkable reduction dimension — skipping";
@@ -256,8 +306,13 @@ struct ReductionDimChunkingPass
         return failure();
       }
 
-      auto chunk_dims =
-          computeChunkDims(result->red_dim_sizes, result->num_chunks);
+      // The analysis sizes every reduction dim; distribute the chunk count
+      // over the chunkable ones only, so the excluded dim takes none of it.
+      const auto loop_ranges = generic_op.getStaticLoopRanges();
+      for (unsigned dim : reduction_chunk.reduction_dims)
+        reduction_chunk.red_dim_sizes.push_back(loop_ranges[dim]);
+      auto chunk_dims = computeChunkDims(
+          generic_op, reduction_chunk.reduction_dims, result->num_chunks);
       if (!chunk_dims) {
         inner_pipeline.emitError(
             PASS_NAME
@@ -267,7 +322,6 @@ struct ReductionDimChunkingPass
       }
 
       reduction_chunk.num_chunks = result->num_chunks;
-      reduction_chunk.red_dim_sizes = std::move(result->red_dim_sizes);
       reduction_chunk.chunk_sizes = std::move(*chunk_dims);
     } else {
       // User-supplied --num-chunks path: collect reduction dims and validate.
@@ -340,6 +394,23 @@ struct ReductionDimChunkingPass
       LDBG(1) << PASS_NAME ": every reduction dim has one chunk, nothing to do";
       return success();
     }
+
+    // The rewrite can chunk a single input. With more inputs the others would
+    // stay whole while the reduction reads them chunk by chunk, so the pass
+    // rejects the reduction instead of transforming it.
+    if (generic_op.getNumDpsInputs() != 1)
+      return generic_op.emitError(PASS_NAME)
+             << ": a reduction with " << generic_op.getNumDpsInputs()
+             << " inputs is not supported; the pass can chunk only a "
+                "single input";
+
+    // Chunks are merged by reapplying the body, which is only the reduction
+    // for a plain associative and commutative combiner.
+    if (!isAssociativeCommutativeCombiner(generic_op))
+      return generic_op.emitError(PASS_NAME)
+             << ": the reduction body is not a single associative and "
+                "commutative op over the input element and the accumulator, "
+                "so its chunks cannot be merged";
 
     return rewriteComputeStage(inner_pipeline, load_stage, compute_stage,
                                store_stage, generic_op,
@@ -434,14 +505,34 @@ struct ReductionDimChunkingPass
       return failure();
     }
 
-    // Per-chunk input tensor type: reduction dims replaced with chunk_sizes.
+    // The chunk is cut from the first input, along the input dim each chunked
+    // loop dim indexes. Loop dims and input dims only coincide under an
+    // identity map, so find them through the indexing map of the input.
+    AffineMap input_map =
+        generic_op.getMatchingIndexingMap(generic_op.getDpsInputOperand(0));
+    assert(input_map.isProjectedPermutation() &&
+           "caller checks the input map is a projected permutation");
+    SmallVector<unsigned> input_dims;
+    for (unsigned dim : reduction_dims) {
+      auto input_dim =
+          input_map.getResultPosition(rewriter.getAffineDimExpr(dim));
+      if (!input_dim)
+        return inner_pipeline.emitError(PASS_NAME)
+               << ": reduction loop dim " << dim
+               << " does not index the first input, so it cannot be chunked";
+      input_dims.push_back(*input_dim);
+    }
+
+    // Per-chunk input tensor type: chunked input dims replaced with
+    // chunk_sizes.
     auto orig_input_tensor_type =
         cast<RankedTensorType>(generic_op.getInputs().front().getType());
     SmallVector<int64_t> chunk_input_shape(
         orig_input_tensor_type.getShape().begin(),
         orig_input_tensor_type.getShape().end());
-    for (size_t j = 0; j < reduction_dims.size(); ++j)
-      chunk_input_shape[reduction_dims[j]] = chunk_sizes[j];
+    for (auto [input_dim, chunk_size] :
+         llvm::zip_equal(input_dims, chunk_sizes))
+      chunk_input_shape[input_dim] = chunk_size;
     auto chunk_input_tensor_type = RankedTensorType::get(
         chunk_input_shape, orig_input_tensor_type.getElementType());
 
@@ -537,8 +628,14 @@ struct ReductionDimChunkingPass
                                                /*width=*/1);
     }
 
-    // One ktdf.pipeline per innermost chunk iteration.
+    // One ktdf.pipeline per innermost chunk iteration. Each chunk reads back
+    // the partial result the previous chunk stored, a loop-carried dependency,
+    // so the pipeline must not overlap chunk iterations: modulo(size: 1) gives
+    // it a single resource set, which also keeps double-buffering off it. Any
+    // modulo on the original pipeline described its batch iterations and does
+    // not carry over.
     auto phase_pipeline = ktdf::PipelineOp::create(inner_builder, loc);
+    phase_pipeline.setModuloAttr(inner_builder.getI64IntegerAttr(1));
     OpBuilder pipe_bldr(phase_pipeline.getBody(),
                         phase_pipeline.getBody()->end());
 
@@ -567,7 +664,7 @@ struct ReductionDimChunkingPass
     factory.setSlots(factory.buildFifoPrivate(cfg));
 
     factory.buildLoadStage(condition, input_memref, input_memref_type,
-                           partial_memref, output_memref_type, reduction_dims,
+                           partial_memref, output_memref_type, input_dims,
                            chunk_sizes, dim_ivs, cfg);
 
     factory.buildComputeStage(condition, chunk_input_tensor_type,

@@ -63,7 +63,7 @@
 // CHECK-NEXT:                 %[[EQ0:.*]] = arith.cmpi eq, %[[IV0]], %[[CL0]] : index
 // CHECK-NEXT:                 %[[EQ1:.*]] = arith.cmpi eq, %[[IV1]], %[[CL0]] : index
 // CHECK-NEXT:                 %[[ISFIRST:.*]] = arith.andi %[[EQ0]], %[[EQ1]] : i1
-// CHECK-NEXT:                 ktdf.pipeline {
+// CHECK-NEXT:                 ktdf.pipeline modulo(size : 1) {
 // CHECK-NEXT:                   %[[Q:.*]]:5 = ktdf.private -> (!ktdf.fifo.slot<"L1LU" -> "SFU", 401408xf16>, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>, !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, !ktdf.token, !ktdf.token) {
 // CHECK-NEXT:                     %[[F0:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"L1LU" -> "SFU", 401408xf16>
 // CHECK-NEXT:                     %[[F1:.*]] = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>

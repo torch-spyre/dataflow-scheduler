@@ -80,10 +80,15 @@ struct ReductionChunkResult {
 std::optional<ReductionChunkResult> analyzeReductionChunks(
     linalg::GenericOp generic_op, int64_t chunk_size_threshold = 1 << 20);
 
-/// Distribute `chunk_size` across dimensions using a GCD-based outer-to-inner
-/// strategy.
+/// Returns the loop dim that indexes the innermost dim of the first input of
+/// `generic_op`, or std::nullopt if that dim is not indexed by a plain loop
+/// dim (or the input has rank 0).
+std::optional<unsigned> getInnermostInputLoopDim(linalg::GenericOp generic_op);
+
+/// Distribute `chunk_size` across the reduction loop dims `reduction_dims` of
+/// `generic_op` using a GCD-based outer-to-inner strategy.
 ///
-/// Starting from the outermost dimension (index 0 in `red_dim_sizes`) and
+/// Starting from the outermost dimension (index 0 in `reduction_dims`) and
 /// working inward, each step computes:
 ///
 ///   g                = gcd(dim_size, remaining_chunk_size)
@@ -93,17 +98,21 @@ std::optional<ReductionChunkResult> analyzeReductionChunks(
 /// Dimensions whose size is `ShapedType::kDynamic` are skipped without
 /// consuming budget.  Iteration stops once `remaining_chunk_size` reaches 1.
 ///
-/// The caller is responsible for not passing the innermost overall loop
-/// dimension — it is the pass's job to exclude that dim before calling here.
+/// The innermost dim of the first input must never be chunked, so
+/// `reduction_dims` must not hold the loop dim that indexes it (asserted). The
+/// caller excludes that dim before calling here.
 ///
 /// Returns std::nullopt if `remaining_chunk_size` is still > 1 after all
 /// dimensions have been visited (budget could not be fully distributed).
 ///
-/// \param red_dim_sizes  Chunkable dimension sizes, outermost first.
-///                       Dynamic dimensions as `ShapedType::kDynamic`.
-/// \param chunk_size     The chunk count to distribute (must be ≥ 1).
+/// \param generic_op      The reduction whose loop dims are chunked; each
+///                        dim's size is its static loop range.
+/// \param reduction_dims  Chunkable reduction loop dims, outermost first.
+///                        Dynamic dimensions are skipped.
+/// \param chunk_size      The chunk count to distribute (must be ≥ 1).
 std::optional<llvm::SmallVector<int64_t>> computeChunkDims(
-    llvm::ArrayRef<int64_t> red_dim_sizes, int64_t chunk_size);
+    linalg::GenericOp generic_op, llvm::ArrayRef<unsigned> reduction_dims,
+    int64_t chunk_size);
 
 }  // namespace mlir::ktdf
 
