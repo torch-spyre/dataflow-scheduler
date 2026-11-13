@@ -42,7 +42,7 @@ llvm_config.use_default_substitutions()
 config.excludes = ["Inputs", "CMakeLists.txt"]
 
 tools = ["dataflow-scheduler", "dataflow-scheduler-opt", "FileCheck", "not"]
-tool_dirs = [config.dataflow_scheduler_tools_dir, config.llvm_tools_dir]
+tool_dirs = config.dataflow_scheduler_tools_dirs + [config.llvm_tools_dir]
 
 llvm_config.with_environment("PATH", config.llvm_tools_dir, append_path=True)
 
