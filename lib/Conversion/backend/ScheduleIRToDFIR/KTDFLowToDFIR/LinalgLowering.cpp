@@ -69,6 +69,29 @@ static bool matchAbsMaxOperands(mlir::arith::MaxNumFOp maxnum_op,
   return true;
 }
 
+/// Gets the multiply that \p add takes as an operand and fuses with, or null.
+/// The product must reach the add directly and be read by nothing else, so a
+/// product passed through a register keeps its own multiply.
+[[nodiscard]] auto getFusedMultiply(mlir::arith::AddFOp add)
+    -> mlir::arith::MulFOp {
+  for (mlir::Value operand : add->getOperands()) {
+    auto mul = operand.getDefiningOp<mlir::arith::MulFOp>();
+    if (mul && mul->hasOneUse()) {
+      return mul;
+    }
+  }
+  return {};
+}
+
+/// Returns true when \p mul is lowered with the add that reads it.
+[[nodiscard]] auto isFusedIntoAdd(mlir::arith::MulFOp mul) -> bool {
+  if (!mul->hasOneUse()) {
+    return false;
+  }
+  auto add = mlir::dyn_cast<mlir::arith::AddFOp>(*mul->user_begin());
+  return add && getFusedMultiply(add) == mul;
+}
+
 /// Gets the compare operator standing for \p predicate, or nothing where the
 /// unit has none. Only the ordered predicates map: an unordered one asks about
 /// NaN, which the compare does not answer.
@@ -161,14 +184,14 @@ struct LowerLinalgGenericPattern
       mlir::LogicalResult result =
           mlir::TypeSwitch<mlir::Operation*, mlir::LogicalResult>(op)
               .Case<mlir::arith::MulFOp>([&](mlir::arith::MulFOp op) {
-                return lowerBinaryFOp(
-                    op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::mul);
+                return lowerMulFOp(op, rewriter, identity_map);
               })
               .Case<mlir::arith::AddFOp>([&](mlir::arith::AddFOp op) {
-                return lowerBinaryFOp(
-                    op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::add);
+                return lowerAddFOp(op, rewriter, identity_map);
+              })
+              .Case<mlir::math::FmaOp>([&](mlir::math::FmaOp op) {
+                return lowerMultiplyAccumulate(op, op.getA(), op.getB(),
+                                               op.getC(), rewriter, identity_map);
               })
               .Case<mlir::arith::SubFOp>([&](mlir::arith::SubFOp op) {
                 return lowerBinaryFOp(
@@ -330,14 +353,14 @@ struct LowerLinalgGenericPattern
       mlir::LogicalResult result =
           mlir::TypeSwitch<mlir::Operation*, mlir::LogicalResult>(op)
               .Case<mlir::arith::MulFOp>([&](mlir::arith::MulFOp op) {
-                return lowerBinaryFOp(
-                    op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::mul);
+                return lowerMulFOp(op, rewriter, identity_map);
               })
               .Case<mlir::arith::AddFOp>([&](mlir::arith::AddFOp op) {
-                return lowerBinaryFOp(
-                    op, op.getLhs(), op.getRhs(), rewriter, identity_map,
-                    mlir::vectorchain::VectorChainBinaryOperator::add);
+                return lowerAddFOp(op, rewriter, identity_map);
+              })
+              .Case<mlir::math::FmaOp>([&](mlir::math::FmaOp op) {
+                return lowerMultiplyAccumulate(op, op.getA(), op.getB(),
+                                               op.getC(), rewriter, identity_map);
               })
               .Case<mlir::arith::SubFOp>([&](mlir::arith::SubFOp op) {
                 return lowerBinaryFOp(
@@ -537,6 +560,56 @@ struct LowerLinalgGenericPattern
         /*mask=*/nullptr, /*dbgName=*/nullptr,
         mlir::vectorchain::VectorChainBinaryOperator::or0, identity_map);
     rewriter.replaceOp(op, binary_op.getData());
+    return mlir::success();
+  }
+
+  /// Lowers \p op to a multiply, unless the add reading it lowers the two
+  /// together.
+  mlir::LogicalResult lowerMulFOp(mlir::arith::MulFOp op,
+                                  mlir::PatternRewriter& rewriter,
+                                  mlir::AffineMap identity_map) const {
+    if (isFusedIntoAdd(op)) {
+      return mlir::success();
+    }
+    return lowerBinaryFOp(op, op.getLhs(), op.getRhs(), rewriter, identity_map,
+                          mlir::vectorchain::VectorChainBinaryOperator::mul);
+  }
+
+  /// Lowers \p op to a multiply-accumulate when it adds a product, and to an
+  /// add otherwise.
+  mlir::LogicalResult lowerAddFOp(mlir::arith::AddFOp op,
+                                  mlir::PatternRewriter& rewriter,
+                                  mlir::AffineMap identity_map) const {
+    auto mul = getFusedMultiply(op);
+    if (!mul) {
+      return lowerBinaryFOp(op, op.getLhs(), op.getRhs(), rewriter,
+                            identity_map,
+                            mlir::vectorchain::VectorChainBinaryOperator::add);
+    }
+
+    const mlir::Value addend =
+        op.getLhs() == mul.getResult() ? op.getRhs() : op.getLhs();
+    if (mlir::failed(lowerMultiplyAccumulate(op, mul.getLhs(), mul.getRhs(),
+                                             addend, rewriter, identity_map))) {
+      return mlir::failure();
+    }
+    rewriter.eraseOp(mul);
+    return mlir::success();
+  }
+
+  /// Replaces \p op with `lhs * rhs + addend` computed lane by lane.
+  mlir::LogicalResult lowerMultiplyAccumulate(
+      mlir::Operation* op, mlir::Value lhs, mlir::Value rhs, mlir::Value addend,
+      mlir::PatternRewriter& rewriter, mlir::AffineMap identity_map) const {
+    const auto lhs_ty = llvm::dyn_cast<mlir::ShapedType>(lhs.getType());
+    if (!lhs_ty) return mlir::failure();
+    auto vector_type = getFlattenedVectorType(lhs_ty);
+    if (!vector_type) return mlir::failure();
+
+    auto mac_op = mlir::vectorchain::MultiplyAndAccumulateOp::create(
+        rewriter, op->getLoc(), vector_type, lhs, rhs, addend,
+        /*mask=*/nullptr, /*dbgName=*/nullptr, identity_map);
+    rewriter.replaceOp(op, mac_op.getData());
     return mlir::success();
   }
 
