@@ -191,7 +191,8 @@ struct LowerLinalgGenericPattern
               })
               .Case<mlir::math::FmaOp>([&](mlir::math::FmaOp op) {
                 return lowerMultiplyAccumulate(op, op.getA(), op.getB(),
-                                               op.getC(), rewriter, identity_map);
+                                               op.getC(), rewriter,
+                                               identity_map);
               })
               .Case<mlir::arith::SubFOp>([&](mlir::arith::SubFOp op) {
                 return lowerBinaryFOp(
@@ -360,7 +361,8 @@ struct LowerLinalgGenericPattern
               })
               .Case<mlir::math::FmaOp>([&](mlir::math::FmaOp op) {
                 return lowerMultiplyAccumulate(op, op.getA(), op.getB(),
-                                               op.getC(), rewriter, identity_map);
+                                               op.getC(), rewriter,
+                                               identity_map);
               })
               .Case<mlir::arith::SubFOp>([&](mlir::arith::SubFOp op) {
                 return lowerBinaryFOp(
