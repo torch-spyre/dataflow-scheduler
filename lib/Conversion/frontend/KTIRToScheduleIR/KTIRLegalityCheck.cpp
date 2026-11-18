@@ -58,7 +58,7 @@ namespace {
                 mlir::arith::AddIOp, mlir::arith::MaximumFOp,
                 mlir::arith::MinimumFOp, mlir::arith::MaxNumFOp,
                 mlir::arith::CmpFOp, mlir::arith::SelectOp, mlir::math::AbsFOp,
-                mlir::linalg::YieldOp>(op)) {
+                mlir::math::FmaOp, mlir::linalg::YieldOp>(op)) {
     return true;
   }
 

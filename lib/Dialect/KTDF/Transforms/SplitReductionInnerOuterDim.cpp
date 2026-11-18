@@ -136,7 +136,7 @@ static bool isEligible(linalg::GenericOp generic_op) {
 
   // FIXME: Current implementation leads to invalid IR when processing
   //        contractions, so skip them for now to allow matmul to pass.
-  if (linalg::isaContractionOpInterface(generic_op)) {
+  if (ktdf::isContraction(generic_op)) {
     LDBG() << "ignoring contraction";
     return false;
   }

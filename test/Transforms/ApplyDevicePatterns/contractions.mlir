@@ -76,4 +76,35 @@ module {
 
     return
   }
+
+  // A contraction written with math.fma is mapped the same way.
+  // CHECK-LABEL: func.func @fma_contraction
+  // CHECK: linalg.generic
+  // CHECK-SAME: ktdf_arch.maps_to = "MPE_ARRAY"
+  func.func @fma_contraction(%a: tensor<64x64xf16>, %b: tensor<64x64xf16>) -> tensor<64x64xf16> {
+    %init = arith.constant dense<0.0> : tensor<64x64xf16>
+    %c = linalg.generic #contraction_trait
+        ins(%a, %b : tensor<64x64xf16>, tensor<64x64xf16>) outs(%init : tensor<64x64xf16>) {
+    ^bb0(%x: f16, %y: f16, %acc: f16):
+      %r = math.fma %x, %y, %acc : f16
+      linalg.yield %r : f16
+    } -> tensor<64x64xf16>
+    return %c : tensor<64x64xf16>
+  }
+
+  // An fma with nothing reduced is elementwise, not a contraction.
+  // CHECK-LABEL: func.func @fma_elementwise
+  // CHECK-NOT: ktdf_arch.maps_to
+  // CHECK: return
+  func.func @fma_elementwise(%a: tensor<64xf16>, %b: tensor<64xf16>, %init: tensor<64xf16>) -> tensor<64xf16> {
+    %c = linalg.generic {
+        indexing_maps = [affine_map<(d0) -> (d0)>, affine_map<(d0) -> (d0)>, affine_map<(d0) -> (d0)>],
+        iterator_types = ["parallel"]
+      } ins(%a, %b : tensor<64xf16>, tensor<64xf16>) outs(%init : tensor<64xf16>) {
+    ^bb0(%x: f16, %y: f16, %acc: f16):
+      %r = math.fma %x, %y, %acc : f16
+      linalg.yield %r : f16
+    } -> tensor<64xf16>
+    return %c : tensor<64xf16>
+  }
 }

@@ -22,6 +22,7 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFUtils
     MLIRDialectUtils
     MLIRLinalgDialect
     MLIRLoopLikeInterface
+    MLIRMathDialect
     MLIRMemRefDialect
     MLIRTensorDialect
     MLIRTransformUtils

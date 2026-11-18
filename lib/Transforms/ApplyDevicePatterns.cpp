@@ -225,17 +225,12 @@ auto ktdfIsTensorType(mlir::PatternRewriter& /*rewriter*/,
 }
 
 /// Constraint `linalg.is_contraction(op)` that determines whether the given op
-/// is a contraction.
+/// is a contraction, a `math.fma` body included.
 auto linalgIsContraction(mlir::PatternRewriter& /*rewriter*/,
                          mlir::Operation* op) -> llvm::LogicalResult {
   LDBG() << *op;
-
-  if (auto linalg_op = llvm::dyn_cast<mlir::linalg::LinalgOp>(op);
-      linalg_op && mlir::linalg::isaContractionOpInterface(linalg_op)) {
-    return llvm::success();
-  }
-
-  return llvm::failure();
+  return llvm::success(
+      mlir::ktdf::isContraction(llvm::dyn_cast<mlir::linalg::LinalgOp>(op)));
 }
 
 // Rewrite helper: ktdf.memref_read_from_fifo(read) → Value

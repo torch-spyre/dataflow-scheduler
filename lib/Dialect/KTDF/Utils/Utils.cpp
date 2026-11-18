@@ -36,6 +36,8 @@
 #include "llvm/ADT/SetVector.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Linalg/IR/LinalgInterfaces.h"
+#include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/BuiltinAttributes.h"
@@ -321,4 +323,42 @@ auto mlir::ktdf::getReductionInitScalar(Value init) -> TypedAttr {
 auto mlir::ktdf::isSupportedReductionInit(Value init) -> bool {
   return init.getDefiningOp<tensor::EmptyOp>() ||
          static_cast<bool>(getReductionInitScalar(init));
+}
+
+auto mlir::ktdf::isContraction(linalg::LinalgOp op) -> bool {
+  if (!op) {
+    return false;
+  }
+  if (linalg::isaContractionOpInterface(op)) {
+    return true;
+  }
+
+  // The same shape linalg asks of a contraction, with the body a math.fma.
+  if (op.getNumDpsInputs() != 2 || op.getNumDpsInits() != 1 ||
+      op.getNumReductionLoops() == 0) {
+    return false;
+  }
+  if (!llvm::all_of(op.getIndexingMapsArray(), [](AffineMap map) {
+        return map.isProjectedPermutation();
+      })) {
+    return false;
+  }
+
+  Block* body = op.getBlock();
+  if (!llvm::hasSingleElement(body->without_terminator())) {
+    return false;
+  }
+  auto fma = dyn_cast<math::FmaOp>(body->front());
+  auto yield = dyn_cast<linalg::YieldOp>(body->getTerminator());
+  if (!fma || !yield || yield->getNumOperands() != 1 ||
+      yield->getOperand(0) != fma.getResult()) {
+    return false;
+  }
+
+  // The inputs are the factors, in either order, and the output the addend.
+  Value lhs = body->getArgument(0);
+  Value rhs = body->getArgument(1);
+  const bool factors = (fma.getA() == lhs && fma.getB() == rhs) ||
+                       (fma.getA() == rhs && fma.getB() == lhs);
+  return factors && fma.getC() == body->getArgument(2);
 }

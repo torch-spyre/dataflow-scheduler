@@ -176,6 +176,11 @@ auto getReductionInitScalar(mlir::Value init) -> mlir::TypedAttr;
 /// init: a `tensor.empty`, or one `getReductionInitScalar` recognises.
 auto isSupportedReductionInit(mlir::Value init) -> bool;
 
+/// Returns true when \p op multiplies its two inputs and accumulates the
+/// products into its one output. Its body is either the multiply and add linalg
+/// recognizes, or a single `math.fma` of the two inputs and the output.
+auto isContraction(mlir::linalg::LinalgOp op) -> bool;
+
 }  // namespace mlir::ktdf
 
 #endif  // DATAFLOW_SCHEDULER_DIALECT_KTDF_UTILS_UTILS_H_
