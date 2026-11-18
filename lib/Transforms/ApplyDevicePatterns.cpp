@@ -40,6 +40,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchDialect.h"  // IWYU pragma: keep
+#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Transforms/ApplyPatterns.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Transforms/Passes.h"
@@ -233,6 +234,49 @@ auto linalgIsContraction(mlir::PatternRewriter& /*rewriter*/,
       mlir::ktdf::isContraction(llvm::dyn_cast<mlir::linalg::LinalgOp>(op)));
 }
 
+// Constraint: ktdf.inherits_mapping(op, maps_to)
+//
+// Expected `values` entries, two of them in this order:
+//   [0] mlir::Operation* — the op to inspect
+//   [1] mlir::Attribute  — a mapping, spelled as `ktdf_arch.maps_to` is
+//
+// Succeeds when the mapping `op` has, or takes from the nearest enclosing op
+// that has one, is `maps_to` or a list naming it. A pattern for one unit
+// negates this to stay out of compute mapped to another.
+auto ktdfInheritsMapping(mlir::PatternRewriter& /*rewriter*/,
+                         mlir::PDLResultList& /*results*/,
+                         llvm::ArrayRef<mlir::PDLValue> values)
+    -> mlir::LogicalResult {
+  assert(values.size() == 2);
+  const auto [owner, inherited] = mlir::ktdf_arch::Mappable::getOrInheritMapsTo(
+      values[0].cast<mlir::Operation*>());
+  if (!inherited) return mlir::failure();
+
+  const mlir::Attribute expected = values[1].cast<mlir::Attribute>();
+  if (mlir::Attribute(inherited) == expected) return mlir::success();
+  auto units = llvm::dyn_cast<mlir::ArrayAttr>(inherited);
+  return mlir::success(units && llvm::is_contained(units, expected));
+}
+
+// Rewrite helper: ktdf.insert_via(op, value, hops)
+//
+// Expected `values` entries, three of them in this order:
+//   [0] mlir::Operation* — the op that reads `value`
+//   [1] mlir::Value      — an operand of `op`
+//   [2] mlir::Attribute  — an ArrayAttr of the hops
+//
+// Routes `value` through a ktdf.via over `hops` for `op` only; other users keep
+// reading it directly. PDL can only replace every use of a value, so a pattern
+// cannot do this itself.
+void ktdfInsertVia(mlir::PatternRewriter& rewriter, mlir::Operation* op,
+                   mlir::Value value, mlir::Attribute hops) {
+  mlir::OpBuilder::InsertionGuard guard(rewriter);
+  rewriter.setInsertionPoint(op);
+  auto via = mlir::ktdf::ViaOp::create(rewriter, op->getLoc(), value,
+                                       llvm::cast<mlir::ArrayAttr>(hops));
+  rewriter.modifyOpInPlace(op, [&]() { op->replaceUsesOfWith(value, via); });
+}
+
 // Rewrite helper: ktdf.memref_read_from_fifo(read) → Value
 //
 // Expected `values` entries, one of them:
@@ -297,10 +341,13 @@ class PatternCache : public mlir::ktdf_arch::PatternCache {
                                         ktdfIsInnerDimReduction);
     patterns.registerConstraintFunction("ktdf.is_reduction_kind",
                                         ktdfIsReductionKind);
+    patterns.registerConstraintFunction("ktdf.inherits_mapping",
+                                        ktdfInheritsMapping);
     patterns.registerConstraintFunction("ktdf.is_tensor_type",
                                         ktdfIsTensorType);
     patterns.registerConstraintFunction("linalg.is_contraction",
                                         linalgIsContraction);
+    patterns.registerRewriteFunction("ktdf.insert_via", ktdfInsertVia);
     patterns.registerRewriteFunction("ktdf.memref_read_from_fifo",
                                      ktdfMemRefReadFromFifo);
     patterns.registerRewriteFunction("ktdf.memref_type_in_space",
