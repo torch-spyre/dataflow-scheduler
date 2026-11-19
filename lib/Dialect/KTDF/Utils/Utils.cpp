@@ -325,6 +325,10 @@ auto mlir::ktdf::isSupportedReductionInit(Value init) -> bool {
          static_cast<bool>(getReductionInitScalar(init));
 }
 
+// A contraction is MLIR's term for a sum of products over one or more reduced
+// dimensions, the kind of op that matmul, batch matmul, matvec and dot products
+// all are. The reduction passes skip whatever this accepts, so a form added
+// here must still be a sum of products.
 auto mlir::ktdf::isContraction(linalg::LinalgOp op) -> bool {
   if (!op) {
     return false;
