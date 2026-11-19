@@ -22,6 +22,7 @@
 #include <queue>
 #include <sstream>
 
+#include "dataflow-scheduler/Analysis/ArchViews/ReservedMemory.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
@@ -73,7 +74,7 @@ void processMemoryOp(mlir::ktdf_arch::MemoryOp mem_op, DeviceInitContext& ctx) {
       ctx.node_sizes[node_id] = int_attr.getValue().getSExtValue();
     }
   }
-  ctx.node_reserved[node_id] = mem_op.getFirstAvailableAddress();
+  ctx.node_reserved[node_id] = getReservedBytes(mem_op);
 }
 
 // Process an execution unit operation
