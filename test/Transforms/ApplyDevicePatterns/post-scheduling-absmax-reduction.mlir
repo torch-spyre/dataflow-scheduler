@@ -1,9 +1,9 @@
 // RUN: dataflow-scheduler-opt %s -allow-unregistered-dialect -apply-device-patterns='groups=post_scheduling' | FileCheck %s
 
 // CHECK-LABEL:   func.func @absmax_reduction() {
-// CHECK-NEXT:     %[[ALLOC_0:.*]] = memref.alloc() : memref<64x32xf16, "L1">
+// CHECK-NEXT:     %[[ALLOC_0:.*]] = memref.alloc() : memref<64x64xf16, "L1">
 // CHECK-NEXT:     %[[ALLOC_1:.*]] = memref.alloc() : memref<64xf16, "L1">
-// CHECK-NEXT:     "test.simd_reduction_absmax"(%[[ALLOC_0]], %[[ALLOC_1]]) : (memref<64x32xf16, "L1">, memref<64xf16, "L1">) -> ()
+// CHECK-NEXT:     "test.simd_reduction_absmax"(%[[ALLOC_0]], %[[ALLOC_1]]) : (memref<64x64xf16, "L1">, memref<64xf16, "L1">) -> ()
 // CHECK-NEXT:     return
 // CHECK-NEXT:   }
 
@@ -19,7 +19,7 @@ module {
   ktdf_arch.device @sample_device attributes {} import("../../Dialect/KTDFArch/sample_device.mlir")
 
   func.func @absmax_reduction() {
-    %alloc_in  = memref.alloc() : memref<64x32xf16, "L1">
+    %alloc_in  = memref.alloc() : memref<64x64xf16, "L1">
     %alloc_acc = memref.alloc() : memref<64xf16, "L1">
 
     // The pattern requires the output to be a memref.subview of the accumulator.
@@ -29,7 +29,7 @@ module {
     linalg.generic {
       indexing_maps = [#map_in, #map_out],
       iterator_types = ["parallel", "reduction"]
-    } ins(%alloc_in : memref<64x32xf16, "L1">)
+    } ins(%alloc_in : memref<64x64xf16, "L1">)
       outs(%subview  : memref<64xf16, "L1">) {
     ^bb0(%in: f16, %out: f16):
       %abs_in  = math.absf %in  : f16

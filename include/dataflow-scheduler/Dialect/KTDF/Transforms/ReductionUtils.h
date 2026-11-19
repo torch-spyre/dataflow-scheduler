@@ -46,6 +46,7 @@
 #include <utility>
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/AffineMap.h"
@@ -54,12 +55,40 @@
 namespace mlir::ktdf {
 
 // ---------------------------------------------------------------------------
-// Return the loop dimension index that corresponds to the innermost reduction:
-// the rightmost input dimension (input_rank - 1), if it is a reduction
-// iterator. Returns std::nullopt if the rightmost input dimension is not a
-// reduction.
+// Return the loop dimensions of the SIMD-lane reduction: those behind the
+// trailing input axes that together hold one SIMD lane of `simd_lane_elements`
+// elements, if they are reductions. A SIMD lane need not be the last axis
+// alone; it can span several, e.g. [..., 64, 2] for a 128-element SIMD lane.
+// The input may be a ranked tensor or a memref.
+//
+// The axes are taken from the last one back until their sizes reach
+// `simd_lane_elements` (or the axes run out). Unit axes are passed over, and a
+// dynamic axis ends the SIMD lane. Returns an empty vector if the SIMD lane's
+// axes are parallel, or if one of them is not indexed by a plain loop
+// dimension. The dims are returned innermost first.
+//
+// A SIMD lane whose axes mix reduction and parallel is not supported: fails,
+// without a diagnostic, so that each caller reports it in its own terms (or,
+// for a pattern constraint, just does not match).
 // ---------------------------------------------------------------------------
-std::optional<unsigned> findInnerDimLoopDim(linalg::GenericOp generic_op);
+FailureOr<SmallVector<unsigned>> findReductionSimdLaneDims(
+    linalg::GenericOp generic_op, int64_t simd_lane_elements);
+
+// ---------------------------------------------------------------------------
+// As above, with the SIMD lane sized by `compute`: as many elements of the
+// first input as `compute` has vector lanes for.
+// ---------------------------------------------------------------------------
+FailureOr<SmallVector<unsigned>> findReductionSimdLaneDims(
+    linalg::GenericOp generic_op, ktdf_arch::ExecutionUnitOp compute);
+
+// ---------------------------------------------------------------------------
+// Return the default compute unit of `device`, whose vector lanes size a
+// SIMD lane. Returns null if there is no device (the analysis has reported it)
+// or if the device has no unambiguous default compute unit (an error is emitted
+// on the device declaration).
+// ---------------------------------------------------------------------------
+ktdf_arch::ExecutionUnitOp getDefaultComputeUnit(
+    const ktdf_arch::DefaultDevice& device);
 
 // ---------------------------------------------------------------------------
 // Result of StageFactory::buildFifoPrivate.

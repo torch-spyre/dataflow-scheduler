@@ -23,13 +23,16 @@
 // chunking uses a GCD-based outer-to-inner strategy: starting from the
 // outermost reduction dimension, each step absorbs gcd(dim_size, remaining)
 // into that dimension and passes remaining/gcd inward.  Dimensions with a
-// symbolic (dynamic) size are skipped.  The innermost dimension of the first
-// input is never chunked — the reduction dim indexing it is excluded before
-// distribution begins.
+// symbolic (dynamic) size are skipped.  The SIMD-lane dims are never chunked —
+// the reduction dims behind the trailing input axes that hold one SIMD lane
+// (the default compute unit's vector lanes) are excluded before distribution
+// begins.  A SIMD lane can span several axes, e.g. [..., 32, 2] for a
+// 64-element SIMD lane.
 //
 // When --num-chunks is given explicitly, multi-dim chunking is applied using
 // one value per reduction dimension (in iterator-type order); one nested
-// scf.for is emitted per dim; dims with chunk count 1 produce no loop.
+// scf.for is emitted per dim; dims with chunk count 1 produce no loop.  The
+// counts must not split a SIMD lane: each chunk holds whole SIMD lanes.
 //
 // The pass operates on the shape produced by StageCoarsening.  It expects a
 // top-level ktdf.pipeline with three sibling stages:
@@ -84,6 +87,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -167,6 +171,29 @@ static bool isAssociativeCommutativeCombiner(linalg::GenericOp generic_op) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: whether cutting SIMD-lane reduction dim `dim` of `generic_op` into
+// `num_chunks` chunks would split a SIMD lane, so that a chunk would not hold
+// whole SIMD lanes.  `simd_lane_dims` is findReductionSimdLaneDims of
+// `generic_op`, innermost first.  Only the outermost of them can be chunked,
+// and only into chunks that, with the dims inside it, hold a whole number of
+// SIMD lanes: e.g. a [256] SIMD lane dim cut into 4 chunks of one 64-element
+// SIMD lane each, but not a [32, 2] SIMD lane cut along its 32.  A dim not in
+// the SIMD lane splits none.
+// ---------------------------------------------------------------------------
+static bool splitsSimdLane(linalg::GenericOp generic_op,
+                           ArrayRef<unsigned> simd_lane_dims, unsigned dim,
+                           int64_t num_chunks, int64_t simd_lane_elements) {
+  if (!llvm::is_contained(simd_lane_dims, dim)) return false;
+  if (dim != simd_lane_dims.back()) return true;
+
+  const auto loop_ranges = generic_op.getStaticLoopRanges();
+  int64_t chunk_elements = loop_ranges[dim] / num_chunks;
+  for (unsigned inner : simd_lane_dims.drop_back())
+    chunk_elements *= loop_ranges[inner];
+  return chunk_elements % simd_lane_elements != 0;
+}
+
+// ---------------------------------------------------------------------------
 // Pass implementation
 // ---------------------------------------------------------------------------
 struct ReductionDimChunkingPass
@@ -179,11 +206,21 @@ struct ReductionDimChunkingPass
     if (DisableThisPass) return;
     LDBG(1) << "========= " PASS_NAME " =========";
 
+    // The SIMD lane size comes from the default compute unit's vector lanes.
+    compute_ = getDefaultComputeUnit(getAnalysis<ktdf_arch::DefaultDevice>());
+    if (!compute_) {
+      signalPassFailure();
+      return;
+    }
+
     ModuleOp module = getOperation();
     if (failed(transformModule(module))) signalPassFailure();
   }
 
  private:
+  // The default compute unit, whose vector lanes give the SIMD lane size.
+  ktdf_arch::ExecutionUnitOp compute_;
+
   // -----------------------------------------------------------------------
   // Walk the module for linalg.generic ops that have at least one reduction
   // iterator.  For each such op, locate the immediately enclosing ktdf.stage
@@ -262,11 +299,12 @@ struct ReductionDimChunkingPass
     // Determine reduction dims and per-dim chunk sizes.
     //
     // Threshold path (numChunks empty): GCD-based outer-to-inner chunking
-    // across all reduction dims; dynamic dims are skipped; the reduction dim
-    // indexing the innermost dim of the first input is excluded.
+    // across all reduction dims; dynamic dims are skipped; the SIMD-lane
+    // reduction dims are excluded.
     //
     // Explicit path (numChunks non-empty): one value per reduction dim;
-    // nested scf.for loops; dims with count 1 produce no loop.
+    // nested scf.for loops; dims with count 1 produce no loop; the counts
+    // must not split a SIMD lane.
     // ------------------------------------------------------------------
     ReductionChunkResult reduction_chunk;
 
@@ -274,16 +312,29 @@ struct ReductionDimChunkingPass
     // chunked loop dim to the first-input dim it indexes.
     generic_op.getReductionDims(reduction_chunk.reduction_dims);
 
+    // The reduction dims behind the trailing input axes that hold one SIMD
+    // lane. A SIMD lane is reduced in place, so it is never chunked.
+    const int64_t simd_lane_elements = scheduler::getVectorLanes(
+        cast<ShapedType>(generic_op.getInputs().front().getType())
+            .getElementType(),
+        compute_);
+    FailureOr<SmallVector<unsigned>> simd_lane =
+        findReductionSimdLaneDims(generic_op, simd_lane_elements);
+    if (failed(simd_lane))
+      return generic_op.emitError(PASS_NAME)
+             << ": a SIMD lane whose dims mix reduction and parallel is not "
+                "supported";
+    const SmallVector<unsigned>& simd_lane_dims = *simd_lane;
+
     if (numChunks.empty()) {
       // Auto-infer via analysis — GCD-based outer-to-inner chunking.
 
-      // Collect all reduction dims, excluding the one that indexes the
-      // innermost dim of the first input (the innermost input dim must never
-      // be chunked). Under a non-identity map that is not necessarily the
-      // innermost loop dim.
-      if (std::optional<unsigned> innermost =
-              getInnermostInputLoopDim(generic_op))
-        llvm::erase(reduction_chunk.reduction_dims, *innermost);
+      // Collect all reduction dims, excluding the SIMD-lane ones. They index
+      // the trailing input axes, which under a non-identity map are not
+      // necessarily the innermost loop dims.
+      llvm::erase_if(reduction_chunk.reduction_dims, [&](unsigned dim) {
+        return llvm::is_contained(simd_lane_dims, dim);
+      });
       if (reduction_chunk.reduction_dims.empty()) {
         LDBG(1) << PASS_NAME
             ": could not find a chunkable reduction dimension — skipping";
@@ -299,12 +350,13 @@ struct ReductionDimChunkingPass
       }
 
       // The analysis sizes every reduction dim; distribute the chunk count
-      // over the chunkable ones only, so the excluded dim takes none of it.
+      // over the chunkable ones only, so the excluded dims take none of it.
       const auto loop_ranges = generic_op.getStaticLoopRanges();
       for (unsigned dim : reduction_chunk.reduction_dims)
         reduction_chunk.red_dim_sizes.push_back(loop_ranges[dim]);
-      auto chunk_dims = computeChunkDims(
-          generic_op, reduction_chunk.reduction_dims, result->num_chunks);
+      auto chunk_dims =
+          computeChunkDims(generic_op, reduction_chunk.reduction_dims,
+                           simd_lane_dims, result->num_chunks);
       if (!chunk_dims) {
         inner_pipeline.emitError(
             PASS_NAME
@@ -343,6 +395,12 @@ struct ReductionDimChunkingPass
           return success();
         }
         unsigned nchunk = numChunks[j];
+        if (nchunk > 1 && splitsSimdLane(generic_op, simd_lane_dims, dim,
+                                         nchunk, simd_lane_elements))
+          return inner_pipeline.emitError(PASS_NAME)
+                 << ": num-chunks gives " << nchunk
+                 << " chunks to reduction dim " << dim
+                 << ", which would split a SIMD lane";
         if (nchunk == 0 || dim_size % nchunk != 0) {
           LDBG(1) << PASS_NAME ": num_chunks=" << nchunk
                   << " does not evenly divide dim " << dim

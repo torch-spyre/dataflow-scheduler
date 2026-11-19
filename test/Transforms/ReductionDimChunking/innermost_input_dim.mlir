@@ -67,7 +67,7 @@
 #in  = affine_map<(d0, d1, d2) -> (d0, d2, d1)>
 #out = affine_map<(d0, d1, d2) -> (d0, d1)>
 module {
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   func.func @column_sum(%src: memref<2x1x256x64xf16, "L1">, %dst: memref<2x1x64xf16, "L1">) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
@@ -132,7 +132,7 @@ module {
 #in  = affine_map<(d0, d1, d2) -> (d0, d2, d1)>
 #out = affine_map<(d0, d1, d2) -> (d0, d2)>
 module {
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   func.func @permuted(%src: memref<2x1x32x256xf16, "L1">, %dst: memref<2x1x32xf16, "L1">) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index

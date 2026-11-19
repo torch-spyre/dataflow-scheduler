@@ -38,12 +38,15 @@
 #include "dataflow-scheduler/Conversion/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/Agen/Agen.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"  // IWYU pragma: keep
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchDialect.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Transforms/ApplyPatterns.h"
 #include "dataflow-scheduler/Dialect/VectorChain/VectorChain.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "ktir/Dialect/KTDP/KTDPDialect.h"  // IWYU pragma: keep
 
 #define PASS_NAME "apply-device-patterns"
@@ -62,12 +65,16 @@ namespace scheduler {
 
 namespace {
 
-// Returns success (and no results) when `op` is a linalg.generic whose
-// rightmost input map dimension maps to a reduction iterator — i.e. it is the
-// inner-dim reduction generic produced by MapReductionPartials — and whose
-// single output operand is defined by a memref.subview.
-auto ktdfIsInnerDimReduction(mlir::PatternRewriter& /*rewriter*/,
-                             mlir::Operation* op) -> mlir::LogicalResult {
+// Returns success (and no results) when `op` is a linalg.generic whose input
+// axes holding one SIMD lane map to reduction iterators -- i.e. it is the
+// inner-dim reduction generic produced by MapReductionPartials -- and whose
+// single output operand is defined by a memref.subview.  A SIMD lane holds as
+// many input elements as `compute` has vector lanes for, and can span several
+// trailing input axes. Without a default compute unit the SIMD lane is the last
+// input axis alone.
+auto ktdfIsInnerDimReduction(mlir::Operation* op,
+                             mlir::ktdf_arch::ExecutionUnitOp compute)
+    -> mlir::LogicalResult {
   auto generic = llvm::dyn_cast_if_present<mlir::linalg::GenericOp>(op);
   if (!generic || generic.getInputs().empty()) return mlir::failure();
 
@@ -75,25 +82,22 @@ auto ktdfIsInnerDimReduction(mlir::PatternRewriter& /*rewriter*/,
       mlir::dyn_cast<mlir::MemRefType>(generic.getInputs().front().getType());
   if (!input_type) return mlir::failure();
 
-  mlir::AffineMap input_map = generic.getIndexingMapsArray().front();
-  int64_t last = input_type.getRank() - 1;
-  auto dim_expr =
-      mlir::dyn_cast<mlir::AffineDimExpr>(input_map.getResult(last));
-  if (!dim_expr) return mlir::failure();
-
-  unsigned loop_dim = dim_expr.getPosition();
-  if (generic.getIteratorTypesArray()[loop_dim] !=
-      mlir::utils::IteratorType::reduction)
-    return mlir::failure();
-
   // The output must be a rank-reducing subview produced by
-  // MapReductionPartials.
+  // MapReductionPartials.  Checked first, so that only such a generic has its
+  // SIMD lane looked at.
   if (generic.getOutputs().empty()) return mlir::failure();
   if (!llvm::isa_and_nonnull<mlir::memref::SubViewOp>(
           generic.getOutputs().front().getDefiningOp()))
     return mlir::failure();
 
-  return mlir::success();
+  const int64_t simd_lane_elements =
+      compute ? getVectorLanes(input_type.getElementType(), compute) : 1;
+  // A SIMD lane whose dims mix reduction and parallel is not supported; the
+  // passes before this one report it, and here it just does not match.
+  mlir::FailureOr<llvm::SmallVector<unsigned>> simd_lane_dims =
+      mlir::ktdf::findReductionSimdLaneDims(generic, simd_lane_elements);
+  return mlir::success(mlir::succeeded(simd_lane_dims) &&
+                       !simd_lane_dims->empty());
 }
 
 // Rewrite helper: ktdf.subview_source(value) → Value
@@ -337,8 +341,13 @@ class PatternCache : public mlir::ktdf_arch::PatternCache {
   void registerNativeFunctions(mlir::PDLPatternModule& patterns) final {
     mlir::ktdf_arch::PatternCache::registerNativeFunctions(patterns);
 
-    patterns.registerConstraintFunction("ktdf.is_inner_dim_reduction",
-                                        ktdfIsInnerDimReduction);
+    const auto compute =
+        mlir::ktdf_arch::ResourceKinds(getDevice()).getDefaultCompute();
+    patterns.registerConstraintFunction(
+        "ktdf.is_inner_dim_reduction",
+        [compute](mlir::PatternRewriter& /*rewriter*/, mlir::Operation* op) {
+          return ktdfIsInnerDimReduction(op, compute);
+        });
     patterns.registerConstraintFunction("ktdf.is_reduction_kind",
                                         ktdfIsReductionKind);
     patterns.registerConstraintFunction("ktdf.inherits_mapping",

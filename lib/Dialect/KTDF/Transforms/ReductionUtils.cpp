@@ -25,6 +25,8 @@
 #include <optional>
 
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -38,23 +40,62 @@
 namespace mlir::ktdf {
 
 // ---------------------------------------------------------------------------
-// findInnerDimLoopDim
+// findReductionSimdLaneDims
 // ---------------------------------------------------------------------------
-std::optional<unsigned> findInnerDimLoopDim(linalg::GenericOp generic_op) {
+FailureOr<SmallVector<unsigned>> findReductionSimdLaneDims(
+    linalg::GenericOp generic_op, int64_t simd_lane_elements) {
   auto input_type =
-      dyn_cast<RankedTensorType>(generic_op.getInputs().front().getType());
-  if (!input_type) return std::nullopt;
-
-  int64_t last = input_type.getRank() - 1;
+      dyn_cast<ShapedType>(generic_op.getInputs().front().getType());
+  if (!input_type || !input_type.hasRank()) return SmallVector<unsigned>();
 
   AffineMap input_map = generic_op.getIndexingMapsArray().front();
-  auto dim_expr = dyn_cast<AffineDimExpr>(input_map.getResult(last));
-  if (!dim_expr) return std::nullopt;
-
-  unsigned loop_dim = dim_expr.getPosition();
   auto iter_types = generic_op.getIteratorTypesArray();
-  if (iter_types[loop_dim] == utils::IteratorType::reduction) return loop_dim;
-  return std::nullopt;
+
+  SmallVector<unsigned> reduction_dims;
+  bool has_parallel = false;
+  int64_t elements = 1;
+  for (int64_t axis = input_type.getRank() - 1;
+       axis >= 0 && elements < simd_lane_elements; --axis) {
+    auto dim_expr = dyn_cast<AffineDimExpr>(input_map.getResult(axis));
+    if (!dim_expr) return SmallVector<unsigned>();
+
+    const int64_t size = input_type.getDimSize(axis);
+    if (size == 1) continue;
+    elements =
+        ShapedType::isDynamic(size) ? simd_lane_elements : elements * size;
+
+    const unsigned loop_dim = dim_expr.getPosition();
+    if (iter_types[loop_dim] == utils::IteratorType::reduction)
+      reduction_dims.push_back(loop_dim);
+    else
+      has_parallel = true;
+  }
+
+  // A SIMD lane whose axes mix reduction and parallel is not supported.
+  if (has_parallel && !reduction_dims.empty()) return failure();
+  return reduction_dims;
+}
+
+FailureOr<SmallVector<unsigned>> findReductionSimdLaneDims(
+    linalg::GenericOp generic_op, ktdf_arch::ExecutionUnitOp compute) {
+  auto input_type = cast<ShapedType>(generic_op.getInputs().front().getType());
+  return findReductionSimdLaneDims(
+      generic_op,
+      scheduler::getVectorLanes(input_type.getElementType(), compute));
+}
+
+// ---------------------------------------------------------------------------
+// getDefaultComputeUnit
+// ---------------------------------------------------------------------------
+ktdf_arch::ExecutionUnitOp getDefaultComputeUnit(
+    const ktdf_arch::DefaultDevice& device) {
+  if (!device) return {};
+  ktdf_arch::Mapping mapping(device.getRef());
+  ktdf_arch::ExecutionUnitOp compute = mapping.byKind().getDefaultCompute();
+  if (!compute)
+    mapping.getDevice().getDeclaration().emitError(
+        "no (unambiguous) default compute resource");
+  return compute;
 }
 
 // ---------------------------------------------------------------------------

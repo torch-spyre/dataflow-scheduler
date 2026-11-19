@@ -115,10 +115,15 @@ def SimplifyPipelinePass : Pass<"simplify-pipeline", "mlir::func::FuncOp"> {
 def SplitReductionInnerOuterDimPass : Pass<"split-reduction-inner-outer-dim", "mlir::ModuleOp"> {
   let summary = "Split the inner and outer dimensions of a reduction";
   let description = [{
-    Walks the module for linalg.generic ops with at least one reduction
-    iterator and splits each reduction dimension into an inner dimension of
-    stick size (derived from the hardware SIMD feature) and an outer
-    dimension of size reduction_dim / stick size.
+    Walks the module for linalg.generic ops with at least two reduction
+    iterators and splits each into two generics: the first reduces the outer
+    reduction dimensions, the second the SIMD-lane ones.  The SIMD-lane
+    dimensions are those behind the trailing input dimensions that together
+    hold one SIMD lane, as many input elements as the compute unit has SIMD
+    lanes for; a SIMD lane can span more than one (e.g. [..., 32, 2] for a
+    64-element SIMD lane).  A reduction whose SIMD lane is not a reduction, or whose
+    reduction dimensions are all in the SIMD lane, is left as it is.  SIMD-lane
+    dimensions that do not hold exactly one SIMD lane are an error.
   }];
   let constructor = "::mlir::ktdf::createSplitReductionInnerOuterDimPass()";
   let dependentDialects = [
@@ -137,9 +142,12 @@ def ReductionLoopExposurePass : Pass<"reduction-loop-exposure", "mlir::ModuleOp"
     loop per reduction dimension, with the accumulator tensor threaded as
     iter_args.
 
-    The innermost reduction dimension — identified as the reduction loop dim
-    that maps to the rightmost input tensor dimension — is excluded from loop
-    exposure and left as-is for later handling by a device PDL pattern.
+    The SIMD-lane reduction dimensions are excluded from loop exposure and left
+    as-is for later handling by a device PDL pattern.  A SIMD lane holds as many
+    input elements as the default compute unit has vector lanes for, and is
+    made of the trailing input dimensions that together reach that size, so it
+    can span more than one (e.g. [..., 64, 2] for a 128-element SIMD lane).  A
+    SIMD lane whose dimensions mix reduction and parallel is not supported.
 
     The pass may be composed with ReductionDimChunking.  When the input has
     already been chunked, the Load stage body contains a scf.if that feeds
@@ -313,13 +321,17 @@ def ReductionDimChunkingPass : Pass<"reduction-dim-chunking", "mlir::ModuleOp"> 
     the outermost reduction dimension, each step absorbs gcd(dim_size,
     remaining_chunk) into that dimension and passes remaining/gcd inward.
     Dimensions with a symbolic (dynamic) size are skipped without consuming
-    any of the remaining chunk budget.  The innermost dimension of the first
-    input is never chunked — the reduction dim indexing it is excluded before
-    distribution begins.
+    any of the remaining chunk budget.  The SIMD-lane dimensions are never
+    chunked — the reduction dims behind the trailing input dimensions that
+    hold one SIMD lane (as many input elements as the default compute unit has
+    vector lanes for) are excluded before distribution begins.  A SIMD lane can
+    span more than one dimension (e.g. [..., 32, 2] for a 64-element SIMD lane).
 
     When num-chunks is specified explicitly, multi-dim chunking is applied:
     one value per reduction dimension (in iterator-type order), one nested
-    scf.for per dim (dims with chunk count 1 produce no loop).
+    scf.for per dim (dims with chunk count 1 produce no loop).  The counts
+    must not split a SIMD lane: only the outermost SIMD-lane dimension can be
+    chunked, into chunks holding whole SIMD lanes.
 
     First-vs-rest accumulation behaviour is selected at runtime via
     `%condition = AND(iv_j == 0 for all active chunk loop IVs)`:

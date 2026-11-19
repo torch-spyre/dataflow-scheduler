@@ -21,13 +21,15 @@
 #include <mlir/Dialect/Linalg/IR/LinalgInterfaces.h>
 
 #include <memory>
+#include <optional>
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -71,9 +73,10 @@ struct ReductionDimInfo {
 // ---------------------------------------------------------------------------
 struct CandidateInfo {
   linalg::GenericOp generic_op;
-  // Inner dim: exactly one — the rightmost reduction dim in input order.
+  // Inner dims: the SIMD-lane reduction dims, those behind the trailing input
+  // axes that hold one SIMD lane.  A SIMD lane can span several axes.
   SmallVector<ReductionDimInfo> inner_dim;
-  // Outer dims: all remaining (leftward) reduction dims, same ordering.
+  // Outer dims: all remaining reduction dims, in input order.
   SmallVector<ReductionDimInfo> outer_dims;
 };
 
@@ -109,30 +112,19 @@ static LogicalResult collectReductionDims(
 }
 
 // ---------------------------------------------------------------------------
-// Return true when `generic_op` qualifies for the split:
-//   1. It has at least two reduction iterator types (one inner + at least
-//      one outer).
-//   2. The rightmost input dimension maps to a reduction loop dim.
+// Return true when `generic_op` may qualify for the split: it has at least two
+// reduction iterator types (inner + at least one outer) and a ranked tensor
+// input.  Whether its SIMD-lane dims are reductions, with others left outside
+// them, is up to partitionReductionDims, which knows the SIMD lane size.
 // ---------------------------------------------------------------------------
 static bool isEligible(linalg::GenericOp generic_op) {
-  auto iter_types = generic_op.getIteratorTypesArray();
-
-  // Condition 1: count reduction dims.
   int num_reductions = 0;
-  for (auto it : iter_types)
+  for (auto it : generic_op.getIteratorTypesArray())
     if (it == utils::IteratorType::reduction) ++num_reductions;
   if (num_reductions < 2) return false;
 
-  // Condition 2: check that the rightmost input dimension maps to a reduction
-  // loop dim (via the input's indexing map).
-  auto input_type =
-      dyn_cast<RankedTensorType>(generic_op.getInputs().front().getType());
-  if (!input_type) return false;
-
-  AffineMap input_map = generic_op.getIndexingMapsArray().front();
-  unsigned last = input_map.getNumResults() - 1;
-  auto dim_expr = dyn_cast<AffineDimExpr>(input_map.getResult(last));
-  if (!dim_expr) return false;
+  if (!isa<RankedTensorType>(generic_op.getInputs().front().getType()))
+    return false;
 
   // FIXME: Current implementation leads to invalid IR when processing
   //        contractions, so skip them for now to allow matmul to pass.
@@ -140,44 +132,73 @@ static bool isEligible(linalg::GenericOp generic_op) {
     LDBG() << "ignoring contraction";
     return false;
   }
-
-  return iter_types[dim_expr.getPosition()] == utils::IteratorType::reduction;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
 // Partition the reduction dims of `generic_op` into:
-//   inner dim  — exactly the rightmost reduction dim (in input order).
-//   outer dims — all remaining (leftward) reduction dims.
+//   inner dims — the SIMD-lane reduction dims: those behind the trailing input
+//                axes that hold one SIMD lane of `vector_length` elements.  A
+//                SIMD lane can span several axes, e.g. [..., 32, 2] for a
+//                64-element SIMD lane.
+//   outer dims — all remaining reduction dims.
+// Returns std::nullopt (with a debug note) when there is nothing to split: a
+// reduction dim has a dynamic size, the SIMD lane's axes are not reductions, or
+// every reduction dim is in the SIMD lane.  Fails (and emits an error) when the
+// SIMD-lane dims do not hold exactly one SIMD lane, or when the SIMD lane's
+// dims mix reduction and parallel.
 // ---------------------------------------------------------------------------
-static FailureOr<CandidateInfo> partitionReductionDims(
+static FailureOr<std::optional<CandidateInfo>> partitionReductionDims(
     linalg::GenericOp generic_op, int64_t vector_length) {
   CandidateInfo info;
   info.generic_op = generic_op;
 
   SmallVector<ReductionDimInfo> all_dims;
-  if (failed(collectReductionDims(generic_op, all_dims))) return failure();
+  if (failed(collectReductionDims(generic_op, all_dims)))
+    return std::optional<CandidateInfo>();
 
-  // The rightmost reduction dim (last in all_dims) is the inner dim.
-  assert(!all_dims.empty());
-  ReductionDimInfo& inner_dim = all_dims.back();
-  assert(inner_dim.size == vector_length &&
-         "inner (rightmost) reduction dim size must equal vector length");
+  FailureOr<SmallVector<unsigned>> simd_lane =
+      ktdf::findReductionSimdLaneDims(generic_op, vector_length);
+  if (failed(simd_lane))
+    return generic_op.emitError(PASS_NAME)
+           << ": a SIMD lane whose dims mix reduction and parallel is not "
+              "supported";
+  const SmallVector<unsigned>& simd_lane_dims = *simd_lane;
+  if (simd_lane_dims.empty()) {
+    LDBG(1) << PASS_NAME ": the SIMD lane is not a reduction — skipping";
+    return std::optional<CandidateInfo>();
+  }
 
-  // all_dims[0 .. N-2] are outer dims; all_dims[N-1] is the inner dim.
-  for (int i = 0; i < static_cast<int>(all_dims.size()) - 1; ++i)
-    info.outer_dims.push_back(all_dims[i]);
-  info.inner_dim.push_back(inner_dim);
+  // all_dims is in input order, so the SIMD-lane dims, which index the
+  // trailing input axes, come out in input order as well.
+  int64_t simd_lane_elements = 1;
+  for (const ReductionDimInfo& dim : all_dims) {
+    if (llvm::is_contained(simd_lane_dims, dim.loop_dim)) {
+      info.inner_dim.push_back(dim);
+      simd_lane_elements *= dim.size;
+    } else {
+      info.outer_dims.push_back(dim);
+    }
+  }
+  if (info.outer_dims.empty()) {
+    LDBG(1) << PASS_NAME ": every reduction dim is in the SIMD lane — skipping";
+    return std::optional<CandidateInfo>();
+  }
+  if (simd_lane_elements != vector_length)
+    return generic_op.emitError(PASS_NAME)
+           << ": the SIMD-lane reduction dims hold " << simd_lane_elements
+           << " elements, not one SIMD lane of " << vector_length;
 
   LDBG(1) << PASS_NAME ": generic at " << generic_op.getLoc()
           << " vector_length=" << vector_length
-          << " inner dim (loop_dim:size):";
+          << " inner dims (loop_dim:size):";
   for (auto& d : info.inner_dim)
     LDBG(1) << "  [" << d.loop_dim << "]=" << d.size;
   LDBG(1) << " outer dims (loop_dim:size):";
   for (auto& d : info.outer_dims)
     LDBG(1) << "  [" << d.loop_dim << "]=" << d.size;
 
-  return info;
+  return std::optional<CandidateInfo>(std::move(info));
 }
 
 // ---------------------------------------------------------------------------
@@ -283,14 +304,14 @@ static LogicalResult buildCombinerBody(linalg::GenericOp src,
 //   Generic 1 (outer reduction): reduces the outer dims.
 //     Input:  original input tensor
 //     Output: intermediate tensor — input dims with outer reduction dims
-//             removed; the inner dim is kept as parallel.
-//     Iterator types: outer dims → reduction, inner dim → parallel,
+//             removed; the inner dims are kept as parallel.
+//     Iterator types: outer dims → reduction, inner dims → parallel,
 //                     other input-map dims unchanged.
 //
-//   Generic 2 (inner reduction): reduces the inner dim.
+//   Generic 2 (inner reduction): reduces the inner dims (one SIMD lane).
 //     Input:  intermediate tensor (result of Generic 1)
 //     Output: same type as the original output
-//     Iterator types: inner dim → reduction, all other dims → parallel.
+//     Iterator types: inner dims → reduction, all other dims → parallel.
 //
 // The original generic is replaced by the result of Generic 2 and erased.
 // ---------------------------------------------------------------------------
@@ -540,8 +561,9 @@ struct SplitReductionInnerOuterDimPass
       return;
     }
 
-    // Collect eligible linalg.generic ops: at least two reduction iterator
-    // types, with one reduction dim mapping to the rightmost non-1 input dim.
+    // Collect candidate linalg.generic ops: at least two reduction iterator
+    // types.  partitionReductionDims decides on each once the SIMD lane is
+    // known.
     SmallVector<linalg::GenericOp> candidates;
     module.walk([&](linalg::GenericOp generic_op) {
       if (isEligible(generic_op)) candidates.push_back(generic_op);
@@ -564,22 +586,18 @@ struct SplitReductionInnerOuterDimPass
         return;
       }
 
-      const auto simd_feature =
-          compute.getFeature<mlir::ktdf_arch::feature::SIMD>();
+      // A SIMD lane holds as many input elements as the compute unit has vector
+      // lanes for, as in reduction-loop-exposure.
+      const int64_t vector_length = scheduler::getVectorLanes(
+          cast<ShapedType>(generic_op.getInputs().front().getType())
+              .getElementType(),
+          compute);
 
-      // Derive the element type from the first output (the accumulator).
-      auto output_type =
-          dyn_cast<ShapedType>(generic_op.getOutputs().front().getType());
-      assert(output_type);
-      Type elem_type = output_type.getElementType();
-
-      const int64_t vector_length =
-          std::max(simd_feature.getLanes(elem_type), int64_t(1));
-
-      FailureOr<CandidateInfo> info =
+      FailureOr<std::optional<CandidateInfo>> info =
           partitionReductionDims(generic_op, vector_length);
-      if (failed(info)) continue;
-      if (failed(splitDim(*info))) return signalPassFailure();
+      if (failed(info)) return signalPassFailure();
+      if (!*info) continue;
+      if (failed(splitDim(**info))) return signalPassFailure();
     }
   }
 };
