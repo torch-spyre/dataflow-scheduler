@@ -67,11 +67,11 @@ namespace scheduler {
 
 namespace {
 
-/// Resolve the load unit kind for an op that may live inside either a
+/// Resolve the transfer unit kind for an op that may live inside either a
 /// ktdf.stage (pre-KTDFToKTDFLow IR) or a ktdf_lowering.execute_on
 /// (post-KTDFToKTDFLow / direct test IR).  Returns nullptr when the kind is
 /// ambiguous or cannot be resolved.
-scheduler::ResourceType resolveLoadUnitKind(mlir::Operation* op) {
+scheduler::ResourceType resolveTransferUnitKind(mlir::Operation* op) {
   // Pre-lowering: inside a ktdf.stage with applicable_units.
   if (auto stage = op->getParentOfType<mlir::ktdf::StageOp>()) {
     auto units = stage.getApplicableUnits();
@@ -91,7 +91,7 @@ static mlir::LogicalResult validateSplatCapability(
     mlir::ktdf::DataTransferOp transfer,
     const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   const auto simd = resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(
-      resolveLoadUnitKind(transfer));
+      resolveTransferUnitKind(transfer));
   if (!simd || !simd.canSplat())
     return transfer.emitError(
         "splat data_transfer requires the load unit to declare "
@@ -150,6 +150,19 @@ static mlir::LogicalResult checkSourceFitsWiderLoad(
             "big enough for a load of that size.";
 }
 
+/// Validate that @p transfer's store unit declares extract capability.
+static mlir::LogicalResult validateExtractCapability(
+    mlir::ktdf::DataTransferOp transfer,
+    const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
+  const auto simd = resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(
+      resolveTransferUnitKind(transfer));
+  if (!simd || !simd.canExtract())
+    return transfer.emitError(
+        "extract data_transfer requires the store unit to declare "
+        "ktdf_arch.feature.simd = { extract, ... }");
+  return mlir::success();
+}
+
 /// Legalize `transfer`'s load to the arch's access granularity and name, on
 /// every read of it, the shuffle that finishes the splat.  A no-op when the
 /// granularity is no wider than the source, i.e. when the hardware can splat
@@ -157,7 +170,7 @@ static mlir::LogicalResult checkSourceFitsWiderLoad(
 mlir::LogicalResult legalizeSplatTransfer(
     mlir::RewriterBase& rewriter, mlir::ktdf::DataTransferOp transfer,
     const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
-  scheduler::ResourceType load_unit_kind = resolveLoadUnitKind(transfer);
+  scheduler::ResourceType load_unit_kind = resolveTransferUnitKind(transfer);
 
   auto static_src_sizes = transfer.getStaticSourceSizesArray();
   if (!static_src_sizes || static_src_sizes->empty())
@@ -228,11 +241,22 @@ struct SplatLegalizationPass
         device_manager.getOrCreateView<mlir::ktdf_arch::ResourceKinds>(*device);
 
     llvm::SmallVector<mlir::ktdf::DataTransferOp> splats;
+    llvm::SmallVector<mlir::ktdf::DataTransferOp> extracts;
     module_op.walk([&](mlir::ktdf::DataTransferOp transfer) {
       if (transfer.isDestFifo() &&
           transfer.getTransferMode() == mlir::ktdf::TransferMode::Splat)
         splats.push_back(transfer);
+      else if (transfer.isSourceFifo() &&
+               transfer.getTransferMode() == mlir::ktdf::TransferMode::Extract)
+        extracts.push_back(transfer);
     });
+
+    for (auto transfer : extracts) {
+      if (mlir::failed(validateExtractCapability(transfer, resource_kinds))) {
+        signalPassFailure();
+        return;
+      }
+    }
 
     mlir::IRRewriter rewriter(&getContext());
     for (auto transfer : splats) {

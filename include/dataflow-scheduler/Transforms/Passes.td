@@ -884,4 +884,17 @@ def SimplifyLinalgPass : Pass<"simplify-linalg", "mlir::func::FuncOp"> {
   ];
 }
 
+def DataTransferAlignmentPass : Pass<"data-transfer-alignment", "mlir::ModuleOp"> {
+  let summary = "Legalize non-contiguous ktdf.data_transfer ops";
+  let description = [{
+    Legalizes non-contiguous (transposed) accesses in ktdf.data_transfer chains
+    anchored at a ktdp.construct_memory_view. Block transfers and staging
+    buffers are widened, and element-addressable transfers are scalarized, so
+    the stride swap happens element by element.
+
+    Must run after stage-coarsening + canonicalize and before double-buffering.
+  }];
+  let constructor = "::scheduler::createDataTransferAlignmentPass()";
+}
+
 #endif // DATAFLOW_SCHEDULER_TRANSFORMS_PASSES_TD

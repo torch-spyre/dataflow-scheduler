@@ -53,13 +53,15 @@
 // CHECK-NEXT:   path-expansion
 // CHECK-NEXT:   indirect-addr-buf-fill-legalization
 // CHECK-NEXT:   access-granularity-legalization
-// CHECK-NEXT:   splat-legalization
 // CHECK-NEXT:   normalize-scf-for-loops
 // CHECK-NEXT:   canonicalize
 // CHECK-NEXT:   tile-scf-for-loops
 // CHECK-NEXT:   canonicalize
 // CHECK-NEXT:   loop-invariant-code-motion
 // CHECK-NEXT:   stage-coarsening
+// CHECK-NEXT:   canonicalize
+// CHECK-NEXT:   data-transfer-alignment
+// CHECK-NEXT:   splat-legalization
 // CHECK-NEXT:   reduction-dim-chunking
 // CHECK-NEXT:   split-reduction-inner-outer-dim
 // CHECK-NEXT:   reduction-loop-exposure
