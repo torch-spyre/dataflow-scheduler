@@ -67,11 +67,11 @@ namespace scheduler {
 
 namespace {
 
-/// Resolve the load unit kind for an op that may live inside either a
+/// Resolve the transfer unit kind for an op that may live inside either a
 /// ktdf.stage (pre-KTDFToKTDFLow IR) or a ktdf_lowering.execute_on
 /// (post-KTDFToKTDFLow / direct test IR).  Returns nullptr when the kind is
 /// ambiguous or cannot be resolved.
-scheduler::ResourceType resolveLoadUnitKind(mlir::Operation* op) {
+scheduler::ResourceType resolveTransferUnitKind(mlir::Operation* op) {
   // Pre-lowering: inside a ktdf.stage with applicable_units.
   if (auto stage = op->getParentOfType<mlir::ktdf::StageOp>()) {
     auto units = stage.getApplicableUnits();
@@ -91,7 +91,7 @@ static mlir::LogicalResult validateSplatCapability(
     mlir::ktdf::DataTransferOp transfer,
     const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   const auto simd = resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(
-      resolveLoadUnitKind(transfer));
+      resolveTransferUnitKind(transfer));
   if (!simd || !simd.canSplat())
     return transfer.emitError(
         "splat data_transfer requires the load unit to declare "
@@ -155,7 +155,7 @@ static mlir::LogicalResult validateExtractCapability(
     mlir::ktdf::DataTransferOp transfer,
     const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
   const auto simd = resource_kinds.getFeature<mlir::ktdf_arch::feature::SIMD>(
-      resolveLoadUnitKind(transfer));
+      resolveTransferUnitKind(transfer));
   if (!simd || !simd.canExtract())
     return transfer.emitError(
         "extract data_transfer requires the store unit to declare "
@@ -170,7 +170,7 @@ static mlir::LogicalResult validateExtractCapability(
 mlir::LogicalResult legalizeSplatTransfer(
     mlir::RewriterBase& rewriter, mlir::ktdf::DataTransferOp transfer,
     const mlir::ktdf_arch::ResourceKinds& resource_kinds) {
-  scheduler::ResourceType load_unit_kind = resolveLoadUnitKind(transfer);
+  scheduler::ResourceType load_unit_kind = resolveTransferUnitKind(transfer);
 
   auto static_src_sizes = transfer.getStaticSourceSizesArray();
   if (!static_src_sizes || static_src_sizes->empty())

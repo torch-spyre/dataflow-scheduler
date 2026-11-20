@@ -885,11 +885,12 @@ def SimplifyLinalgPass : Pass<"simplify-linalg", "mlir::func::FuncOp"> {
 }
 
 def DataTransferAlignmentPass : Pass<"data-transfer-alignment", "mlir::ModuleOp"> {
-  let summary = "Align ktdf.data_transfer ops to hardware requirements";
+  let summary = "Legalize non-contiguous ktdf.data_transfer ops";
   let description = [{
-    Reads word size and access alignment constraints from the ktdf_arch.device
-    spec and rewrites any transfers that violate those constraints, resizing
-    staging buffers and transfer shapes until all transfers are legal.
+    Legalizes non-contiguous (transposed) accesses in ktdf.data_transfer chains
+    anchored at a ktdp.construct_memory_view. Block transfers and staging
+    buffers are widened, and element-addressable transfers are scalarized, so
+    the stride swap happens element by element.
 
     Must run after stage-coarsening + canonicalize and before double-buffering.
   }];

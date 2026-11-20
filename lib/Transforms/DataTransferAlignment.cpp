@@ -744,8 +744,7 @@ llvm::SetVector<mlir::Value> collectStagingBuffers(
   for (mlir::ktdf::DataTransferOp transfer : chain.hops) {
     for (mlir::Value operand :
          {transfer.getSource(), transfer.getDestination()}) {
-      if (isPerCoreScratchpad(operand, memory_tree) &&
-          !isViewBacked(operand)) {
+      if (isPerCoreScratchpad(operand, memory_tree) && !isViewBacked(operand)) {
         staging_buffers.insert(operand);
       }
     }
