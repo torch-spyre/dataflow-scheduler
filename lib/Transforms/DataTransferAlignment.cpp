@@ -260,6 +260,29 @@ bool isElementAddressable(
              kind, space, *elem_bytes, resource_kinds);
 }
 
+/// Walks back through cast-like ops to the defining construct_memory_view.
+mlir::ktdp::ConstructMemoryViewOp findConstructMemoryView(mlir::Value val) {
+  while (auto* def = val.getDefiningOp()) {
+    if (auto construct =
+            mlir::dyn_cast<mlir::ktdp::ConstructMemoryViewOp>(def)) {
+      return construct;
+    }
+    if (!mlir::isa<mlir::memref::CastOp, mlir::memref::MemorySpaceCastOp,
+                   mlir::memref::ReinterpretCastOp>(def)) {
+      return {};
+    }
+    val = def->getOperand(0);
+  }
+  return {};
+}
+
+/// True if `val` traces to a construct_memory_view: data that lives in a
+/// pinned view, in any memory space, rather than a buffer the pipeline
+/// allocated itself.
+bool isViewBacked(mlir::Value val) {
+  return static_cast<bool>(findConstructMemoryView(val));
+}
+
 /// Returns true if `val` is a memref located in per-core ct_local memory.
 bool isPerCoreScratchpad(mlir::Value val,
                          const scheduler::arch_view::MemoryTree& memory_tree) {
@@ -303,7 +326,8 @@ llvm::SmallVector<TransferChain> collectTransferChains(
       continue;
     }
     mlir::Value src = transfer.getSource();
-    if (!isPerCoreScratchpad(src, memory_tree) && !input_of.count(src)) {
+    if ((!isPerCoreScratchpad(src, memory_tree) || isViewBacked(src)) &&
+        !input_of.count(src)) {
       input_of[src] = new_chain(src, true);
     }
     auto it = input_of.find(src);
@@ -326,7 +350,8 @@ llvm::SmallVector<TransferChain> collectTransferChains(
       continue;
     }
     mlir::Value dst = transfer.getDestination();
-    if (!isPerCoreScratchpad(dst, memory_tree) && !output_of.count(dst)) {
+    if ((!isPerCoreScratchpad(dst, memory_tree) || isViewBacked(dst)) &&
+        !output_of.count(dst)) {
       output_of[dst] = new_chain(dst, false);
     }
     auto it = output_of.find(dst);
@@ -524,22 +549,6 @@ mlir::LogicalResult widenStagingAlloc(mlir::Value val,
   return mlir::success();
 }
 
-/// Walks back through cast-like ops to the defining construct_memory_view.
-mlir::ktdp::ConstructMemoryViewOp findConstructMemoryView(mlir::Value val) {
-  while (auto* def = val.getDefiningOp()) {
-    if (auto construct =
-            mlir::dyn_cast<mlir::ktdp::ConstructMemoryViewOp>(def)) {
-      return construct;
-    }
-    if (!mlir::isa<mlir::memref::CastOp, mlir::memref::MemorySpaceCastOp,
-                   mlir::memref::ReinterpretCastOp>(def)) {
-      return {};
-    }
-    val = def->getOperand(0);
-  }
-  return {};
-}
-
 /// Pushes `construct`'s result layout forward through downstream cast-like
 /// ops so the old strided layout does not linger in their result types.
 void propagateLayout(mlir::ktdp::ConstructMemoryViewOp construct) {
@@ -735,7 +744,8 @@ llvm::SetVector<mlir::Value> collectStagingBuffers(
   for (mlir::ktdf::DataTransferOp transfer : chain.hops) {
     for (mlir::Value operand :
          {transfer.getSource(), transfer.getDestination()}) {
-      if (isPerCoreScratchpad(operand, memory_tree)) {
+      if (isPerCoreScratchpad(operand, memory_tree) &&
+          !isViewBacked(operand)) {
         staging_buffers.insert(operand);
       }
     }
