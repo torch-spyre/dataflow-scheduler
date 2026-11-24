@@ -43,6 +43,7 @@
 // CHECK-NEXT:                ktdf.data_transfer from %[[PRIVATE]]#8[0, 0, 0, 0] size [1, 1, 1, 64] to %[[PRIVATE]]#2 size [1, 1, 1, 64] : memref<1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>
 // CHECK-NEXT:              }
 // CHECK-NEXT:              ktdf.stage depends_in(%[[PRIVATE]]#3, %[[PRIVATE]]#5) depends_out(%[[PRIVATE]]#1) {
+// CHECK-NEXT:                tensor.empty() : tensor<1x1x1x1x64xf16>
 // CHECK-NEXT:                %[[READ_0:.+]] = ktdf.read_from_fifo %[[PRIVATE]]#6 : <"DDR" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
 // CHECK-NEXT:                %[[READ_1:.+]] = ktdf.read_from_fifo %[[PRIVATE]]#2 : <"L1" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
 // CHECK:                     %[[GENERIC:.+]] = linalg.generic {indexing_maps = [#[[MAP]], #[[MAP1]], #[[MAP2]]], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} 

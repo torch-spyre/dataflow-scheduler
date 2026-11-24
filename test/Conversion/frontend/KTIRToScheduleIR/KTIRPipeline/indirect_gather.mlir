@@ -37,6 +37,7 @@
 
 // Stage 2 (compute).
 // CHECK-NEXT:            ktdf.stage depends_in(%[[PRV]]#3) depends_out(%[[PRV]]#1) {
+// CHECK-NEXT:              tensor.empty() : tensor<64xf16>
 // CHECK-NEXT:              %[[DATA:.+]] = ktdf.read_from_fifo %[[PRV]]#2 : <"DDR" -> "SFU", 64xf16> -> tensor<64xf16>
 // CHECK:                   %[[RES:.+]] = linalg.generic {{.+}} ins(%[[DATA]] : tensor<64xf16>) {{.+}} attrs = {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"}
 // CHECK:                   ktdf.write_to_fifo %[[RES]], %[[PRV]]#0

@@ -32,7 +32,6 @@
 #include <mlir/IR/Attributes.h>
 #include <mlir/IR/Builders.h>
 #include <mlir/IR/BuiltinAttributeInterfaces.h>
-#include <mlir/IR/Dominance.h>
 #include <mlir/IR/Location.h>
 #include <mlir/IR/OpDefinition.h>
 #include <mlir/IR/Operation.h>
@@ -69,6 +68,10 @@ namespace scheduler {
 namespace {
 
 /// Combines FIFO slot allocations of the same FIFO type.
+///
+/// The slots of one allocation are kept in the order of their writes: a new
+/// slot goes before the first of its slots that the builder lists as written
+/// later, or last if none is listed.
 class Allocator : public mlir::ktdf::PipelineBuilder::Allocator {
   // TODO: Add support for dynamic dimensions.
   //
@@ -81,7 +84,9 @@ class Allocator : public mlir::ktdf::PipelineBuilder::Allocator {
 
  public:
   auto allocate(mlir::ktdf::PipelineBuilder& builder, mlir::OpResult producer,
-                mlir::ktdf::StageOp consumer) -> mlir::ktdf::FifoSlot override {
+                mlir::ktdf::StageOp consumer,
+                llvm::ArrayRef<mlir::ktdf::FifoSlot> later)
+      -> mlir::ktdf::FifoSlot override {
     mlir::IRRewriter rewriter(builder.getPrivateBuilder());
 
     const auto type = getFifoSlotType(producer, consumer);
@@ -90,17 +95,29 @@ class Allocator : public mlir::ktdf::PipelineBuilder::Allocator {
       // Create a new allocation.
       alloc = mlir::ktdf::FifoAllocateOp::create(rewriter, producer.getLoc(),
                                                  {type}, {});
-    } else {
-      // Expand the existing allocation to have one more slot.
-      const llvm::SmallVector<mlir::Type> slot_types(alloc->getNumResults() + 1,
-                                                     type);
-      auto old_alloc = std::exchange(
-          alloc, mlir::ktdf::FifoAllocateOp::create(rewriter, producer.getLoc(),
-                                                    slot_types, {}));
-      rewriter.replaceOp(old_alloc, alloc->getResults().drop_front());
+      return mlir::cast<mlir::ktdf::FifoSlot>(alloc.getResults().front());
     }
 
-    return mlir::cast<mlir::ktdf::FifoSlot>(alloc.getResults().front());
+    // Find the position of the new slot: before the first later slot.
+    auto index = alloc->getNumResults();
+    for (auto slot : later) {
+      if (auto result = llvm::dyn_cast<mlir::OpResult>(slot);
+          result && result.getOwner() == alloc) {
+        index = std::min(index, result.getResultNumber());
+      }
+    }
+
+    // Expand the existing allocation to have one more slot at that position.
+    const llvm::SmallVector<mlir::Type> slot_types(alloc->getNumResults() + 1,
+                                                   type);
+    auto old_alloc =
+        std::exchange(alloc, mlir::ktdf::FifoAllocateOp::create(
+                                 rewriter, producer.getLoc(), slot_types, {}));
+    llvm::SmallVector<mlir::Value> replacements(alloc->getResults());
+    replacements.erase(replacements.begin() + index);
+    rewriter.replaceOp(old_alloc, replacements);
+
+    return mlir::cast<mlir::ktdf::FifoSlot>(alloc.getResult(index));
   }
 
  private:
@@ -113,8 +130,7 @@ struct KTIRPipelinePass : public impl::KTIRPipelinePassBase<KTIRPipelinePass> {
   void runOnOperation() override;
 
  private:
-  static auto createPipeline(mlir::RewriterBase& rewriter, mlir::Location loc,
-                             mlir::DominanceInfo& dominance)
+  static auto createPipeline(mlir::RewriterBase& rewriter, mlir::Location loc)
       -> mlir::ktdf::PipelineOp;
 };
 
@@ -327,7 +343,6 @@ void KTIRPipelinePass::runOnOperation() {
 
   mlir::func::FuncOp func = getOperation();
   mlir::IRRewriter rewriter(func);
-  mlir::DominanceInfo dominance;
 
   // Obtain the default device and start a mapping.
   auto& default_device = getAnalysis<mlir::ktdf_arch::DefaultDevice>();
@@ -342,7 +357,7 @@ void KTIRPipelinePass::runOnOperation() {
       func.getOps<mlir::scf::ForOp>(),
       [&](mlir::scf::ForOp outermost) -> mlir::Operation* {
         rewriter.setInsertionPointToEnd(findInnermost(outermost).getBody());
-        return createPipeline(rewriter, outermost->getLoc(), dominance);
+        return createPipeline(rewriter, outermost->getLoc());
       });
 
   // Normalize the pipelines.
@@ -377,8 +392,7 @@ void KTIRPipelinePass::runOnOperation() {
 }
 
 auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
-                                      mlir::Location loc,
-                                      mlir::DominanceInfo& dominance)
+                                      mlir::Location loc)
     -> mlir::ktdf::PipelineOp {
   // Create the pipeline at the end of the insertion block.
   mlir::OpBuilder::InsertionGuard guard(rewriter);
@@ -474,9 +488,6 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
 
   // Insert all the stores and their dependencies. Stores that fill an indirect
   // address buffer are left to be co-located with their indirect transfer.
-  // The builder prepends every op to its stage, so insert the stores in reverse
-  // program order to get program order in the stage. Stores to one memory space
-  // share a stage and are paired with their consumers by position.
   llvm::SmallVector<mlir::Operation*> stores;
   block->walk([&](mlir::Operation* op) {
     if (auto store = llvm::dyn_cast<mlir::ktdp_lowering::StoreOp>(op);
@@ -486,9 +497,7 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
       stores.push_back(op);
     }
   });
-  for (auto* const store : llvm::reverse(stores)) {
-    builder.insert({store}, place, dominance);
-  }
+  builder.insert(stores, place);
 
   // Move the fills of each indirect address buffer into the stage of the
   // indirect transfer that uses it, ahead of that transfer. The buffer's state
@@ -522,12 +531,8 @@ auto KTIRPipelinePass::createPipeline(mlir::RewriterBase& rewriter,
                  ? mlir::ktdf::PipelineBuilder::Placement(stage)
                  : place(builder, op);
     };
-    // Ops are inserted at the beginning of the stage, so insert the fills in
-    // reverse to keep their order.
-    for (auto* const fill : llvm::reverse(fills)) {
-      LDBG() << "inserting fill " << *fill;
-      builder.insert({fill}, place_fill, dominance);
-    }
+    LDBG() << "inserting " << fills.size() << " fills";
+    builder.insert(fills, place_fill);
   }
 
   auto result = builder.build();

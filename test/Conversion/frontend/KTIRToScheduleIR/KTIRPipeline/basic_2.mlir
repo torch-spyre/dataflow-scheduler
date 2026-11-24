@@ -44,9 +44,9 @@
 // CHECK-NEXT:               ktdf.data_transfer from %[[REINTERPRET_CAST_1]]{{\[}}%[[VAL_0]], %[[VAL_1]], %[[VAL_2]]] size [1, 2, 32] to %[[PRIVATE_0]]#4 size [1, 2, 32] {dataflow_scheduler.throttle = 64 : i64} : memref<2x4x32xf16, strided<[128, 32, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
 // CHECK-NEXT:             }
 // CHECK-NEXT:             ktdf.stage depends_in(%[[PRIVATE_0:.*]]#2) depends_out(%[[PRIVATE_0]]#1) {
+// CHECK-NEXT:               %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x2x32xf16>
 // CHECK-NEXT:               %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#3 : <"DDR" -> "SFU", 64xf16> -> tensor<1x2x32xf16>
 // CHECK-NEXT:               %[[READ_FROM_FIFO_1:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#4 : <"DDR" -> "SFU", 64xf16> -> tensor<1x2x32xf16>
-// CHECK-NEXT:               %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x2x32xf16>
 // CHECK-NEXT:               %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_0]], #[[$ATTR_0]]], iterator_types = ["parallel", "parallel", "parallel"]} ins(%[[READ_FROM_FIFO_0]], %[[READ_FROM_FIFO_1]] : tensor<1x2x32xf16>, tensor<1x2x32xf16>) outs(%[[EMPTY_0]] : tensor<1x2x32xf16>) attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
 // CHECK-NEXT:               ^bb0(%[[VAL_5:.*]]: f16, %[[VAL_6:.*]]: f16, %[[VAL_7:.*]]: f16):
 // CHECK-NEXT:                 %[[ADDF_0:.*]] = arith.addf %[[VAL_5]], %[[VAL_6]] : f16
