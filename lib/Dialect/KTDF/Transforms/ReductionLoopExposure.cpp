@@ -247,12 +247,12 @@ static LogicalResult collectReductionGenericOps(
 }
 
 // ---------------------------------------------------------------------------
-// Walk all data_transfer ops inside `pipeline` and divide their static source
-// or destination sizes by `reduction_size` wherever the FIFO endpoint was
-// shrunken (i.e. its result index appears in `shrunken_fifo_map`).
+// A FIFO has a flat element count, even when its transfer sizes came from a
+// multi-dimensional tensor. Use the resized slot's count; dividing each axis
+// by the reduction extent would shrink the volume more than once.
 // ---------------------------------------------------------------------------
 static void patchDataTransferSizes(
-    ktdf::PipelineOp pipeline, ktdf::PrivateOp new_priv, int64_t reduction_size,
+    ktdf::PipelineOp pipeline, ktdf::PrivateOp new_priv,
     const llvm::DenseMap<unsigned, ktdf::FifoSlotType>& shrunken_fifo_map,
     MLIRContext* ctx) {
   pipeline->walk([&](ktdf::DataTransferOp xfer) {
@@ -260,10 +260,10 @@ static void patchDataTransferSizes(
       auto fifo_res = dyn_cast<OpResult>(xfer.getDestination());
       if (fifo_res && fifo_res.getOwner() == new_priv &&
           shrunken_fifo_map.count(fifo_res.getResultNumber())) {
-        if (auto sizes = xfer.getStaticDestSizes()) {
-          SmallVector<int64_t> new_sizes;
-          for (int64_t sz : *sizes) new_sizes.push_back(sz / reduction_size);
-          xfer.setStaticDestSizesAttr(DenseI64ArrayAttr::get(ctx, new_sizes));
+        if (xfer.getStaticDestSizes()) {
+          xfer.setStaticDestSizesAttr(DenseI64ArrayAttr::get(
+              ctx, {shrunken_fifo_map.lookup(fifo_res.getResultNumber())
+                        .getNumElements()}));
         }
       }
     }
@@ -271,10 +271,10 @@ static void patchDataTransferSizes(
       auto fifo_res = dyn_cast<OpResult>(xfer.getSource());
       if (fifo_res && fifo_res.getOwner() == new_priv &&
           shrunken_fifo_map.count(fifo_res.getResultNumber())) {
-        if (auto sizes = xfer.getStaticSourceSizes()) {
-          SmallVector<int64_t> new_sizes;
-          for (int64_t sz : *sizes) new_sizes.push_back(sz / reduction_size);
-          xfer.setStaticSourceSizesAttr(DenseI64ArrayAttr::get(ctx, new_sizes));
+        if (xfer.getStaticSourceSizes()) {
+          xfer.setStaticSourceSizesAttr(DenseI64ArrayAttr::get(
+              ctx, {shrunken_fifo_map.lookup(fifo_res.getResultNumber())
+                        .getNumElements()}));
         }
       }
     }
@@ -691,8 +691,7 @@ struct ReductionLoopExposurePass
     // 1b. Patch data_transfer static sizes for any transfer that uses a
     //     shrunken FIFO.
     // -----------------------------------------------------------------------
-    patchDataTransferSizes(inner_pipeline, new_priv, reduction_size,
-                           shrunken_fifo_map, ctx);
+    patchDataTransferSizes(inner_pipeline, new_priv, shrunken_fifo_map, ctx);
 
     // -----------------------------------------------------------------------
     // 2. Build shared constants before the inner pipeline.
