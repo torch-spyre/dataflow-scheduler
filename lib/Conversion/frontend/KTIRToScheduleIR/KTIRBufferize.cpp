@@ -483,8 +483,27 @@ struct LowerTiledLoad : mlir::OpRewritePattern<mlir::ktdp_lowering::LoadOp> {
       mlir::Value offset = computeReinterpretCastOffset(rewriter, load.getLoc(),
                                                         *indices, strides);
       llvm::ArrayRef<int64_t> tile_shape = tile_op.getType().getShape();
+      llvm::SmallVector<int64_t> view_shape(tile_shape.begin(),
+                                            tile_shape.end());
+      const bool repeats_source = llvm::any_of(
+          llvm::zip(load.getStaticSizes(), load.getStaticStrides()),
+          [](auto size_and_stride) {
+            auto [size, stride] = size_and_stride;
+            return size > 1 && stride == 0;
+          });
+      // Preserve the readable extent along a physically contiguous dimension.
+      const auto view_type = memory_view.getType();
+      if (repeats_source && (view_type.getElementType().isF32() ||
+                             view_type.getElementType().isInteger(32))) {
+        for (size_t dim = 0; dim < view_shape.size(); ++dim) {
+          if (view_shape[dim] == 1 && view_type.getDimSize(dim) > 1 &&
+              mlir::isZeroInteger((*indices)[dim]) && strides[dim] == 1) {
+            view_shape[dim] = view_type.getDimSize(dim);
+          }
+        }
+      }
       source = buildBaseView(rewriter, load.getLoc(), memory_view, offset,
-                             tile_shape, mem_space_map_,
+                             view_shape, mem_space_map_,
                              /*emit_space_cast=*/!is_iab_fill_path);
     } else {
       source = is_iab_fill_path
