@@ -49,10 +49,12 @@ using namespace scheduler;
 
 namespace {
 
-/// Gets the value of the `dataflow_scheduler.throttle` attribute, if any.
-[[nodiscard]] auto getThrottle(mlir::Operation* op) -> std::optional<int64_t> {
+/// Gets the value of the `dataflow_scheduler.access_granularity` attribute, if
+/// any.
+[[nodiscard]] auto getAccessGranularity(mlir::Operation* op)
+    -> std::optional<int64_t> {
   if (const auto attr = llvm::dyn_cast_if_present<mlir::ktdf_arch::I64Attr>(
-          op->getDiscardableAttr(kThrottleAttrName));
+          op->getDiscardableAttr(kAccessGranularityAttrName));
       attr) {
     return attr.getValue();
   }
@@ -399,10 +401,10 @@ struct LowerIndDataTransferPattern
 
     auto elem_type = dir_src_memref_type.getElementType();
 
-    const auto throttle = getThrottle(op);
-    if (!throttle) {
+    const auto granularity = getAccessGranularity(op);
+    if (!granularity) {
       return op.emitError()
-             << "missing '" << kThrottleAttrName << "' attribute";
+             << "missing '" << kAccessGranularityAttrName << "' attribute";
     }
 
     const int64_t total_src = [&] {
@@ -410,7 +412,7 @@ struct LowerIndDataTransferPattern
       for (int64_t s : src_sizes) t *= s;
       return t;
     }();
-    const int64_t iv_lanes = std::min(total_src, *throttle);
+    const int64_t iv_lanes = std::min(total_src, *granularity);
     auto load_iv_type = mlir::VectorType::get({iv_lanes}, elem_type);
 
     // load_set / load_order: per-vector footprint on the dir_src side.
@@ -434,7 +436,7 @@ struct LowerIndDataTransferPattern
 
     // Time set / order / addr maps.
     TransferTimeDims src_time_dims =
-        describeTransferTimeDims(src_sizes, *throttle);
+        describeTransferTimeDims(src_sizes, *granularity);
     llvm::SmallVector<int64_t> time_extents = src_time_dims.extents;
     if (time_extents.empty()) time_extents.push_back(1);
     const unsigned num_time_dims = time_extents.size();
@@ -474,7 +476,7 @@ struct LowerIndDataTransferPattern
     mlir::AffineMap store_direct_time_addr_map;
     if (!dst_is_fifo) {
       TransferTimeDims dst_time_dims =
-          describeTransferTimeDims(dst_sizes, *throttle);
+          describeTransferTimeDims(dst_sizes, *granularity);
       store_direct_time_addr_map = mlir::AffineMap::get(
           num_time_dims, 0, dst_time_dims.offsets(ctx), ctx);
     } else {
@@ -816,10 +818,10 @@ struct LowerDataTransferPattern
     auto* context = rewriter.getContext();
     const int64_t total = vector_type.getNumElements();
 
-    const auto throttle = getThrottle(data_transfer_op);
-    if (!throttle) {
+    const auto granularity = getAccessGranularity(data_transfer_op);
+    if (!granularity) {
       return data_transfer_op.emitError()
-             << "missing '" << kThrottleAttrName << "' attribute";
+             << "missing '" << kAccessGranularityAttrName << "' attribute";
     }
 
     // Sizes describing the elements covered by one AGEN vector transfer, and
@@ -834,28 +836,28 @@ struct LowerDataTransferPattern
     // loop; see below.
     std::optional<unsigned> loop_time_dim;
 
-    if (total > *throttle) {
+    if (total > *granularity) {
       if (src_static_sizes.empty() || dst_static_sizes.empty()) {
         data_transfer_op.emitError()
             << "data transfer of " << total
-            << " elements exceeds the throttle of " << *throttle
+            << " elements exceeds the access granularity of " << *granularity
             << " but has no dimensions to split";
         return mlir::failure();
       }
 
-      if (src_static_sizes.back() % *throttle != 0 ||
-          dst_static_sizes.back() % *throttle != 0) {
+      if (src_static_sizes.back() % *granularity != 0 ||
+          dst_static_sizes.back() % *granularity != 0) {
         data_transfer_op.emitError()
             << "data transfer of " << total
-            << " elements exceeds the throttle of " << *throttle
+            << " elements exceeds the access granularity of " << *granularity
             << "; splitting requires the innermost source and destination "
-               "sizes to be a multiple of the throttle, but they are "
+               "sizes to be a multiple of the access granularity, but they are "
             << src_static_sizes.back() << " and " << dst_static_sizes.back();
         return mlir::failure();
       }
 
-      src_time_dims = describeTransferTimeDims(src_static_sizes, *throttle);
-      dst_time_dims = describeTransferTimeDims(dst_static_sizes, *throttle);
+      src_time_dims = describeTransferTimeDims(src_static_sizes, *granularity);
+      dst_time_dims = describeTransferTimeDims(dst_static_sizes, *granularity);
 
       // Only the extents are compared, not positions or coefficients: the
       // two sides may reach the same walk through different shapes, e.g.
@@ -869,11 +871,11 @@ struct LowerDataTransferPattern
       }
 
       load_iv_type =
-          mlir::VectorType::get({*throttle}, vector_type.getElementType());
+          mlir::VectorType::get({*granularity}, vector_type.getElementType());
       load_sizes.assign(src_static_sizes.size(), 1);
-      load_sizes.back() = *throttle;
+      load_sizes.back() = *granularity;
       store_sizes.assign(dst_static_sizes.size(), 1);
-      store_sizes.back() = *throttle;
+      store_sizes.back() = *granularity;
 
       // A time dimension is one step count shared by both sides, so it is only
       // realizable when both sides move the same distance per step: one count

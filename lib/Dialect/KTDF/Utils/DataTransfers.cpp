@@ -246,55 +246,19 @@ auto scheduler::getMemorySpace(mlir::Value value) -> mlir::Attribute {
 }
 
 //===----------------------------------------------------------------------===//
-// scheduler::(get|set)Throttle
+// scheduler::(get|set)AccessGranularity
 //===----------------------------------------------------------------------===//
 
-auto scheduler::getThrottle(mlir::Operation* op) -> int64_t {
-  const auto attr =
-      op->getAttrOfType<mlir::ktdf_arch::I64Attr>(kThrottleAttrName);
-  return attr ? attr.getValue() : std::numeric_limits<int64_t>::max();
+auto scheduler::getAccessGranularity(mlir::Operation* op) -> int64_t {
+  if (const auto attr = op->getAttrOfType<mlir::ktdf_arch::I64Attr>(
+          kAccessGranularityAttrName)) {
+    return attr.getValue();
+  }
+  return std::numeric_limits<int64_t>::max();
 };
 
-/// Whether @p op only moves data and passes on the throttle around it.
-[[nodiscard]] static auto isThrottleTransparent(mlir::Operation* op) -> bool {
-  return !op->hasAttr(kThrottleAttrName) &&
-         (isReshape(op) ||
-          llvm::isa<mlir::tensor::ExtractSliceOp, mlir::tensor::InsertSliceOp>(
-              op));
-}
-
-auto scheduler::getThrottle(mlir::OpResult result) -> int64_t {
-  auto min = std::numeric_limits<int64_t>::max();
-  for (auto* user : result.getUsers()) {
-    min = std::min(min, isThrottleTransparent(user)
-                            ? getThrottle(user->getOpResult(0))
-                            : getThrottle(user));
-  }
-  return min;
-};
-
-auto scheduler::getThrottle(mlir::OpOperand& operand) -> int64_t {
-  auto result = llvm::dyn_cast<mlir::OpResult>(operand.get());
-  if (!result) {
-    return std::numeric_limits<int64_t>::max();
-  }
-
-  auto* const producer = result.getOwner();
-  if (!isThrottleTransparent(producer)) {
-    return getThrottle(producer);
-  }
-
-  // An `insert_slice` combines its source and destination.
-  if (auto insert = llvm::dyn_cast<mlir::tensor::InsertSliceOp>(producer)) {
-    return std::min(getThrottle(insert.getSourceMutable()),
-                    getThrottle(insert.getDestMutable()));
-  }
-
-  return getThrottle(producer->getOpOperand(0));
-}
-
-void scheduler::setThrottle(mlir::Operation* op, int64_t value) {
-  op->setAttr(kThrottleAttrName,
+void scheduler::setAccessGranularity(mlir::Operation* op, int64_t value) {
+  op->setAttr(kAccessGranularityAttrName,
               mlir::ktdf_arch::I64Attr::get(op->getContext(), value));
 }
 
@@ -487,7 +451,7 @@ struct TileLoad : mlir::OpRewritePattern<mlir::tensor::ExtractSliceOp> {
             .getElementType();
     auto new_load = mlir::ktdp_lowering::LoadOp::create(
         rewriter, load.getLoc(), load.getAccessTile(), slice, element_type);
-    setThrottle(new_load, getThrottle(extract->getOpResult(0)));
+    new_load->setDiscardableAttrs(load->getRawDictionaryAttrs());
 
     // Reshape the tile, and add the hops back in, counting the load as one.
     mlir::Value loaded =
@@ -623,7 +587,7 @@ struct TileStore : mlir::OpRewritePattern<mlir::ktdp::StoreOp> {
     // Create the `ktdp_lowering.store` that captures the applied tiling.
     auto new_store = mlir::ktdp_lowering::StoreOp::create(
         rewriter, store.getLoc(), stored, store.getAccessTile(), slice);
-    setThrottle(new_store, getThrottle(insert_slice.getSourceMutable()));
+    new_store->setDiscardableAttrs(store->getRawDictionaryAttrs());
 
     // The loop nest no longer produces the data, and remaining users must now
     // load it again from memory.

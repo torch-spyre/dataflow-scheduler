@@ -130,7 +130,7 @@ struct KTIRMapAndTilePass
 }
 
 /// Maps @p op to the default compute resource, unless it already is, and
-/// annotates the vector width for @p element_type on it as the throttle.
+/// annotates the vector width for @p element_type on it as the vector lanes.
 ///
 /// @return The vector width.
 auto mapToCompute(mlir::linalg::LinalgOp op, mlir::ktdf_arch::Mapping& mapping,
@@ -147,8 +147,9 @@ auto mapToCompute(mlir::linalg::LinalgOp op, mlir::ktdf_arch::Mapping& mapping,
   const auto vector_length =
       std::max(simd_feature.getLanes(element_type), int64_t{1});
 
-  // Annotate the vector width as the throttle for this operation.
-  setThrottle(op, vector_length);
+  // Annotate the vector width as vector lanes for this operation.
+  op->setAttr(kVectorLanesAttrName,
+              mlir::ktdf_arch::I64Attr::get(op->getContext(), vector_length));
   return vector_length;
 }
 
@@ -515,12 +516,12 @@ struct BroadcastInputs : mlir::OpRewritePattern<mlir::linalg::GenericOp> {
   auto matchAndRewrite(mlir::linalg::GenericOp op,
                        mlir::PatternRewriter& rewriter) const
       -> mlir::LogicalResult override {
-    const auto throttle_attr =
-        op->getAttrOfType<mlir::ktdf_arch::I64Attr>(kThrottleAttrName);
-    if (!throttle_attr) {
-      return rewriter.notifyMatchFailure(op, "missing throttle attribute");
+    const auto vector_lanes_attr =
+        op->getAttrOfType<mlir::ktdf_arch::I64Attr>(kVectorLanesAttrName);
+    if (!vector_lanes_attr) {
+      return rewriter.notifyMatchFailure(op, "missing vector_lanes attribute");
     }
-    const auto vector_lanes = throttle_attr.getValue();
+    const auto vector_lanes = vector_lanes_attr.getValue();
     const auto zero = rewriter.getIndexAttr(0);
     const auto one = rewriter.getIndexAttr(1);
 

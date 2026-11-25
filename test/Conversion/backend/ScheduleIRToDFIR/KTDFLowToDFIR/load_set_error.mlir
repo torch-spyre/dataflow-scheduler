@@ -365,7 +365,7 @@ module {
       %24 = builtin.unrealized_conversion_cast %c0_16 : index to memref<1x64xf16, "L1">
       ktdf_lowering.execute_on %12 {
         ktdf_lowering.execute_on %12 {
-          ktdf.data_transfer from %cast_12[%c0_8, %c0_8] size [1, 64] to %24[0, 0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+          ktdf.data_transfer from %cast_12[%c0_8, %c0_8] size [1, 64] to %24[0, 0] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
         }
       }
       %c128 = arith.constant 128 : index
@@ -397,7 +397,7 @@ module {
                 scf.for %arg3 = %c0_8 to %30 step %c1_9 {
                   %37 = affine.apply #map(%arg0, %arg2)
                   %38 = affine.apply #map(%arg1, %arg3)
-                  ktdf.data_transfer from %cast[%arg0 * 2 + %arg2, 0, %arg1 * 2 + %arg3, 0] size [1, 1, 1, 64] to %32[%arg2, %arg3, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, memref<?x?x1x1x1x64xf16, "L1">
+                  ktdf.data_transfer from %cast[%arg0 * 2 + %arg2, 0, %arg1 * 2 + %arg3, 0] size [1, 1, 1, 64] to %32[%arg2, %arg3, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, memref<?x?x1x1x1x64xf16, "L1">
                 } {loop_type = #ktdf.loop_type<parallel_loop>}
               } {loop_type = #ktdf.loop_type<parallel_loop>}
             }
@@ -411,8 +411,8 @@ module {
                     %39 = ktdf.create_token : !ktdf.token
                     %40 = ktdf.create_token : !ktdf.token
                     ktdf_lowering.execute_on %14 {
-                      ktdf.data_transfer from %32[%arg2, %arg3, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] to %37#0 size [64] {dataflow_scheduler.throttle = 64 : i64} : memref<?x?x1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
-                      ktdf.data_transfer from %24[0, 0] size [1, 64] to %37#1 size [64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+                      ktdf.data_transfer from %32[%arg2, %arg3, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 64] to %37#0 size [64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<?x?x1x1x1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+                      ktdf.data_transfer from %24[0, 0] size [1, 64] to %37#1 size [64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
                     }
                     ktdf_lowering.execute_on %16 {
                       %41 = ktdf.read_from_fifo %37#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
@@ -426,7 +426,7 @@ module {
                       ktdf.write_to_fifo %44, %38 : tensor<1x1x1x1x64xf16>, <"SFU" -> "L1SU", 64xf16>
                     }
                     ktdf_lowering.execute_on %18 {
-                      ktdf.data_transfer from %38 size [64] to %33[%arg2, %arg3, 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64} : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<?x?x1x1x1x1x64xf16, "L1">
+                      ktdf.data_transfer from %38 size [64] to %33[%arg2, %arg3, 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<?x?x1x1x1x1x64xf16, "L1">
                     }
                   }
                 } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -438,7 +438,7 @@ module {
                 scf.for %arg3 = %c0_8 to %30 step %c1_9 {
                   %37 = affine.apply #map(%arg0, %arg2)
                   %38 = affine.apply #map(%arg1, %arg3)
-                  ktdf.data_transfer from %33[%arg2, %arg3, 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] to %cast_15[%arg0 * 2 + %arg2, 0, 0, %arg1 * 2 + %arg3, 0] size [1, 1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<?x?x1x1x1x1x64xf16, "L1">, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
+                  ktdf.data_transfer from %33[%arg2, %arg3, 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64] to %cast_15[%arg0 * 2 + %arg2, 0, 0, %arg1 * 2 + %arg3, 0] size [1, 1, 1, 1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<?x?x1x1x1x1x64xf16, "L1">, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
                 } {loop_type = #ktdf.loop_type<parallel_loop>}
               } {loop_type = #ktdf.loop_type<parallel_loop>}
             }

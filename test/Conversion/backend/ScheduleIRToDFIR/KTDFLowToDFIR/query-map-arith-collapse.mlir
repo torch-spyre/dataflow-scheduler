@@ -41,7 +41,7 @@ module {
       scf.for %arg2 = %c0 to %c64 step %c64 {
         ktdf_lowering.execute_on %resolved {
           %alloc = memref.alloc() : memref<1x64xf16, "L1">
-          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}
     } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -85,7 +85,7 @@ module {
       scf.for %arg2 = %c0 to %c64 step %c64 {
         ktdf_lowering.execute_on %resolved {
           %alloc = memref.alloc() : memref<1x64xf16, "L1">
-          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}
     } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -130,7 +130,7 @@ module {
       scf.for %arg2 = %c0 to %c64 step %c64 {
         ktdf_lowering.execute_on %resolved {
           %alloc = memref.alloc() : memref<1x64xf16, "L1">
-          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}
     } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -178,7 +178,7 @@ module {
       scf.for %arg2 = %c0 to %c64 step %c64 {
         ktdf_lowering.execute_on %resolved {
           %alloc = memref.alloc() : memref<1x64xf16, "L1">
-          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}
     } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -232,7 +232,7 @@ module {
       scf.for %arg2 = %c0 to %c64 step %c64 {
         ktdf_lowering.execute_on %resolved {
           %alloc = memref.alloc() : memref<1x64xf16, "L1">
-          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}
     } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -273,7 +273,7 @@ module {
       scf.for %arg2 = %c0 to %c64 step %c64 {
         ktdf_lowering.execute_on %resolved {
           %alloc = memref.alloc() : memref<1x64xf16, "L1">
-          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+          ktdf.data_transfer from %rc[%arg1, %arg2] size [1, 64] to %alloc[%c0, %c0] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}
     } {loop_type = #ktdf.loop_type<parallel_loop>}

@@ -23,15 +23,15 @@ func.func @fold_into_fifo_write(%in: memref<1x64xf16, "DDR">, %out: memref<64xf1
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   scf.for %i = %c0 to %c1 step %c1 {
-    %load = ktdp_lowering.load %in[0, 0] [1, 64] [1, 1] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, "DDR"> -> tensor<1x64xf16>
+    %load = ktdp_lowering.load %in[0, 0] [1, 64] [1, 1] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, "DDR"> -> tensor<1x64xf16>
     %collapsed = tensor.collapse_shape %load [[0, 1]] {ktdf_arch.maps_to = "DDR"} : tensor<1x64xf16> into tensor<64xf16>
     %init = tensor.empty() : tensor<64xf16>
-    %result = linalg.generic {indexing_maps = [#id, #id], iterator_types = ["parallel"]} ins(%collapsed : tensor<64xf16>) outs(%init : tensor<64xf16>) attrs = {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+    %result = linalg.generic {indexing_maps = [#id, #id], iterator_types = ["parallel"]} ins(%collapsed : tensor<64xf16>) outs(%init : tensor<64xf16>) attrs = {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
     ^bb0(%x: f16, %o: f16):
       %y = spyreop.exp %x : f16
       linalg.yield %y : f16
     } -> tensor<64xf16>
-    ktdp_lowering.store %result into %out[0] [64] [1] {dataflow_scheduler.throttle = 64 : i64} : tensor<64xf16> into memref<64xf16, "DDR">
+    ktdp_lowering.store %result into %out[0] [64] [1] {dataflow_scheduler.access_granularity = 64 : i64} : tensor<64xf16> into memref<64xf16, "DDR">
   } {loop_type = #ktdf.loop_type<parallel_loop>}
   return
 }
@@ -52,15 +52,15 @@ func.func @fold_into_fifo_read(%in: memref<64xf16, "DDR">, %out: memref<1x64xf16
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   scf.for %i = %c0 to %c1 step %c1 {
-    %load = ktdp_lowering.load %in[0] [64] [1] {dataflow_scheduler.throttle = 64 : i64} : memref<64xf16, "DDR"> -> tensor<64xf16>
+    %load = ktdp_lowering.load %in[0] [64] [1] {dataflow_scheduler.access_granularity = 64 : i64} : memref<64xf16, "DDR"> -> tensor<64xf16>
     %init = tensor.empty() : tensor<64xf16>
-    %result = linalg.generic {indexing_maps = [#id, #id], iterator_types = ["parallel"]} ins(%load : tensor<64xf16>) outs(%init : tensor<64xf16>) attrs = {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+    %result = linalg.generic {indexing_maps = [#id, #id], iterator_types = ["parallel"]} ins(%load : tensor<64xf16>) outs(%init : tensor<64xf16>) attrs = {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
     ^bb0(%x: f16, %o: f16):
       %y = spyreop.exp %x : f16
       linalg.yield %y : f16
     } -> tensor<64xf16>
     %expanded = tensor.expand_shape %result [[0, 1]] output_shape [1, 64] : tensor<64xf16> into tensor<1x64xf16>
-    ktdp_lowering.store %expanded into %out[0, 0] [1, 64] [1, 1] {dataflow_scheduler.throttle = 64 : i64} : tensor<1x64xf16> into memref<1x64xf16, "DDR">
+    ktdp_lowering.store %expanded into %out[0, 0] [1, 64] [1, 1] {dataflow_scheduler.access_granularity = 64 : i64} : tensor<1x64xf16> into memref<1x64xf16, "DDR">
   } {loop_type = #ktdf.loop_type<parallel_loop>}
   return
 }

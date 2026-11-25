@@ -12,7 +12,7 @@
 // CHECK-NOT:           ktdf.fifo.allocate
 // CHECK:             }
 // CHECK-NEXT:        ktdf.stage depends_in(none) depends_out(%[[P]]#0) {
-// CHECK-NEXT:          ktdf.data_transfer from %[[DDR]][0, 0] size [1, 64] to %[[P]]#1[0, 0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, "DDR">, memref<1x64xf16, "L1">
+// CHECK-NEXT:          ktdf.data_transfer from %[[DDR]][0, 0] size [1, 64] to %[[P]]#1[0, 0] size [1, 64] : memref<1x64xf16, "DDR">, memref<1x64xf16, "L1">
 // CHECK-NEXT:        }
 // CHECK-NEXT:        ktdf.stage depends_in(%[[P]]#0) depends_out(none) {
 // CHECK-NEXT:          linalg.fill
@@ -30,7 +30,7 @@ func.func @single_relay(%ddr: memref<1x64xf16, "DDR">) {
       ktdf.private_yield %slot, %t0, %t1, %l1 : !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>, !ktdf.token, !ktdf.token, memref<1x64xf16, "L1">
     }
     ktdf.stage depends_in(none) depends_out(%p#1) {
-      ktdf.data_transfer from %ddr[0, 0] size [1, 64] to %p#0 size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>
+      ktdf.data_transfer from %ddr[0, 0] size [1, 64] to %p#0 size [1, 64] : memref<1x64xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>
     }
     ktdf.stage depends_in(%p#1) depends_out(%p#2) {
       ktdf.data_transfer from %p#0 size [1, 64] to %p#3[0, 0] size [1, 64] : !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>, memref<1x64xf16, "L1">
@@ -57,8 +57,8 @@ func.func @single_relay(%ddr: memref<1x64xf16, "DDR">) {
 // CHECK-NEXT:        ktdf.data_transfer from %[[C]]
 // CHECK-NEXT:      }
 // CHECK-NEXT:      ktdf.stage depends_in(%[[OTHER]]) depends_out(none) {
-// CHECK-NEXT:        ktdf.data_transfer from %[[A]][0, 0] size [1, 64] to %{{.*}}[0, 0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, "DDR">, memref<1x64xf16, "L1">
-// CHECK-NEXT:        ktdf.data_transfer from %[[B]][0, 0] size [1, 32] to %{{.*}}[0, 0] size [1, 32] {dataflow_scheduler.throttle = 32 : i64} : memref<1x32xf16, "DDR">, memref<1x32xf16, "L1">
+// CHECK-NEXT:        ktdf.data_transfer from %[[A]][0, 0] size [1, 64] to %{{.*}}[0, 0] size [1, 64] : memref<1x64xf16, "DDR">, memref<1x64xf16, "L1">
+// CHECK-NEXT:        ktdf.data_transfer from %[[B]][0, 0] size [1, 32] to %{{.*}}[0, 0] size [1, 32] : memref<1x32xf16, "DDR">, memref<1x32xf16, "L1">
 // CHECK-NEXT:      } {applicable_units = ["MNILU"]}
 // CHECK-NEXT:      ktdf.stage depends_in(none) depends_out(none) {
 // CHECK-NEXT:        ktdf.data_transfer from %{{.*}} size [1, 16]
@@ -76,14 +76,14 @@ func.func @multiple_relays(%a: memref<1x64xf16, "DDR">, %b: memref<1x32xf16, "DD
       ktdf.private_yield %slots#0, %slots#1, %slots#2, %t0, %t1, %l1a, %l1b, %l1c : !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>, !ktdf.fifo.slot<"DDR" -> "L1", 32xf16>, !ktdf.fifo.slot<"DDR" -> "L1", 16xf16>, !ktdf.token, !ktdf.token, memref<1x64xf16, "L1">, memref<1x32xf16, "L1">, memref<1x16xf16, "L1">
     }
     ktdf.stage depends_in(none) depends_out(%p#3) {
-      ktdf.data_transfer from %a[0, 0] size [1, 64] to %p#0 size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>
-      ktdf.data_transfer from %b[0, 0] size [1, 32] to %p#1 size [1, 32] {dataflow_scheduler.throttle = 32 : i64} : memref<1x32xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 32xf16>
+      ktdf.data_transfer from %a[0, 0] size [1, 64] to %p#0 size [1, 64] : memref<1x64xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>
+      ktdf.data_transfer from %b[0, 0] size [1, 32] to %p#1 size [1, 32] : memref<1x32xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 32xf16>
     } {applicable_units = ["MNILU", "L1LU"]}
     ktdf.stage depends_in(none) depends_out(%p#4) {
       ktdf.data_transfer from %c[0, 0] size [1, 16] to %p#2 size [1, 16] : memref<1x16xf16, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 16xf16>
     }
     ktdf.stage depends_in(%p#3, %p#4) depends_out(none) {
-      ktdf.data_transfer from %p#1 size [1, 32] to %p#6[0, 0] size [1, 32] {dataflow_scheduler.throttle = 32 : i64} : !ktdf.fifo.slot<"DDR" -> "L1", 32xf16>, memref<1x32xf16, "L1">
+      ktdf.data_transfer from %p#1 size [1, 32] to %p#6[0, 0] size [1, 32] : !ktdf.fifo.slot<"DDR" -> "L1", 32xf16>, memref<1x32xf16, "L1">
       ktdf.data_transfer from %p#0 size [1, 64] to %p#5[0, 0] size [1, 64] : !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>, memref<1x64xf16, "L1">
     } {applicable_units = ["MNILU"]}
     ktdf.stage depends_in(none) depends_out(none) {

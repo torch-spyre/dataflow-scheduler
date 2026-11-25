@@ -25,13 +25,13 @@
 // CHECK-NEXT:      scf.for %[[IV2:.+]] = %[[C0]] to %[[C1]] step %[[C1]] {
 // CHECK-NEXT:        scf.for %[[IV3:.+]] = %[[C0]] to %[[C64]] step %[[C1]] {
 // CHECK-NEXT:          scf.for %[[IV4:.+]] = %[[C0]] to %[[C64]] step %[[C64]] {
-// CHECK-DAG:             %[[LOAD_0:.+]] = ktdp_lowering.load %[[ACCTILE_0]][%[[IV0]], %[[IV2]], %[[IV3]], %[[IV4]]] [1, 1, 1, 64] [1, 1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : !ktdp.access_tile<12x1x64x64xindex> -> tensor<1x1x1x64xf16>
-// CHECK-DAG:             %[[LOAD_1:.+]] = ktdp_lowering.load %[[ACCTILE_1]][%[[IV0]], %[[IV2]], %[[IV3]], 0] [1, 1, 1, 64] [1, 1, 1, 0] {dataflow_scheduler.throttle = 64 : i64} : !ktdp.access_tile<12x1x64x64xindex> -> tensor<1x1x1x64xf16>
+// CHECK-DAG:             %[[LOAD_0:.+]] = ktdp_lowering.load %[[ACCTILE_0]][%[[IV0]], %[[IV2]], %[[IV3]], %[[IV4]]] [1, 1, 1, 64] [1, 1, 1, 1] : !ktdp.access_tile<12x1x64x64xindex> -> tensor<1x1x1x64xf16>
+// CHECK-DAG:             %[[LOAD_1:.+]] = ktdp_lowering.load %[[ACCTILE_1]][%[[IV0]], %[[IV2]], %[[IV3]], 0] [1, 1, 1, 64] [1, 1, 1, 0] : !ktdp.access_tile<12x1x64x64xindex> -> tensor<1x1x1x64xf16>
 // CHECK-DAG:             %[[VIA:.+]] = ktdf.via["L1"] %[[LOAD_1]] : tensor<1x1x1x64xf16>
 // CHECK:                 %[[GENERIC:.+]] = linalg.generic {indexing_maps = [#[[MAP2]], #[[MAP2]], #[[MAP1]]], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]}
 // CHECK-SAME:              ins(%[[LOAD_0]], %[[VIA]] : tensor<1x1x1x64xf16>, tensor<1x1x1x64xf16>)
-// CHECK-SAME:              attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"}
-// CHECK:                 ktdp_lowering.store %[[GENERIC]] into %[[ACCTILE_2]][%[[IV0]], %[[IV1]], %[[IV2]], %[[IV3]], %[[IV4]]] [1, 1, 1, 1, 64] [1, 1, 1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : tensor<1x1x1x1x64xf16> into !ktdp.access_tile<12x1x1x64x64xindex>
+// CHECK-SAME:              attrs =  {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"}
+// CHECK:                 ktdp_lowering.store %[[GENERIC]] into %[[ACCTILE_2]][%[[IV0]], %[[IV1]], %[[IV2]], %[[IV3]], %[[IV4]]] [1, 1, 1, 1, 64] [1, 1, 1, 1, 1] : tensor<1x1x1x1x64xf16> into !ktdp.access_tile<12x1x1x64x64xindex>
 // CHECK-NEXT:          } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:        } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:      } {loop_type = #ktdf.loop_type<parallel_loop>}

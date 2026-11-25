@@ -27,18 +27,18 @@ module {
     %c1 = arith.constant 1 : index
     %c2 = arith.constant 2 : index
     scf.for %i = %c0 to %c2 step %c1 {
-      %load = ktdp_lowering.load %src[%i, 0, 0] [1, 1, 64] [1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : memref<2x1x64xf16, strided<[64, 64, 1], offset: ?>, "DDR"> -> tensor<1x1x64xf16>
+      %load = ktdp_lowering.load %src[%i, 0, 0] [1, 1, 64] [1, 1, 1] : memref<2x1x64xf16, strided<[64, 64, 1], offset: ?>, "DDR"> -> tensor<1x1x64xf16>
       %flat = tensor.collapse_shape %load [[0, 1, 2]] : tensor<1x1x64xf16> into tensor<64xf16>
       %empty = tensor.empty() : tensor<64xf16>
       %result = linalg.generic {indexing_maps = [#id, #id], iterator_types = ["parallel"]}
           ins(%flat : tensor<64xf16>) outs(%empty : tensor<64xf16>)
-          attrs = {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+          attrs = {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
       ^bb0(%in: f16, %out: f16):
         %sum = arith.addf %in, %in : f16
         linalg.yield %sum : f16
       } -> tensor<64xf16>
       %expanded = tensor.expand_shape %result [[0, 1, 2]] output_shape [1, 1, 64] : tensor<64xf16> into tensor<1x1x64xf16>
-      ktdp_lowering.store %expanded into %dst[%i, 0, 0] [1, 1, 64] [1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : tensor<1x1x64xf16> into memref<2x1x64xf16, strided<[64, 64, 1], offset: ?>, "DDR">
+      ktdp_lowering.store %expanded into %dst[%i, 0, 0] [1, 1, 64] [1, 1, 1] : tensor<1x1x64xf16> into memref<2x1x64xf16, strided<[64, 64, 1], offset: ?>, "DDR">
     } {loop_type = #ktdf.loop_type<parallel_loop>}
     return
   }

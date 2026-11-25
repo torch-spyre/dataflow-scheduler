@@ -77,7 +77,7 @@ module {
           %alloc = memref.alloc() : memref<1x64xf16, "L1">
           %10 = ktdf.create_token : !ktdf.token
           ktdf_lowering.execute_on %4 {
-            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %alloc[%c0_0, %c0_0] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
+            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %alloc[%c0_0, %c0_0] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, memref<1x64xf16, "L1">
           }
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}

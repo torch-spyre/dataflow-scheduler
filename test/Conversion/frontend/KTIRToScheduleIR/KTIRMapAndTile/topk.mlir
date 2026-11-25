@@ -22,10 +22,10 @@
 // CHECK-DAG:      %[[CONSTRUCT_ACCESS_TILE_1:.*]] = ktdp.construct_access_tile %[[CONSTRUCT_MEMORY_VIEW_1]]{{\[}}%[[CONSTANT_5]], %[[CONSTANT_5]], %[[CONSTANT_5]]] {access_tile_order = #[[$ATTR_0]], access_tile_set = #[[$ATTR_5]]} : memref<4x4x64xf16> -> !ktdp.access_tile<4x4x64xindex>
 // CHECK:          scf.for %[[VAL_0:.*]] = %[[CONSTANT_5]] to %[[CONSTANT_3]] step %[[CONSTANT_4]] {
 // CHECK-NEXT:       scf.for %[[VAL_1:.*]] = %[[CONSTANT_5]] to %[[CONSTANT_6]] step %[[CONSTANT_6]] {
-// CHECK-DAG:          %[[LOAD_0:.*]] = ktdp_lowering.load %[[CONSTRUCT_ACCESS_TILE_0]]{{\[}}%[[VAL_0]], 0, %[[VAL_1]]] [1, 64, 64] [1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : !ktdp.access_tile<4x64x64xindex> -> tensor<1x64x64xf16>
+// CHECK-DAG:          %[[LOAD_0:.*]] = ktdp_lowering.load %[[CONSTRUCT_ACCESS_TILE_0]]{{\[}}%[[VAL_0]], 0, %[[VAL_1]]] [1, 64, 64] [1, 1, 1] : !ktdp.access_tile<4x64x64xindex> -> tensor<1x64x64xf16>
 // CHECK-DAG:          %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x64xf16>
 // CHECK-DAG:          %[[EMPTY_1:.*]] = tensor.empty() : tensor<1x64xf16>
-// CHECK-DAG:          %[[GENERIC_0:.*]]:5 = linalg.generic {indexing_maps = [#[[$ATTR_1]], #[[$ATTR_2]], #[[$ATTR_2]], #[[$ATTR_3]], #[[$ATTR_3]]], iterator_types = ["parallel", "reduction", "parallel", "reduction"]} outs(%[[LOAD_0]], %[[EMPTY_0]], %[[EMPTY_1]], %[[CONSTANT_1]], %[[CONSTANT_0]] : tensor<1x64x64xf16>, tensor<1x64xf16>, tensor<1x64xf16>, tensor<1x4x64xf16>, tensor<1x4x64xf16>) attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+// CHECK-DAG:          %[[GENERIC_0:.*]]:5 = linalg.generic {indexing_maps = [#[[$ATTR_1]], #[[$ATTR_2]], #[[$ATTR_2]], #[[$ATTR_3]], #[[$ATTR_3]]], iterator_types = ["parallel", "reduction", "parallel", "reduction"]} outs(%[[LOAD_0]], %[[EMPTY_0]], %[[EMPTY_1]], %[[CONSTANT_1]], %[[CONSTANT_0]] : tensor<1x64x64xf16>, tensor<1x64xf16>, tensor<1x64xf16>, tensor<1x4x64xf16>, tensor<1x4x64xf16>) attrs =  {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
 // CHECK:              ^bb0(%[[VAL_2:.*]]: f16, %[[VAL_3:.*]]: f16, %[[VAL_4:.*]]: f16, %[[VAL_5:.*]]: f16, %[[VAL_6:.*]]: f16):
 // CHECK-DAG:            %[[INDEX_0:.*]] = linalg.index 3 : index
 // CHECK-DAG:            %[[CMPI_0:.*]] = arith.cmpi eq, %[[INDEX_0]], %[[CONSTANT_5]] : index
@@ -35,7 +35,7 @@
 // CHECK-DAG:            %[[VAL_7:.*]]:4 = "spyreop_next.compare_and_swap_max"(%[[VAL_2]], %[[SELECT_1]], %[[VAL_5]], %[[VAL_6]]) : (f16, f16, f16, f16) -> (f16, f16, f16, f16)
 // CHECK:                linalg.yield %[[VAL_7]]#0, %[[VAL_7]]#1, %[[SELECT_0]], %[[VAL_7]]#2, %[[VAL_7]]#3 : f16, f16, f16, f16, f16
 // CHECK-NEXT:         } -> (tensor<1x64x64xf16>, tensor<1x64xf16>, tensor<1x64xf16>, tensor<1x4x64xf16>, tensor<1x4x64xf16>)
-// CHECK-NEXT:         ktdp_lowering.store %[[VAL_8:.*]]#3 into %[[CONSTRUCT_ACCESS_TILE_1]]{{\[}}%[[VAL_0]], 0, %[[VAL_1]]] [1, 4, 64] [1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : tensor<1x4x64xf16> into !ktdp.access_tile<4x4x64xindex>
+// CHECK-NEXT:         ktdp_lowering.store %[[VAL_8:.*]]#3 into %[[CONSTRUCT_ACCESS_TILE_1]]{{\[}}%[[VAL_0]], 0, %[[VAL_1]]] [1, 4, 64] [1, 1, 1] : tensor<1x4x64xf16> into !ktdp.access_tile<4x4x64xindex>
 // CHECK-NEXT:       } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:     } {loop_type = #ktdf.loop_type<parallel_loop>}
 // CHECK-NEXT:     return

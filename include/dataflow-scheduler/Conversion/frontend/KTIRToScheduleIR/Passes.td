@@ -57,7 +57,7 @@ def KTIRMapAndTilePass : Pass<"ktir-map-and-tile", "mlir::func::FuncOp"> {
 
     Compute operations that are already nested in loops (e.g. after
     `IndirectAccessLoopMaterialization`) are mapped to a compute resource and
-    throttled, but not tiled.
+    assigned vector lanes, but not tiled.
   }];
   let dependentDialects = [
     "mlir::ktdf::KTDFDialect",

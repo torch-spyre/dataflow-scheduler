@@ -329,7 +329,7 @@ module {
         %l1_dst = builtin.unrealized_conversion_cast %c128 : index to memref<12x1x64x64xf16, "L1">
         scf.for %arg1 = %c0 to %c12 step %c1 {
           scf.for %arg2 = %c0 to %c64 step %c1 {
-            ktdf.data_transfer from %cast[%arg1, %c0, %arg2, %c0] size [1, 1, 1, 64] to %l1_dst[%c0, %c0, %c0, %c0] size [1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, memref<12x1x64x64xf16, "L1">
+            ktdf.data_transfer from %cast[%arg1, %c0, %arg2, %c0] size [1, 1, 1, 64] to %l1_dst[%c0, %c0, %c0, %c0] size [1, 1, 1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, memref<12x1x64x64xf16, "L1">
           } {loop_type = #ktdf.loop_type<parallel_loop>}
         } {loop_type = #ktdf.loop_type<parallel_loop>}
         memref.dealloc %l1_dst : memref<12x1x64x64xf16, "L1">
@@ -350,7 +350,7 @@ module {
         %l1_src = builtin.unrealized_conversion_cast %c196736 : index to memref<12x1x1x64x64xf16, "L1">
         scf.for %arg1 = %c0 to %c12 step %c1 {
           scf.for %arg2 = %c0 to %c64 step %c1 {
-            ktdf.data_transfer from %l1_src[%c0, %c0, %c0, %c0, %c0] size [12, 1, 1, 64, 64] to %cast[%arg1, %c0, %c0, %arg2, %c0] size [12, 1, 1, 64, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<12x1x1x64x64xf16, "L1">, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
+            ktdf.data_transfer from %l1_src[%c0, %c0, %c0, %c0, %c0] size [12, 1, 1, 64, 64] to %cast[%arg1, %c0, %c0, %arg2, %c0] size [12, 1, 1, 64, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<12x1x1x64x64xf16, "L1">, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
           } {loop_type = #ktdf.loop_type<parallel_loop>}
         } {loop_type = #ktdf.loop_type<parallel_loop>}
         memref.dealloc %l1_src : memref<12x1x1x64x64xf16, "L1">

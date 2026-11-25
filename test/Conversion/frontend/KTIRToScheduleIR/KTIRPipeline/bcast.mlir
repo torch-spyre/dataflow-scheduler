@@ -33,8 +33,8 @@
 // CHECK:                     ktdf.private_yield
 // CHECK-NEXT:              }
 // CHECK-NEXT:              ktdf.stage depends_in(none) depends_out(%[[PRIVATE]]#5) {
-// CHECK-NEXT:                ktdf.data_transfer from %[[REINTERP_0]][%[[IV0]], %[[IV2]], %[[IV3]], %[[IV4]]] size [1, 1, 1, 64] to %[[PRIVATE]]#6 size [1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
-// CHECK-NEXT:                ktdf.data_transfer from %[[REINTERP_1]][%[[IV0]], %[[IV2]], %[[IV3]], 0] size [1, 1, 1, 1] to %[[PRIVATE]]#4 size [1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64, transfer_mode = #ktdf.transfer_mode<splat>} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>
+// CHECK-NEXT:                ktdf.data_transfer from %[[REINTERP_0]][%[[IV0]], %[[IV2]], %[[IV3]], %[[IV4]]] size [1, 1, 1, 64] to %[[PRIVATE]]#6 size [1, 1, 1, 64] : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "SFU", 64xf16>
+// CHECK-NEXT:                ktdf.data_transfer from %[[REINTERP_1]][%[[IV0]], %[[IV2]], %[[IV3]], 0] size [1, 1, 1, 1] to %[[PRIVATE]]#4 size [1, 1, 1, 64] {transfer_mode = #ktdf.transfer_mode<splat>} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>
 // CHECK-NEXT:              }
 // CHECK-NEXT:              ktdf.stage depends_in(%[[PRIVATE]]#5) depends_out(%[[PRIVATE]]#7) {
 // CHECK-NEXT:                ktdf.data_transfer from %[[PRIVATE]]#4 size [1, 1, 1, 64] to %[[PRIVATE]]#8[0, 0, 0, 0] size [1, 1, 1, 64] : !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>, memref<1x1x1x64xf16, "L1">
@@ -45,13 +45,13 @@
 // CHECK-NEXT:              ktdf.stage depends_in(%[[PRIVATE]]#3, %[[PRIVATE]]#5) depends_out(%[[PRIVATE]]#1) {
 // CHECK-NEXT:                %[[READ_0:.+]] = ktdf.read_from_fifo %[[PRIVATE]]#6 : <"DDR" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
 // CHECK-NEXT:                %[[READ_1:.+]] = ktdf.read_from_fifo %[[PRIVATE]]#2 : <"L1" -> "SFU", 64xf16> -> tensor<1x1x1x64xf16>
-// CHECK:                     %[[GENERIC:.+]] = linalg.generic {indexing_maps = [#[[MAP]], #[[MAP1]], #[[MAP2]]], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} 
+// CHECK:                     %[[GENERIC:.+]] = linalg.generic {indexing_maps = [#[[MAP]], #[[MAP1]], #[[MAP2]]], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]}
 // CHECK-SAME:                  ins(%[[READ_0]], %[[READ_1]] : tensor<1x1x1x64xf16>, tensor<1x1x1x64xf16>)
-// CHECK-SAME:                  attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+// CHECK-SAME:                  attrs =  {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
 // CHECK:                     ktdf.write_to_fifo %[[GENERIC]], %[[PRIVATE]]#0 : tensor<1x1x1x1x64xf16>, <"SFU" -> "DDR", 64xf16>
 // CHECK-NEXT:              } {applicable_units = ["SFU"]}
 // CHECK-NEXT:              ktdf.stage depends_in(%[[PRIVATE]]#1) depends_out(none) {
-// CHECK-NEXT:                ktdf.data_transfer from %[[PRIVATE]]#0 size [1, 1, 1, 1, 64] to %[[REINTERP_2]][%[[IV0]], %[[IV1]], %[[IV2]], %[[IV3]], %[[IV4]]] size [1, 1, 1, 1, 64] {dataflow_scheduler.throttle = 64 : i64} : !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
+// CHECK-NEXT:                ktdf.data_transfer from %[[PRIVATE]]#0 size [1, 1, 1, 1, 64] to %[[REINTERP_2]][%[[IV0]], %[[IV1]], %[[IV2]], %[[IV3]], %[[IV4]]] size [1, 1, 1, 1, 64] : !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
 // CHECK-NEXT:              }
 // CHECK-NEXT:            }
 // CHECK-NEXT:          } {loop_type = #ktdf.loop_type<parallel_loop>}
@@ -91,17 +91,17 @@ module {
         scf.for %arg2 = %c0 to %c1 step %c1 {
           scf.for %arg3 = %c0 to %c64 step %c1 {
             scf.for %arg4 = %c0 to %c64 step %c64 {
-              %3 = ktdp_lowering.load %reinterpret_cast[%arg0, %arg2, %arg3, %arg4] [1, 1, 1, 64] [1, 1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR"> -> tensor<1x1x1x64xf16>
-              %4 = ktdp_lowering.load %reinterpret_cast_1[%arg0, %arg2, %arg3, 0] [1, 1, 1, 1] [1, 1, 1, 0] {dataflow_scheduler.throttle = 64 : i64} : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR"> -> tensor<1x1x1x1xf16>
+              %3 = ktdp_lowering.load %reinterpret_cast[%arg0, %arg2, %arg3, %arg4] [1, 1, 1, 64] [1, 1, 1, 1] : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR"> -> tensor<1x1x1x64xf16>
+              %4 = ktdp_lowering.load %reinterpret_cast_1[%arg0, %arg2, %arg3, 0] [1, 1, 1, 1] [1, 1, 1, 0] : memref<12x1x64x64xf16, strided<[4096, 4096, 64, 1], offset: ?>, "DDR"> -> tensor<1x1x1x1xf16>
               %extracted_slice = tensor.extract_slice %4[0, 0, 0, 0] [1, 1, 1, 64] [1, 1, 1, 0] {ktdf_arch.maps_to = "DDR"} : tensor<1x1x1x1xf16> to tensor<1x1x1x64xf16>
               %5 = ktdf.via["L1"] %extracted_slice : tensor<1x1x1x64xf16>
               %6 = tensor.empty() : tensor<1x1x1x1x64xf16>
-              %7 = linalg.generic {indexing_maps = [#map, #map1, #map2], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} ins(%3, %5 : tensor<1x1x1x64xf16>, tensor<1x1x1x64xf16>) outs(%6 : tensor<1x1x1x1x64xf16>) attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+              %7 = linalg.generic {indexing_maps = [#map, #map1, #map2], iterator_types = ["parallel", "parallel", "parallel", "parallel", "parallel"]} ins(%3, %5 : tensor<1x1x1x64xf16>, tensor<1x1x1x64xf16>) outs(%6 : tensor<1x1x1x1x64xf16>) attrs =  {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
               ^bb0(%in: f16, %in_4: f16, %out: f16):
                 %8 = arith.mulf %in, %in_4 : f16
                 linalg.yield %8 : f16
               } -> tensor<1x1x1x1x64xf16>
-              ktdp_lowering.store %7 into %reinterpret_cast_3[%arg0, %arg1, %arg2, %arg3, %arg4] [1, 1, 1, 1, 64] [1, 1, 1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : tensor<1x1x1x1x64xf16> into memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
+              ktdp_lowering.store %7 into %reinterpret_cast_3[%arg0, %arg1, %arg2, %arg3, %arg4] [1, 1, 1, 1, 64] [1, 1, 1, 1, 1] : tensor<1x1x1x1x64xf16> into memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
             } {loop_type = #ktdf.loop_type<parallel_loop>}
           } {loop_type = #ktdf.loop_type<parallel_loop>}
         } {loop_type = #ktdf.loop_type<parallel_loop>}

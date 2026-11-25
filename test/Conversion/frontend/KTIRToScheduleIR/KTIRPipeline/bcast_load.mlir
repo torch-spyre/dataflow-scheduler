@@ -23,15 +23,15 @@ func.func @broadcast(%a: memref<128xf16, "DDR">, %b: memref<1xf16, "DDR">, %out:
   %c64 = arith.constant 64 : index
   %c128 = arith.constant 128 : index
   scf.for %i = %c0 to %c128 step %c64 {
-    %a_tile = ktdp_lowering.load %a[%i] [64] [1] {dataflow_scheduler.throttle = 64 : i64} : memref<128xf16, "DDR"> -> tensor<64xf16>
+    %a_tile = ktdp_lowering.load %a[%i] [64] [1] : memref<128xf16, "DDR"> -> tensor<64xf16>
     %init = tensor.empty() : tensor<64xf16>
-    %b_tile = ktdp_lowering.load %b[0] [64] [0] {dataflow_scheduler.throttle = 64 : i64} : memref<1xf16, "DDR"> -> tensor<64xf16>
-    %result = linalg.generic {indexing_maps = [#id, #bcast, #id], iterator_types = ["parallel"]} ins(%a_tile, %b_tile : tensor<64xf16>, tensor<64xf16>) outs(%init : tensor<64xf16>) attrs = {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+    %b_tile = ktdp_lowering.load %b[0] [64] [0] : memref<1xf16, "DDR"> -> tensor<64xf16>
+    %result = linalg.generic {indexing_maps = [#id, #bcast, #id], iterator_types = ["parallel"]} ins(%a_tile, %b_tile : tensor<64xf16>, tensor<64xf16>) outs(%init : tensor<64xf16>) attrs = {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
     ^bb0(%x: f16, %y: f16, %o: f16):
       %s = arith.addf %x, %y : f16
       linalg.yield %s : f16
     } -> tensor<64xf16>
-    ktdp_lowering.store %result into %out[%i] [64] [1] {dataflow_scheduler.throttle = 64 : i64} : tensor<64xf16> into memref<128xf16, "DDR">
+    ktdp_lowering.store %result into %out[%i] [64] [1] : tensor<64xf16> into memref<128xf16, "DDR">
   } {loop_type = #ktdf.loop_type<parallel_loop>}
   return
 }
@@ -57,16 +57,16 @@ func.func @broadcast_through_via(%a: memref<128xf16, "DDR">, %b: memref<1xf16, "
   %c64 = arith.constant 64 : index
   %c128 = arith.constant 128 : index
   scf.for %i = %c0 to %c128 step %c64 {
-    %a_tile = ktdp_lowering.load %a[%i] [64] [1] {dataflow_scheduler.throttle = 64 : i64} : memref<128xf16, "DDR"> -> tensor<64xf16>
+    %a_tile = ktdp_lowering.load %a[%i] [64] [1] : memref<128xf16, "DDR"> -> tensor<64xf16>
     %init = tensor.empty() : tensor<64xf16>
-    %b_tile = ktdp_lowering.load %b[0] [64] [0] {dataflow_scheduler.throttle = 64 : i64} : memref<1xf16, "DDR"> -> tensor<64xf16>
+    %b_tile = ktdp_lowering.load %b[0] [64] [0] : memref<1xf16, "DDR"> -> tensor<64xf16>
     %b_l1 = ktdf.via["L1"] %b_tile : tensor<64xf16>
-    %result = linalg.generic {indexing_maps = [#id, #bcast, #id], iterator_types = ["parallel"]} ins(%a_tile, %b_l1 : tensor<64xf16>, tensor<64xf16>) outs(%init : tensor<64xf16>) attrs = {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+    %result = linalg.generic {indexing_maps = [#id, #bcast, #id], iterator_types = ["parallel"]} ins(%a_tile, %b_l1 : tensor<64xf16>, tensor<64xf16>) outs(%init : tensor<64xf16>) attrs = {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
     ^bb0(%x: f16, %y: f16, %o: f16):
       %s = arith.addf %x, %y : f16
       linalg.yield %s : f16
     } -> tensor<64xf16>
-    ktdp_lowering.store %result into %out[%i] [64] [1] {dataflow_scheduler.throttle = 64 : i64} : tensor<64xf16> into memref<128xf16, "DDR">
+    ktdp_lowering.store %result into %out[%i] [64] [1] : tensor<64xf16> into memref<128xf16, "DDR">
   } {loop_type = #ktdf.loop_type<parallel_loop>}
   return
 }

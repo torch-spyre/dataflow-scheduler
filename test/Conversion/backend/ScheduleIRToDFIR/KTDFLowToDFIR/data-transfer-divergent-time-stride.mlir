@@ -67,7 +67,7 @@ module {
         // 2*1*64 = 128 elements = 2 vectors of 64 lanes.
         ktdf.data_transfer from %ddr_buf[0, %c0, 0] size [2, 1, 64]
                            to %l1_buf[%c0, 0, 0, 0] size [1, 2, 1, 64]
-          {dataflow_scheduler.throttle = 64 : i64}
+          {dataflow_scheduler.access_granularity = 64 : i64}
           : memref<2x256x64xf16, "DDR">, memref<256x2x1x64xf16, "L1">
       }
     }
@@ -107,7 +107,7 @@ module {
         // 1*256*64 = 16384 elements = 256 vectors of 64 lanes.
         ktdf.data_transfer from %ddr_buf[%c0, 0, 0] size [1, 256, 64]
                            to %l1_buf[%c0, 0, 0, 0] size [1, 1, 256, 64]
-          {dataflow_scheduler.throttle = 64 : i64}
+          {dataflow_scheduler.access_granularity = 64 : i64}
           : memref<2x256x64xf16, "DDR">, memref<2x1x256x64xf16, "L1">
       }
     }
@@ -153,7 +153,7 @@ module {
       ktdf_lowering.execute_on %unit {
         ktdf.data_transfer from %ddr_buf[0, %c0, 0] size [2, 1, 64]
                            to %l1_buf[%c0, 0, 0, 0] size [1, 2, 1, 64]
-          {dataflow_scheduler.throttle = 64 : i64}
+          {dataflow_scheduler.access_granularity = 64 : i64}
           : memref<2x256x64xf16, "DDR">, memref<256x2x1x64xf16, "L1">
       }
     }

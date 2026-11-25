@@ -21,7 +21,7 @@
 // CHECK:         ktdf.stage
 // CHECK:         } {applicable_units = ["MNILU"]}
 // CHECK:         ktdf.stage
-// CHECK:           ktdf.data_transfer from %{{.*}}{{\[}}%{{.*}}] size [32] to %{{.*}}{{\[}}%{{.*}}] size [32] {dataflow_scheduler.throttle = 1 : i64} : memref<32xindex, strided<[1], offset: ?>, "L1">, memref<32xindex, strided<[1], offset: ?>, "IAB">
+// CHECK:           ktdf.data_transfer from %{{.*}}{{\[}}%{{.*}}] size [32] to %{{.*}}{{\[}}%{{.*}}] size [32] {dataflow_scheduler.access_granularity = 1 : i64} : memref<32xindex, strided<[1], offset: ?>, "L1">, memref<32xindex, strided<[1], offset: ?>, "IAB">
 // CHECK:           ktdf.ind_data_transfer
 // CHECK:         } {applicable_units = ["MNISU"]}
 
@@ -170,7 +170,7 @@ module {
             scf.if %eq0 {
               ktdf.data_transfer
                   from %addr_buf_rc[%c0] size [32]
-                  to   %iab_rc[%c0]      size [32] {dataflow_scheduler.throttle = 1 : i64}
+                  to   %iab_rc[%c0]      size [32] {dataflow_scheduler.access_granularity = 1 : i64}
                   : memref<32xindex, strided<[1], offset: ?>, "L1">,
                     memref<32xindex, strided<[1], offset: ?>, "IAB">
             }

@@ -105,10 +105,10 @@ func.func @broadcast_rank0_through_via(%addr_a: index, %addr_b: index, %addr_out
 // A broadcast whose unit dimension was dropped, as `simplify-linalg` does: the
 // operand's map leaves out the innermost loop, and a reshape of the load drops
 // the unit dimensions. The broadcast is still folded into a load of stride 0,
-// throttled as its consumer.
+// access granularity as its consumer.
 // CHECK-LABEL: func.func @broadcast_dropped_unit_dim
 // CHECK:         scf.for {{.+}} {
-// CHECK:           %[[BCAST:.+]] = ktdp_lowering.load %{{.+}}[%{{.+}}, 0] [64, 1] [0, 1] {dataflow_scheduler.throttle = 64 : i64}
+// CHECK:           %[[BCAST:.+]] = ktdp_lowering.load %{{.+}}[%{{.+}}, 0] [64, 1] [0, 1] :
 // CHECK:           %[[FLAT:.+]] = tensor.collapse_shape %[[BCAST]]
 // CHECK:           %[[VEC:.+]] = tensor.expand_shape %[[FLAT]]
 // CHECK:           linalg.generic
@@ -146,7 +146,7 @@ func.func @broadcast_dropped_unit_dim(%addr_a: index, %addr_b: index, %addr_out:
 // the reshape.
 // CHECK-LABEL: func.func @broadcast_sliced_dropped_unit_dim
 // CHECK:         scf.for {{.+}} {
-// CHECK:           %[[BCAST:.+]] = ktdp_lowering.load %{{.+}}[%{{.+}}, 0] [64, 1] [0, 1] {dataflow_scheduler.throttle = 64 : i64}
+// CHECK:           %[[BCAST:.+]] = ktdp_lowering.load %{{.+}}[%{{.+}}, 0] [64, 1] [0, 1] :
 // CHECK:           %[[FLAT:.+]] = tensor.collapse_shape %[[BCAST]]
 // CHECK:           %[[VEC:.+]] = tensor.expand_shape %[[FLAT]]
 // CHECK:           linalg.generic

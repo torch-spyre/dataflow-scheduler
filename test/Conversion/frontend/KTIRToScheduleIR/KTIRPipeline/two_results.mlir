@@ -50,18 +50,18 @@ module {
     %reinterpret_cast_3 = memref.reinterpret_cast %memspacecast_2 to offset: [%c0], sizes: [8, 64], strides: [64, 1] : memref<8x64xf16, "DDR"> to memref<8x64xf16, strided<[64, 1], offset: ?>, "DDR">
     scf.for %arg0 = %c0 to %c8 step %c1 {
       scf.for %arg1 = %c0 to %c64 step %c64 {
-        %3 = ktdp_lowering.load %reinterpret_cast[0, %arg0, %arg1] [2, 1, 64] [1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : memref<2x8x64xf16, strided<[512, 64, 1], offset: ?>, "DDR"> -> tensor<2x1x64xf16>
+        %3 = ktdp_lowering.load %reinterpret_cast[0, %arg0, %arg1] [2, 1, 64] [1, 1, 1] {dataflow_scheduler.access_granularity = 64 : i64} : memref<2x8x64xf16, strided<[512, 64, 1], offset: ?>, "DDR"> -> tensor<2x1x64xf16>
         %4 = tensor.empty() : tensor<1x64xf16>
         %5 = tensor.empty() : tensor<1x64xf16>
-        %6:2 = linalg.generic {indexing_maps = [#map, #map1, #map1], iterator_types = ["reduction", "parallel", "parallel"]} ins(%3 : tensor<2x1x64xf16>) outs(%4, %5 : tensor<1x64xf16>, tensor<1x64xf16>) attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+        %6:2 = linalg.generic {indexing_maps = [#map, #map1, #map1], iterator_types = ["reduction", "parallel", "parallel"]} ins(%3 : tensor<2x1x64xf16>) outs(%4, %5 : tensor<1x64xf16>, tensor<1x64xf16>) attrs =  {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
         ^bb0(%in: f16, %out: f16, %out_4: f16):
           %7 = arith.addf %in, %out : f16
           %8 = arith.mulf %in, %in : f16
           %9 = arith.addf %8, %out_4 : f16
           linalg.yield %7, %9 : f16, f16
         } -> (tensor<1x64xf16>, tensor<1x64xf16>)
-        ktdp_lowering.store %6#0 into %reinterpret_cast_1[%arg0, %arg1] [1, 64] [1, 1] {dataflow_scheduler.throttle = 64 : i64} : tensor<1x64xf16> into memref<8x64xf16, strided<[64, 1], offset: ?>, "DDR">
-        ktdp_lowering.store %6#1 into %reinterpret_cast_3[%arg0, %arg1] [1, 64] [1, 1] {dataflow_scheduler.throttle = 64 : i64} : tensor<1x64xf16> into memref<8x64xf16, strided<[64, 1], offset: ?>, "DDR">
+        ktdp_lowering.store %6#0 into %reinterpret_cast_1[%arg0, %arg1] [1, 64] [1, 1] {dataflow_scheduler.access_granularity = 64 : i64} : tensor<1x64xf16> into memref<8x64xf16, strided<[64, 1], offset: ?>, "DDR">
+        ktdp_lowering.store %6#1 into %reinterpret_cast_3[%arg0, %arg1] [1, 64] [1, 1] {dataflow_scheduler.access_granularity = 64 : i64} : tensor<1x64xf16> into memref<8x64xf16, strided<[64, 1], offset: ?>, "DDR">
       } {loop_type = #ktdf.loop_type<parallel_loop>}
     } {loop_type = #ktdf.loop_type<parallel_loop>}
     return

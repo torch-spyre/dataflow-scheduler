@@ -66,13 +66,13 @@ module {
             ktdf.private_yield %9, %10#0, %10#1, %11, %12 : !ktdf.fifo.slot<"SFU" -> "L1", 64xf16>, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>, !ktdf.token, !ktdf.token
           }
           ktdf.stage depends_in(none) depends_out(%8#3) {
-            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %8#1 size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "L1">, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>
-            ktdf.data_transfer from %memspacecast_0[%arg2] size [64] to %8#2 size [64] {dataflow_scheduler.throttle = 64 : i64} : memref<64xf16, "L1">, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>
+            ktdf.data_transfer from %reinterpret_cast[%arg1, %arg2] size [1, 64] to %8#1 size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "L1">, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>
+            ktdf.data_transfer from %memspacecast_0[%arg2] size [64] to %8#2 size [64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<64xf16, "L1">, !ktdf.fifo.slot<"L1" -> "SFU", 64xf16>
           }
           ktdf.stage depends_in(%8#3) depends_out(%8#4) {
             %9 = ktdf.read_from_fifo %8#1 : <"L1" -> "SFU", 64xf16> -> tensor<1x64xf16>
             %10 = ktdf.read_from_fifo %8#2 : <"L1" -> "SFU", 64xf16> -> tensor<64xf16>
-            %11 = linalg.generic {indexing_maps = [#map, #map1, #map], iterator_types = ["parallel", "parallel"]} ins(%9, %10 : tensor<1x64xf16>, tensor<64xf16>) outs(%7 : tensor<1x64xf16>) attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+            %11 = linalg.generic {indexing_maps = [#map, #map1, #map], iterator_types = ["parallel", "parallel"]} ins(%9, %10 : tensor<1x64xf16>, tensor<64xf16>) outs(%7 : tensor<1x64xf16>) attrs =  {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
             ^bb0(%in: f16, %in_3: f16, %out: f16):
               %12 = arith.addf %in, %in_3 : f16
               linalg.yield %12 : f16
@@ -80,7 +80,7 @@ module {
             ktdf.write_to_fifo %11, %8#0 : tensor<1x64xf16>, <"SFU" -> "L1", 64xf16>
           } {applicable_units = ["SFU"]}
           ktdf.stage depends_in(%8#4) depends_out(none) {
-            ktdf.data_transfer from %8#0 size [1, 64] to %reinterpret_cast_2[%arg1, %arg2] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : !ktdf.fifo.slot<"SFU" -> "L1", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>, "L1">
+            ktdf.data_transfer from %8#0 size [1, 64] to %reinterpret_cast_2[%arg1, %arg2] size [1, 64] {dataflow_scheduler.access_granularity = 64 : i64} : !ktdf.fifo.slot<"SFU" -> "L1", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>, "L1">
           }
         }
       } {loop_type = #ktdf.loop_type<parallel_loop>}

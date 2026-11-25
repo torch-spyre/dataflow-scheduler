@@ -66,7 +66,7 @@ module {
         // 1*256*64 = 16384 elements = 256 vectors of 64 lanes.
         ktdf.data_transfer from %ddr_buf[%c0, 0, 0] size [1, 256, 64]
                            to %l1_buf[%c0, 0, 0, 0] size [1, 1, 256, 64]
-          {dataflow_scheduler.throttle = 64 : i64}
+          {dataflow_scheduler.access_granularity = 64 : i64}
           : memref<2x256x64xf16, "DDR">, memref<2x1x256x64xf16, "L1">
       }
     }
@@ -105,7 +105,7 @@ module {
     ktdf_lowering.execute_on %unit {
       ktdf.data_transfer from %ddr_buf[0, 0, 0] size [1, 1, 128]
                          to %l1_buf[0, 0, 0] size [1, 1, 128]
-        {dataflow_scheduler.throttle = 64 : i64}
+        {dataflow_scheduler.access_granularity = 64 : i64}
         : memref<1x1x128xf16, "DDR">, memref<1x1x128xf16, "L1">
     }
     return
@@ -144,7 +144,7 @@ module {
     ktdf_lowering.execute_on %unit {
       ktdf.data_transfer from %ddr_buf[0, 0, 0, 0] size [2, 4, 8, 64]
                          to %l1_buf[0, 0, 0, 0] size [2, 4, 8, 64]
-        {dataflow_scheduler.throttle = 64 : i64}
+        {dataflow_scheduler.access_granularity = 64 : i64}
         : memref<2x4x8x64xf16, "DDR">, memref<2x4x8x64xf16, "L1">
     }
     return
@@ -193,7 +193,7 @@ module {
       ktdf_lowering.execute_on %u_l1lu {
         ktdf.data_transfer from %alloc[0, 0] size [128, 64]
                            to %fifo#0 size [8192]
-          {dataflow_scheduler.throttle = 64 : i64}
+          {dataflow_scheduler.access_granularity = 64 : i64}
           : memref<128x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 8192xf16>
       }
     }
@@ -236,7 +236,7 @@ module {
       ktdf_lowering.execute_on %u_sfu {
         ktdf.data_transfer from %fifo#0 size [8192]
                            to %alloc[0, 0] size [128, 64]
-          {dataflow_scheduler.throttle = 64 : i64}
+          {dataflow_scheduler.access_granularity = 64 : i64}
           : !ktdf.fifo.slot<"L1LU" -> "SFU", 8192xf16>, memref<128x64xf16, "L1">
       }
     }

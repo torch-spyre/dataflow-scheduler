@@ -11,19 +11,19 @@
 // CHECK-NEXT:          %[[EQ0:.+]] = arith.cmpi eq, %[[I2]], %{{.*}} : index
 // CHECK-NEXT:          scf.if %[[EQ0]] {
 // CHECK-NEXT:            %[[CAST_AB:.+]] = memref.memory_space_cast %{{.*}} : memref<2x32xindex, #ktdp.memory_space<global>> to memref<2x32xindex, "DDR">
-// CHECK-NEXT:            ktdf.data_transfer from %[[CAST_AB]][%[[I1]], 0] size [1, 32] to %{{.*}}[0] size [32] {dataflow_scheduler.throttle = 1 : i64} : memref<2x32xindex, "DDR">, memref<32xindex, "IAB">
+// CHECK-NEXT:            ktdf.data_transfer from %[[CAST_AB]][%[[I1]], 0] size [1, 32] to %{{.*}}[0] size [32] : memref<2x32xindex, "DDR">, memref<32xindex, "IAB">
 // CHECK-NEXT:          }
 // CHECK-NEXT:          %[[MV_DESC1:.+]] = ktdp.construct_memory_view %{{.*}}, sizes: [64, 2, 64], strides: [64, 4096, 1]
 // CHECK-NEXT:          %[[CAST_DESC1:.+]] = memref.memory_space_cast %[[MV_DESC1]] : memref<64x2x64xf16> to memref<64x2x64xf16, "DDR">
 // CHECK-NEXT:          %[[RC_DESC1:.+]] = memref.reinterpret_cast %[[CAST_DESC1]] to offset: [%{{.*}}], sizes: [64, 2, 64], strides: [64, 4096, 1] : memref<64x2x64xf16, "DDR"> to memref<64x2x64xf16, strided<[64, 4096, 1], offset: ?>, "DDR">
 // CHECK-NEXT:          %[[RC_IAB:.+]] = memref.reinterpret_cast %{{.*}} to offset: [%{{.*}}], sizes: [32], strides: [1] : memref<32xindex, "IAB"> to memref<32xindex, strided<[1], offset: ?>, "IAB">
-// CHECK-NEXT:          %[[IND_VAL:.+]] = ktdp_lowering.ind_load %[[RC_IAB]][%[[I2]]] %[[RC_DESC1]][0, %[[I3]], 0] [1, 1, 64] [1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : memref<32xindex, strided<[1], offset: ?>, "IAB">, memref<64x2x64xf16, strided<[64, 4096, 1], offset: ?>, "DDR"> -> tensor<64xf16>
+// CHECK-NEXT:          %[[IND_VAL:.+]] = ktdp_lowering.ind_load %[[RC_IAB]][%[[I2]]] %[[RC_DESC1]][0, %[[I3]], 0] [1, 1, 64] [1, 1, 1] : memref<32xindex, strided<[1], offset: ?>, "IAB">, memref<64x2x64xf16, strided<[64, 4096, 1], offset: ?>, "DDR"> -> tensor<64xf16>
 // CHECK-NEXT:          %[[MV_DIR:.+]] = ktdp.construct_memory_view %{{.*}}, sizes: [2, 32, 2, 64], strides: [4096, 128, 64, 1]
 // CHECK-NEXT:          %[[CAST_DIR:.+]] = memref.memory_space_cast %[[MV_DIR]] : memref<2x32x2x64xf16> to memref<2x32x2x64xf16, "DDR">
-// CHECK-NEXT:          %[[DIR_LOAD:.+]] = ktdp_lowering.load %[[CAST_DIR]][%[[I1]], %[[I2]], %[[I3]], %{{.*}}] [1, 1, 1, 64] [1, 1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : memref<2x32x2x64xf16, "DDR"> -> tensor<1x1x1x64xf16>
+// CHECK-NEXT:          %[[DIR_LOAD:.+]] = ktdp_lowering.load %[[CAST_DIR]][%[[I1]], %[[I2]], %[[I3]], %{{.*}}] [1, 1, 1, 64] [1, 1, 1, 1] : memref<2x32x2x64xf16, "DDR"> -> tensor<1x1x1x64xf16>
 // CHECK-NEXT:          %[[DIR_COLLAPSED:.+]] = tensor.collapse_shape %[[DIR_LOAD]] {{\[\[}}0, 1, 2, 3]] : tensor<1x1x1x64xf16> into tensor<64xf16>
 // CHECK-NEXT:          %[[EMPTY:.+]] = tensor.empty() : tensor<64xf16>
-// CHECK-NEXT:          %[[COMPUTED:.+]] = linalg.generic {indexing_maps = [{{.*}}, {{.*}}, {{.*}}], iterator_types = ["parallel"]} ins(%[[IND_VAL]], %[[DIR_COLLAPSED]] : tensor<64xf16>, tensor<64xf16>) outs(%[[EMPTY]] : tensor<64xf16>) attrs = {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+// CHECK-NEXT:          %[[COMPUTED:.+]] = linalg.generic {indexing_maps = [{{.*}}, {{.*}}, {{.*}}], iterator_types = ["parallel"]} ins(%[[IND_VAL]], %[[DIR_COLLAPSED]] : tensor<64xf16>, tensor<64xf16>) outs(%[[EMPTY]] : tensor<64xf16>) attrs = {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
 // CHECK-NEXT:          ^bb0(%[[IN_A:.+]]: f16, %[[IN_B:.+]]: f16, %[[OUT:.+]]: f16):
 // CHECK-NEXT:            %[[SUM:.+]] = arith.addf %[[IN_A]], %[[IN_B]] : f16
 // CHECK-NEXT:            linalg.yield %[[SUM]] : f16
@@ -31,7 +31,7 @@
 // CHECK-NEXT:          %[[EXPANDED:.+]] = tensor.expand_shape %[[COMPUTED]] {{\[\[}}0, 1, 2, 3]] output_shape [1, 1, 1, 64] : tensor<64xf16> into tensor<1x1x1x64xf16>
 // CHECK-NEXT:          %[[MV_OUT:.+]] = ktdp.construct_memory_view %{{.*}}, sizes: [2, 32, 2, 64], strides: [4096, 128, 64, 1]
 // CHECK-NEXT:          %[[CAST_OUT:.+]] = memref.memory_space_cast %[[MV_OUT]] : memref<2x32x2x64xf16> to memref<2x32x2x64xf16, "DDR">
-// CHECK-NEXT:          ktdp_lowering.store %[[EXPANDED]] into %[[CAST_OUT]][%[[I1]], %[[I2]], %[[I3]], %{{.*}}] [1, 1, 1, 64] [1, 1, 1, 1] {dataflow_scheduler.throttle = 64 : i64} : tensor<1x1x1x64xf16> into memref<2x32x2x64xf16, "DDR">
+// CHECK-NEXT:          ktdp_lowering.store %[[EXPANDED]] into %[[CAST_OUT]][%[[I1]], %[[I2]], %[[I3]], %{{.*}}] [1, 1, 1, 64] [1, 1, 1, 1] : tensor<1x1x1x64xf16> into memref<2x32x2x64xf16, "DDR">
 
 #set1 = affine_set<(d0, d1, d2) : (d0 >= 0, -d0 + 63 >= 0, d1 >= 0, -d1 + 1 >= 0, d2 >= 0, -d2 + 63 >= 0)>
 #set2 = affine_set<(d0, d1) : (d0 >= 0, -d0 + 1 >= 0, d1 >= 0, -d1 + 31 >= 0)>

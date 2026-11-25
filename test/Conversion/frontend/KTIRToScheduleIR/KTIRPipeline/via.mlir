@@ -35,7 +35,7 @@
 // CHECK-NEXT:             %[[MULI_1:.*]] = arith.muli %[[ADDI_0]], %[[CONSTANT_1]] : index
 // CHECK-NEXT:             %[[MEMORY_SPACE_CAST_0:.*]] = memref.memory_space_cast %[[CONSTRUCT_MEMORY_VIEW_0]] : memref<96x64xf16> to memref<96x64xf16, "DDR">
 // CHECK-NEXT:             %[[REINTERPRET_CAST_0:.*]] = memref.reinterpret_cast %[[MEMORY_SPACE_CAST_0]] to offset: [%[[MULI_1]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
-// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[PRIVATE_0]]#4 size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>
+// CHECK-NEXT:             ktdf.data_transfer from %[[REINTERPRET_CAST_0]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] to %[[PRIVATE_0]]#4 size [1, 64] : memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">, !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>
 // CHECK-NEXT:           }
 // CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#5) depends_out(%[[PRIVATE_0]]#6) {
 // CHECK-NEXT:             ktdf.data_transfer from %[[PRIVATE_0]]#4 size [1, 64] to %[[PRIVATE_0]]#7[0, 0] size [1, 64] : !ktdf.fifo.slot<"DDR" -> "L1", 64xf16>, memref<1x64xf16, "L1">
@@ -46,7 +46,7 @@
 // CHECK-NEXT:           ktdf.stage depends_in(%[[PRIVATE_0:.*]]#3) depends_out(%[[PRIVATE_0]]#1) {
 // CHECK-NEXT:             %[[READ_FROM_FIFO_0:.*]] = ktdf.read_from_fifo %[[PRIVATE_0]]#2 : <"L1" -> "SFU", 64xf16> -> tensor<1x64xf16>
 // CHECK-NEXT:             %[[EMPTY_0:.*]] = tensor.empty() : tensor<1x64xf16>
-// CHECK-NEXT:             %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_0]]], iterator_types = ["parallel", "parallel"]} ins(%[[READ_FROM_FIFO_0]] : tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x64xf16>) attrs =  {dataflow_scheduler.throttle = 64 : i64, ktdf_arch.maps_to = "SFU"} {
+// CHECK-NEXT:             %[[GENERIC_0:.*]] = linalg.generic {indexing_maps = [#[[$ATTR_0]], #[[$ATTR_0]]], iterator_types = ["parallel", "parallel"]} ins(%[[READ_FROM_FIFO_0]] : tensor<1x64xf16>) outs(%[[EMPTY_0]] : tensor<1x64xf16>) attrs =  {dataflow_scheduler.vector_lanes = 64 : i64, ktdf_arch.maps_to = "SFU"} {
 // CHECK-NEXT:             ^bb0(%[[VAL_6:.*]]: f16, %[[VAL_7:.*]]: f16):
 // CHECK-NEXT:               %[[SQRT_0:.*]] = math.sqrt %[[VAL_6]] : f16
 // CHECK-NEXT:               linalg.yield %[[SQRT_0]] : f16
@@ -57,7 +57,7 @@
 // CHECK-NEXT:             %[[MULI_2:.*]] = arith.muli %[[ADDI_0]], %[[CONSTANT_1]] : index
 // CHECK-NEXT:             %[[MEMORY_SPACE_CAST_1:.*]] = memref.memory_space_cast %[[CONSTRUCT_MEMORY_VIEW_1]] : memref<96x64xf16> to memref<96x64xf16, "DDR">
 // CHECK-NEXT:             %[[REINTERPRET_CAST_1:.*]] = memref.reinterpret_cast %[[MEMORY_SPACE_CAST_1]] to offset: [%[[MULI_2]]], sizes: [1, 64], strides: [64, 1] : memref<96x64xf16, "DDR"> to memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
-// CHECK-NEXT:             ktdf.data_transfer from %[[PRIVATE_0]]#0 size [1, 64] to %[[REINTERPRET_CAST_1]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] {dataflow_scheduler.throttle = 64 : i64} : !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
+// CHECK-NEXT:             ktdf.data_transfer from %[[PRIVATE_0]]#0 size [1, 64] to %[[REINTERPRET_CAST_1]]{{\[}}%[[VAL_0]], %[[VAL_1]]] size [1, 64] : !ktdf.fifo.slot<"SFU" -> "DDR", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>, "DDR">
 // CHECK-NEXT:           }
 // CHECK-NEXT:         }
 // CHECK-NEXT:       } {loop_type = #ktdf.loop_type<parallel_loop>}

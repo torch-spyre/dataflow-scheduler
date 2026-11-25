@@ -55,7 +55,7 @@ module {
           ktdf_lowering.execute_on %unit {
             ktdf.data_transfer from %l1_buf[%i, %j, 0, 0, 0, 0, 0] size [1, 1, 1, 1, 1, 1, 64]
                                to %cast[%i, 0, 0, %j, 0] size [1, 1, 1, 1, 64]
-              {dataflow_scheduler.throttle = 64 : i64}
+              {dataflow_scheduler.access_granularity = 64 : i64}
               : memref<?x?x1x1x1x1x64xf16, "L1">,
                 memref<12x1x1x64x64xf16, strided<[4096, 4096, 4096, 64, 1], offset: ?>, "DDR">
           }

@@ -22,6 +22,7 @@ ktdf_arch.device @sample_device attributes {mem_space_mapping = #ktdf_arch.map<"
 // ---------------------------------------------------------------------------
 // CHECK-LABEL: func.func @widen_f32
 // CHECK: ktdf.data_transfer from %{{.*}}[0] size [2] to %{{.*}}[0] size [2]
+// CHECK-SAME:   {dataflow_scheduler.access_granularity = 2 : i64}
 // CHECK-SAME:   : memref<2xf32, "L1">, memref<2xf32, "L1">
 
 module {
@@ -46,6 +47,7 @@ module {
 // ---------------------------------------------------------------------------
 // CHECK-LABEL: func.func @no_widen_f16
 // CHECK: ktdf.data_transfer from %{{.*}}[0] size [1] to %{{.*}}[0] size [1]
+// CHECK-SAME:   {dataflow_scheduler.access_granularity = 1 : i64}
 // CHECK-SAME:   : memref<2xf16, "L1">, memref<1xf16, "L1">
 
 module {
@@ -72,6 +74,7 @@ module {
 // ---------------------------------------------------------------------------
 // CHECK-LABEL: func.func @skip_splat_f32
 // CHECK: ktdf.data_transfer from %{{.*}}[0, 0, 0] size [1, 1, 1] to %{{.*}} size [32]
+// CHECK-SAME:   dataflow_scheduler.access_granularity = 2 : i64
 // CHECK-SAME:   transfer_mode = #ktdf.transfer_mode<splat>
 // CHECK-SAME:   : memref<1x1x1xf32, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 32xf32>
 
@@ -88,6 +91,31 @@ module {
             {transfer_mode = #ktdf.transfer_mode<splat>}
             : memref<1x1x1xf32, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 32xf32>
       } {applicable_units = ["L1LU"]}
+    }
+    return
+  }
+}
+
+// ---------------------------------------------------------------------------
+// store: sets/refines access_granularity without widening destination sizes.
+// ---------------------------------------------------------------------------
+// CHECK-LABEL: func.func @store_granularity_f16
+// CHECK: ktdf.data_transfer from %{{.*}} size [32] to %{{.*}}[0] size [32]
+// CHECK-SAME:   {dataflow_scheduler.access_granularity = 32 : i64}
+// CHECK-SAME:   : !ktdf.fifo.slot<"SFU" -> "L1SU", 32xf16>, memref<32xf16, "L1">
+
+module {
+  func.func @store_granularity_f16(%dst: memref<32xf16, "L1">) {
+    ktdf.pipeline {
+      %p:2 = ktdf.private -> (!ktdf.fifo.slot<"SFU" -> "L1SU", 32xf16>, !ktdf.token) {
+        %slot = ktdf.fifo.allocate() -> !ktdf.fifo.slot<"SFU" -> "L1SU", 32xf16>
+        %t = ktdf.create_token : !ktdf.token
+        ktdf.private_yield %slot, %t : !ktdf.fifo.slot<"SFU" -> "L1SU", 32xf16>, !ktdf.token
+      }
+      ktdf.stage depends_in(%p#1) depends_out(none) {
+        ktdf.data_transfer from %p#0 size [32] to %dst[0] size [32]
+            : !ktdf.fifo.slot<"SFU" -> "L1SU", 32xf16>, memref<32xf16, "L1">
+      } {applicable_units = ["L1SU"]}
     }
     return
   }

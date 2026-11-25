@@ -50,19 +50,12 @@ using AccessTile = mlir::TypedValue<mlir::ktdp::AccessTileType>;
 /// Gets the memory space of @p value , if any.
 [[nodiscard]] auto getMemorySpace(mlir::Value value) -> mlir::Attribute;
 
-/// Gets the throttle attribute value of @p op , or INT64_MAX if unset.
-[[nodiscard]] auto getThrottle(mlir::Operation* op) -> int64_t;
-/// Gets the maximum throttle with which @p result can be produced.
-///
-/// The maximum production throttle is the minimum of all user throttles.
-[[nodiscard]] auto getThrottle(mlir::OpResult result) -> int64_t;
-/// Gets the maximum throttle with which @p operand can be consumed.
-///
-/// The maximum consumption throttle is the producer's throttle, or INT64_MAX.
-[[nodiscard]] auto getThrottle(mlir::OpOperand& operand) -> int64_t;
+/// Gets the access granularity attribute value of @p op , or INT64_MAX if
+/// unset.
+[[nodiscard]] auto getAccessGranularity(mlir::Operation* op) -> int64_t;
 
-/// Sets the throttle attribute value of @p op .
-void setThrottle(mlir::Operation* op, int64_t value);
+/// Sets the access granularity attribute value of @p op .
+void setAccessGranularity(mlir::Operation* op, int64_t value);
 
 /// Helper for storing a mapping between attributes.
 struct AttrMapping : llvm::DenseMap<mlir::Attribute, mlir::Attribute> {

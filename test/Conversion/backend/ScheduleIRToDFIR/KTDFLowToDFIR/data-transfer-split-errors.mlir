@@ -35,11 +35,11 @@ module {
     %ddr_buf = memref.alloc() : memref<2x128x96xf16, "DDR">
     %l1_buf = memref.alloc() : memref<2x1x128x96xf16, "L1">
     ktdf_lowering.execute_on %unit {
-      // expected-error @below {{data transfer of 12288 elements exceeds the throttle of 64; splitting requires the innermost source and destination sizes to be a multiple of the throttle, but they are 96 and 96}}
+      // expected-error @below {{data transfer of 12288 elements exceeds the access granularity of 64; splitting requires the innermost source and destination sizes to be a multiple of the access granularity, but they are 96 and 96}}
       // expected-error @below {{failed to legalize operation 'ktdf.data_transfer' that was explicitly marked illegal}}
       ktdf.data_transfer from %ddr_buf[%c0, 0, 0] size [1, 128, 96]
                          to %l1_buf[%c0, 0, 0, 0] size [1, 1, 128, 96]
-        {dataflow_scheduler.throttle = 64 : i64}
+        {dataflow_scheduler.access_granularity = 64 : i64}
         : memref<2x128x96xf16, "DDR">, memref<2x1x128x96xf16, "L1">
     }
     return
@@ -68,7 +68,7 @@ module {
       // expected-error @below {{failed to legalize operation 'ktdf.data_transfer' that was explicitly marked illegal}}
       ktdf.data_transfer from %ddr_buf[%c0, 0, 0] size [1, 256, 64]
                          to %l1_buf[0, 0, 0] size [2, 128, 64]
-        {dataflow_scheduler.throttle = 64 : i64}
+        {dataflow_scheduler.access_granularity = 64 : i64}
         : memref<2x256x64xf16, "DDR">, memref<2x128x64xf16, "L1">
     }
     return
@@ -101,7 +101,7 @@ module {
       // expected-error @below {{failed to legalize operation 'ktdf.data_transfer' that was explicitly marked illegal}}
       ktdf.data_transfer from %ddr_buf[0, 0, 0] size [4, 8, 64]
                          to %l1_buf[0, 0, 0] size [4, 8, 64]
-        {dataflow_scheduler.throttle = 64 : i64}
+        {dataflow_scheduler.access_granularity = 64 : i64}
         : memref<4x8x64xf16, "DDR">, memref<4x8x128xf16, "L1">
     }
     return

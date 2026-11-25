@@ -50,12 +50,6 @@ namespace {
 
 const auto kSkipRegions = mlir::OpPrintingFlags().skipRegions();
 
-/// Discardable attributes that block the fold of a relay when both of its
-/// transfers carry them with different values.
-constexpr llvm::StringLiteral kNonMergeableAttrs[] = {
-    "dataflow_scheduler.throttle",
-};
-
 /// A transfer from memory into a FIFO slot, in the producer, and the transfer
 /// out of that slot into memory, in the consumer.
 struct Relay {
@@ -180,18 +174,10 @@ struct Anchor {
 }
 
 /// Merges the discardable attributes of @p in and @p out , preferring those of
-/// @p in . Returns std::nullopt if a non-mergeable attribute conflicts.
+/// @p in .
 [[nodiscard]] auto mergeAttrs(mlir::ktdf::DataTransferOp in,
                               mlir::ktdf::DataTransferOp out)
-    -> std::optional<mlir::NamedAttrList> {
-  for (const auto name : kNonMergeableAttrs) {
-    const auto in_attr = in->getDiscardableAttr(name);
-    const auto out_attr = out->getDiscardableAttr(name);
-    if (in_attr && out_attr && in_attr != out_attr) {
-      return std::nullopt;
-    }
-  }
-
+    -> mlir::NamedAttrList {
   mlir::NamedAttrList merged(in->getDiscardableAttrDictionary());
   for (const auto attr : out->getDiscardableAttrs()) {
     if (!merged.get(attr.getName())) {
@@ -304,11 +290,7 @@ struct Anchor {
     return reject("both transfers change sizes");
   }
 
-  auto attrs = mergeAttrs(relay.in, relay.out);
-  if (!attrs) {
-    return reject("transfers carry conflicting attributes");
-  }
-  return attrs;
+  return mergeAttrs(relay.in, relay.out);
 }
 
 /// Checks whether @p relay can fold into its producer if @p into_producer ,

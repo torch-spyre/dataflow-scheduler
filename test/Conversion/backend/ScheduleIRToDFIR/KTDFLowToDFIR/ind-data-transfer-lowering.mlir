@@ -168,7 +168,7 @@ module {
           dir_src = %data[%c0, %c0] size [1, 64]
           ind_dst = none
           dir_dst = %staging[%c0, %c0] size [1, 64]
-          {dataflow_scheduler.throttle = 64 : i64}
+          {dataflow_scheduler.access_granularity = 64 : i64}
           : memref<32xindex, "IAB">,
             memref<64x64xf16, strided<[64, 1], offset: ?>, "DDR">,
             none,
@@ -215,7 +215,7 @@ module {
             dir_src = %data[%c0, %c0] size [1, 64]
             ind_dst = none
             dir_dst = %fifo           size [64]
-            {dataflow_scheduler.throttle = 64 : i64}
+            {dataflow_scheduler.access_granularity = 64 : i64}
             : memref<32xindex, "IAB">,
               memref<64x64xf16, strided<[64, 1], offset: ?>, "DDR">,
               none,
@@ -255,7 +255,7 @@ module {
           dir_src = %staging[%c0, %c0] size [1, 64]
           ind_dst = %iab[%c1]
           dir_dst = %dst[%c0, %c0]     size [1, 64]
-          {dataflow_scheduler.throttle = 64 : i64}
+          {dataflow_scheduler.access_granularity = 64 : i64}
           : none,
             memref<1x64xf16, "L1">,
             memref<32xindex, "IAB">,
@@ -297,7 +297,7 @@ module {
             dir_src = %data[%c0, %c0] size [1, 64]
             ind_dst = none
             dir_dst = %staging[%c0, %c0] size [1, 64]
-            {dataflow_scheduler.throttle = 64 : i64}
+            {dataflow_scheduler.access_granularity = 64 : i64}
             : memref<32xindex, "IAB">,
               memref<64x64xf16, strided<[64, 1], offset: ?>, "DDR">,
               none,

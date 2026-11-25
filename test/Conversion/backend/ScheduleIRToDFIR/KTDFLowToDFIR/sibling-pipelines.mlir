@@ -77,7 +77,7 @@ module {
           %alloc = memref.alloc() : memref<64xf16, "L1">
           ktdf_lowering.execute_on %6 {
             ktdf_lowering.execute_on %6 {
-              ktdf.data_transfer from %arg0[%arg3] size [64] to %alloc[%c0_2] size [64] {dataflow_scheduler.throttle = 64 : i64} : memref<?xf16, "DDR">, memref<64xf16, "L1">
+              ktdf.data_transfer from %arg0[%arg3] size [64] to %alloc[%c0_2] size [64] {dataflow_scheduler.access_granularity = 64 : i64} : memref<?xf16, "DDR">, memref<64xf16, "L1">
             }
           }
           scf.for %arg4 = %c0_2 to %arg2 step %c1_3 {

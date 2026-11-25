@@ -661,7 +661,6 @@ def FoldFifoRelayStagesPass
       other users.
     - Its source and destination are in different memories.
     - What goes into the slot is what comes out of it (ie fifo-side sizes must match).
-    - Its two transfers do not carry different throttles.
 
     The folded transfer goes into one of the two stages, the target, which
     also awaits what the other stage awaits. The other stage loses its half of
