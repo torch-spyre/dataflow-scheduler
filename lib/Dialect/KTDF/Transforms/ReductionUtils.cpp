@@ -25,6 +25,8 @@
 #include <optional>
 
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
+#include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/STLExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -38,23 +40,98 @@
 namespace mlir::ktdf {
 
 // ---------------------------------------------------------------------------
-// findInnerDimLoopDim
+// findReductionSimdDims
 // ---------------------------------------------------------------------------
-std::optional<unsigned> findInnerDimLoopDim(linalg::GenericOp generic_op) {
+FailureOr<SmallVector<unsigned>> findReductionSimdDims(
+    linalg::GenericOp generic_op, int64_t simd_elements,
+    function_ref<InFlightDiagnostic()> emit_error) {
   auto input_type =
-      dyn_cast<RankedTensorType>(generic_op.getInputs().front().getType());
-  if (!input_type) return std::nullopt;
-
-  int64_t last = input_type.getRank() - 1;
+      dyn_cast<ShapedType>(generic_op.getInputs().front().getType());
+  if (!input_type || !input_type.hasRank()) return SmallVector<unsigned>();
 
   AffineMap input_map = generic_op.getIndexingMapsArray().front();
-  auto dim_expr = dyn_cast<AffineDimExpr>(input_map.getResult(last));
-  if (!dim_expr) return std::nullopt;
-
-  unsigned loop_dim = dim_expr.getPosition();
   auto iter_types = generic_op.getIteratorTypesArray();
-  if (iter_types[loop_dim] == utils::IteratorType::reduction) return loop_dim;
-  return std::nullopt;
+
+  SmallVector<unsigned> reduction_dims;
+  bool has_parallel = false;
+  int64_t elements = 1;
+  int64_t axis = input_type.getRank() - 1;
+  for (; axis >= 0 && elements < simd_elements; --axis) {
+    auto dim_expr = dyn_cast<AffineDimExpr>(input_map.getResult(axis));
+    if (!dim_expr) return SmallVector<unsigned>();
+
+    const int64_t size = input_type.getDimSize(axis);
+    if (size == 1) continue;
+    elements = ShapedType::isDynamic(size) ? simd_elements : elements * size;
+
+    const unsigned loop_dim = dim_expr.getPosition();
+    if (iter_types[loop_dim] == utils::IteratorType::reduction)
+      reduction_dims.push_back(loop_dim);
+    else
+      has_parallel = true;
+  }
+
+  if (reduction_dims.empty()) return reduction_dims;
+
+  // SIMD dims that mix reduction and parallel are not supported.
+  if (has_parallel) {
+    if (emit_error)
+      emit_error() << "SIMD dims that mix reduction and parallel are not "
+                      "supported";
+    return failure();
+  }
+
+  // The SIMD axes are loaded as one vector, so they must be tightly packed:
+  // each stride the product of the sizes inside it.  A tensor has no layout
+  // and is always packed.
+  const int64_t num_simd_axes = input_type.getRank() - 1 - axis;
+  auto memref_type = dyn_cast<MemRefType>(input_type);
+  if (memref_type && !memref_type.areTrailingDimsContiguous(num_simd_axes)) {
+    if (emit_error)
+      emit_error() << "the SIMD dims are not contiguous in memory";
+    return failure();
+  }
+  return reduction_dims;
+}
+
+FailureOr<SmallVector<unsigned>> findReductionSimdDims(
+    linalg::GenericOp generic_op, ktdf_arch::ExecutionUnitOp compute,
+    function_ref<InFlightDiagnostic()> emit_error) {
+  auto input_type = cast<ShapedType>(generic_op.getInputs().front().getType());
+  return findReductionSimdDims(
+      generic_op,
+      scheduler::getVectorLanes(input_type.getElementType(), compute),
+      emit_error);
+}
+
+// ---------------------------------------------------------------------------
+// getDefaultComputeUnit
+// ---------------------------------------------------------------------------
+ktdf_arch::ExecutionUnitOp getDefaultComputeUnit(
+    const ktdf_arch::DefaultDevice& device) {
+  if (!device) return {};
+  ktdf_arch::Mapping mapping(device.getRef());
+  ktdf_arch::ExecutionUnitOp compute = findDefaultComputeUnit(mapping.byKind());
+  if (!compute)
+    mapping.getDevice().getDeclaration().emitError(
+        "no (unambiguous) default compute resource");
+  return compute;
+}
+
+// ---------------------------------------------------------------------------
+// findDefaultComputeUnit
+// ---------------------------------------------------------------------------
+ktdf_arch::ExecutionUnitOp findDefaultComputeUnit(
+    const ktdf_arch::ResourceKinds& kinds) {
+  ktdf_arch::ExecutionUnitOp compute;
+  for (const ktdf_arch::ResourceKinds::Kind& kind : kinds) {
+    auto unit = dyn_cast_if_present<ktdf_arch::ExecutionUnitOp>(
+        kind.getExemplar().getOperation());
+    if (!unit || !unit.getFeature<ktdf_arch::feature::Compute>()) continue;
+    if (compute) return {};
+    compute = unit;
+  }
+  return compute;
 }
 
 // ---------------------------------------------------------------------------

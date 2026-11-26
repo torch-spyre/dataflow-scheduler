@@ -1,6 +1,6 @@
 // RUN: dataflow-scheduler-opt --map-reduction-partials --verify-diagnostics %s
 
-// An inner-dim reduction with no outer-dim loop reduces a copy of the fifo
+// A SIMD reduction with no outer-dim loop reduces a copy of the fifo
 // data, so there is nowhere to seed its init ahead of the reduction: an init
 // other than tensor.empty is rejected rather than dropped.
 
@@ -71,7 +71,7 @@ module {
               ktdf.stage depends_in(%3#2) depends_out(%3#3) {
                 %4 = ktdf.read_from_fifo %3#0 : <"L1LU" -> "SFU", 64xf16> -> tensor<1x64xf16>
                 %5 = arith.constant dense<1.000000e+00> : tensor<1x64xf16>
-                // expected-error @+1 {{rewriteInnerDimGeneric: an init other than tensor.empty is not supported without an outer reduction loop}}
+                // expected-error @+1 {{rewriteSimdGeneric: an init other than tensor.empty is not supported without an outer reduction loop}}
                 %6 = linalg.generic {indexing_maps = [#map2, #map3], iterator_types = ["parallel", "reduction", "parallel"]} ins(%4 : tensor<1x64xf16>) outs(%5 : tensor<1x64xf16>) {
                 ^bb0(%in: f16, %out: f16):
                   %7 = arith.addf %in, %out : f16

@@ -1,4 +1,5 @@
-//===-- SplitReductionInnerOuterDim.cpp -------------------------*- c++ -*-===//
+//===-- SplitReductionOuterVsSimdDims.cpp -------------------------*- c++
+//-*-===//
 //
 // Part of the Dataflow Scheduler project.
 //
@@ -21,13 +22,15 @@
 #include <mlir/Dialect/Linalg/IR/LinalgInterfaces.h>
 
 #include <memory>
+#include <optional>
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
-#include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
+#include "dataflow-scheduler/Transforms/Utils/Utils.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -40,19 +43,19 @@
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 
-#define PASS_NAME "split-reduction-inner-outer-dim"
+#define PASS_NAME "split-reduction-outer-vs-simd-dims"
 #define DEBUG_TYPE PASS_NAME
 
 using namespace mlir;
 
 namespace mlir::ktdf {
-#define GEN_PASS_DEF_SPLITREDUCTIONINNEROUTERDIMPASS
+#define GEN_PASS_DEF_SPLITREDUCTIONOUTERVSSIMDDIMSPASS
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h.inc"
 }  // namespace mlir::ktdf
 
 static llvm::cl::opt<bool> DisableThisPass(
     "disable-" PASS_NAME,
-    llvm::cl::desc("Disable Split Reduction Inner/Outer Dim pass"),
+    llvm::cl::desc("Disable the split-reduction-outer-vs-simd-dims pass"),
     llvm::cl::init(false));
 
 namespace {
@@ -71,9 +74,10 @@ struct ReductionDimInfo {
 // ---------------------------------------------------------------------------
 struct CandidateInfo {
   linalg::GenericOp generic_op;
-  // Inner dim: exactly one — the rightmost reduction dim in input order.
-  SmallVector<ReductionDimInfo> inner_dim;
-  // Outer dims: all remaining (leftward) reduction dims, same ordering.
+  // SIMD dims: the reduction dims behind the trailing input axes that
+  // hold one SIMD vector.  They can span several axes.
+  SmallVector<ReductionDimInfo> simd_dims;
+  // Outer dims: all remaining reduction dims, in input order.
   SmallVector<ReductionDimInfo> outer_dims;
 };
 
@@ -109,30 +113,19 @@ static LogicalResult collectReductionDims(
 }
 
 // ---------------------------------------------------------------------------
-// Return true when `generic_op` qualifies for the split:
-//   1. It has at least two reduction iterator types (one inner + at least
-//      one outer).
-//   2. The rightmost input dimension maps to a reduction loop dim.
+// Return true when `generic_op` may qualify for the split: it has at least two
+// reduction iterator types (SIMD + at least one outer) and a ranked tensor
+// input.  Whether its SIMD dims are reductions, with others left outside
+// them, is up to partitionReductionDims, which knows the SIMD vector size.
 // ---------------------------------------------------------------------------
 static bool isEligible(linalg::GenericOp generic_op) {
-  auto iter_types = generic_op.getIteratorTypesArray();
-
-  // Condition 1: count reduction dims.
   int num_reductions = 0;
-  for (auto it : iter_types)
+  for (auto it : generic_op.getIteratorTypesArray())
     if (it == utils::IteratorType::reduction) ++num_reductions;
   if (num_reductions < 2) return false;
 
-  // Condition 2: check that the rightmost input dimension maps to a reduction
-  // loop dim (via the input's indexing map).
-  auto input_type =
-      dyn_cast<RankedTensorType>(generic_op.getInputs().front().getType());
-  if (!input_type) return false;
-
-  AffineMap input_map = generic_op.getIndexingMapsArray().front();
-  unsigned last = input_map.getNumResults() - 1;
-  auto dim_expr = dyn_cast<AffineDimExpr>(input_map.getResult(last));
-  if (!dim_expr) return false;
+  if (!isa<RankedTensorType>(generic_op.getInputs().front().getType()))
+    return false;
 
   // FIXME: Current implementation leads to invalid IR when processing
   //        contractions, so skip them for now to allow matmul to pass.
@@ -140,44 +133,72 @@ static bool isEligible(linalg::GenericOp generic_op) {
     LDBG() << "ignoring contraction";
     return false;
   }
-
-  return iter_types[dim_expr.getPosition()] == utils::IteratorType::reduction;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
 // Partition the reduction dims of `generic_op` into:
-//   inner dim  — exactly the rightmost reduction dim (in input order).
-//   outer dims — all remaining (leftward) reduction dims.
+//   SIMD dims  — the reduction dims behind the trailing input axes that
+//                hold one SIMD vector of `vector_length` elements.  They
+//                can span several axes, e.g. [..., 32, 2] for a 64-element
+//                SIMD vector.
+//   outer dims — all remaining reduction dims.
+// Returns std::nullopt (with a debug note) when there is nothing to split: a
+// reduction dim has a dynamic size, the SIMD axes are not reductions, or
+// every reduction dim is a SIMD dim.  Fails (and emits an error) when the SIMD
+// dims do not hold exactly one SIMD vector, or when they mix reduction and
+// parallel.
 // ---------------------------------------------------------------------------
-static FailureOr<CandidateInfo> partitionReductionDims(
+static FailureOr<std::optional<CandidateInfo>> partitionReductionDims(
     linalg::GenericOp generic_op, int64_t vector_length) {
   CandidateInfo info;
   info.generic_op = generic_op;
 
   SmallVector<ReductionDimInfo> all_dims;
-  if (failed(collectReductionDims(generic_op, all_dims))) return failure();
+  if (failed(collectReductionDims(generic_op, all_dims)))
+    return std::optional<CandidateInfo>();
 
-  // The rightmost reduction dim (last in all_dims) is the inner dim.
-  assert(!all_dims.empty());
-  ReductionDimInfo& inner_dim = all_dims.back();
-  assert(inner_dim.size == vector_length &&
-         "inner (rightmost) reduction dim size must equal vector length");
+  FailureOr<SmallVector<unsigned>> found_simd_dims =
+      ktdf::findReductionSimdDims(generic_op, vector_length, [&] {
+        return generic_op.emitError(PASS_NAME) << ": ";
+      });
+  if (failed(found_simd_dims)) return failure();
+  const SmallVector<unsigned>& simd_dims = *found_simd_dims;
+  if (simd_dims.empty()) {
+    LDBG(1) << PASS_NAME ": the SIMD dims are not reductions — skipping";
+    return std::optional<CandidateInfo>();
+  }
 
-  // all_dims[0 .. N-2] are outer dims; all_dims[N-1] is the inner dim.
-  for (int i = 0; i < static_cast<int>(all_dims.size()) - 1; ++i)
-    info.outer_dims.push_back(all_dims[i]);
-  info.inner_dim.push_back(inner_dim);
+  // all_dims is in input order, so the SIMD dims, which index the
+  // trailing input axes, come out in input order as well.
+  int64_t simd_elements = 1;
+  for (const ReductionDimInfo& dim : all_dims) {
+    if (llvm::is_contained(simd_dims, dim.loop_dim)) {
+      info.simd_dims.push_back(dim);
+      simd_elements *= dim.size;
+    } else {
+      info.outer_dims.push_back(dim);
+    }
+  }
+  if (info.outer_dims.empty()) {
+    LDBG(1) << PASS_NAME ": every reduction dim is a SIMD dim — skipping";
+    return std::optional<CandidateInfo>();
+  }
+  if (simd_elements != vector_length)
+    return generic_op.emitError(PASS_NAME)
+           << ": the SIMD reduction dims hold " << simd_elements
+           << " elements, not one SIMD vector of " << vector_length;
 
   LDBG(1) << PASS_NAME ": generic at " << generic_op.getLoc()
           << " vector_length=" << vector_length
-          << " inner dim (loop_dim:size):";
-  for (auto& d : info.inner_dim)
+          << " SIMD dims (loop_dim:size):";
+  for (auto& d : info.simd_dims)
     LDBG(1) << "  [" << d.loop_dim << "]=" << d.size;
   LDBG(1) << " outer dims (loop_dim:size):";
   for (auto& d : info.outer_dims)
     LDBG(1) << "  [" << d.loop_dim << "]=" << d.size;
 
-  return info;
+  return std::optional<CandidateInfo>(std::move(info));
 }
 
 // ---------------------------------------------------------------------------
@@ -283,14 +304,14 @@ static LogicalResult buildCombinerBody(linalg::GenericOp src,
 //   Generic 1 (outer reduction): reduces the outer dims.
 //     Input:  original input tensor
 //     Output: intermediate tensor — input dims with outer reduction dims
-//             removed; the inner dim is kept as parallel.
-//     Iterator types: outer dims → reduction, inner dim → parallel,
+//             removed; the SIMD dims are kept as parallel.
+//     Iterator types: outer dims → reduction, SIMD dims → parallel,
 //                     other input-map dims unchanged.
 //
-//   Generic 2 (inner reduction): reduces the inner dim.
+//   Generic 2 (SIMD reduction): reduces the SIMD dims.
 //     Input:  intermediate tensor (result of Generic 1)
 //     Output: same type as the original output
-//     Iterator types: inner dim → reduction, all other dims → parallel.
+//     Iterator types: SIMD dims → reduction, all other dims → parallel.
 //
 // The original generic is replaced by the result of Generic 2 and erased.
 // ---------------------------------------------------------------------------
@@ -318,9 +339,9 @@ static LogicalResult splitDim(CandidateInfo& info) {
   Type elem_type = output_type.getElementType();
 
   // Build sets of outer and inner loop dim indices for quick lookup.
-  llvm::SmallDenseSet<unsigned> inner_loop_dims;
+  llvm::SmallDenseSet<unsigned> simd_loop_dims;
   llvm::SmallDenseSet<unsigned> outer_loop_dims;
-  for (auto& d : info.inner_dim) inner_loop_dims.insert(d.loop_dim);
+  for (auto& d : info.simd_dims) simd_loop_dims.insert(d.loop_dim);
   for (auto& d : info.outer_dims) outer_loop_dims.insert(d.loop_dim);
 
   // ── Build G1 ─────────────────────────────────────────────────────────────
@@ -359,7 +380,7 @@ static LogicalResult splitDim(CandidateInfo& info) {
   }
   AffineMap g1_out_map = AffineMap::get(g1_num_dims, 0, g1_out_exprs, ctx);
 
-  // G1 iterator types: outer dims → reduction, inner dim → parallel,
+  // G1 iterator types: outer dims → reduction, SIMD dims → parallel,
   // other input-map dims → same as original.
   SmallVector<utils::IteratorType> g1_iter_types(g1_num_dims);
   for (unsigned r = 0; r < g1_num_dims; ++r) {
@@ -367,7 +388,7 @@ static LogicalResult splitDim(CandidateInfo& info) {
         cast<AffineDimExpr>(input_map.getResult(r)).getPosition();
     if (outer_loop_dims.count(orig_ld))
       g1_iter_types[r] = utils::IteratorType::reduction;
-    else if (inner_loop_dims.count(orig_ld))
+    else if (simd_loop_dims.count(orig_ld))
       g1_iter_types[r] = utils::IteratorType::parallel;
     else
       g1_iter_types[r] = orig_iter_types[orig_ld];
@@ -375,7 +396,7 @@ static LogicalResult splitDim(CandidateInfo& info) {
 
   // ── Build G2 ─────────────────────────────────────────────────────────────
   // G2 loops over all original dims except the outer reduction dims, in
-  // original order.  This includes the inner dim (now a reduction) and any
+  // original order.  This includes the SIMD dims (now reductions) and any
   // output-only dims.
   // orig_to_g2_dim: original loop dim index → G2 loop dim index (0..M-1).
   llvm::SmallDenseMap<unsigned, unsigned> orig_to_g2_dim;
@@ -403,12 +424,12 @@ static LogicalResult splitDim(CandidateInfo& info) {
   }
   AffineMap g2_out_map = AffineMap::get(M, 0, g2_out_exprs, ctx);
 
-  // G2 iterator types: inner dim → reduction, all other non-outer dims →
+  // G2 iterator types: SIMD dims → reduction, all other non-outer dims →
   // parallel.
   SmallVector<utils::IteratorType> g2_iter_types(M);
   for (unsigned i = 0; i < N; ++i) {
     if (outer_loop_dims.count(i)) continue;
-    g2_iter_types[orig_to_g2_dim[i]] = inner_loop_dims.count(i)
+    g2_iter_types[orig_to_g2_dim[i]] = simd_loop_dims.count(i)
                                            ? utils::IteratorType::reduction
                                            : utils::IteratorType::parallel;
   }
@@ -423,7 +444,7 @@ static LogicalResult splitDim(CandidateInfo& info) {
 
   // G1 starts from the combiner's neutral element: a tensor.empty. Every
   // element of its intermediate is combined into the output by G2, so an init
-  // there would be counted once per element of the reduced inner dim.
+  // there would be counted once per element of the reduced SIMD vector.
   SmallVector<Type> inter_types(results, inter_tensor_type);
   SmallVector<Value> inter_inits;
   for (unsigned r = 0; r < results; ++r) {
@@ -514,11 +535,11 @@ static LogicalResult splitDim(CandidateInfo& info) {
   return success();
 }
 
-struct SplitReductionInnerOuterDimPass
-    : public mlir::ktdf::impl::SplitReductionInnerOuterDimPassBase<
-          SplitReductionInnerOuterDimPass> {
-  using SplitReductionInnerOuterDimPassBase<
-      SplitReductionInnerOuterDimPass>::SplitReductionInnerOuterDimPassBase;
+struct SplitReductionOuterVsSimdDimsPass
+    : public mlir::ktdf::impl::SplitReductionOuterVsSimdDimsPassBase<
+          SplitReductionOuterVsSimdDimsPass> {
+  using SplitReductionOuterVsSimdDimsPassBase<
+      SplitReductionOuterVsSimdDimsPass>::SplitReductionOuterVsSimdDimsPassBase;
 
   void runOnOperation() override {
     if (DisableThisPass) return;
@@ -540,8 +561,9 @@ struct SplitReductionInnerOuterDimPass
       return;
     }
 
-    // Collect eligible linalg.generic ops: at least two reduction iterator
-    // types, with one reduction dim mapping to the rightmost non-1 input dim.
+    // Collect candidate linalg.generic ops: at least two reduction iterator
+    // types.  partitionReductionDims decides on each once the SIMD vector size
+    // is known.
     SmallVector<linalg::GenericOp> candidates;
     module.walk([&](linalg::GenericOp generic_op) {
       if (isEligible(generic_op)) candidates.push_back(generic_op);
@@ -564,29 +586,25 @@ struct SplitReductionInnerOuterDimPass
         return;
       }
 
-      const auto simd_feature =
-          compute.getFeature<mlir::ktdf_arch::feature::SIMD>();
+      // A SIMD vector holds as many input elements as the compute unit has
+      // vector lanes, as in reduction-loop-exposure.
+      const int64_t vector_length = scheduler::getVectorLanes(
+          cast<ShapedType>(generic_op.getInputs().front().getType())
+              .getElementType(),
+          compute);
 
-      // Derive the element type from the first output (the accumulator).
-      auto output_type =
-          dyn_cast<ShapedType>(generic_op.getOutputs().front().getType());
-      assert(output_type);
-      Type elem_type = output_type.getElementType();
-
-      const int64_t vector_length =
-          std::max(simd_feature.getLanes(elem_type), int64_t(1));
-
-      FailureOr<CandidateInfo> info =
+      FailureOr<std::optional<CandidateInfo>> info =
           partitionReductionDims(generic_op, vector_length);
-      if (failed(info)) continue;
-      if (failed(splitDim(*info))) return signalPassFailure();
+      if (failed(info)) return signalPassFailure();
+      if (!*info) continue;
+      if (failed(splitDim(**info))) return signalPassFailure();
     }
   }
 };
 
 }  // namespace
 
-auto mlir::ktdf::createSplitReductionInnerOuterDimPass()
+auto mlir::ktdf::createSplitReductionOuterVsSimdDimsPass()
     -> std::unique_ptr<mlir::Pass> {
-  return std::make_unique<SplitReductionInnerOuterDimPass>();
+  return std::make_unique<SplitReductionOuterVsSimdDimsPass>();
 }

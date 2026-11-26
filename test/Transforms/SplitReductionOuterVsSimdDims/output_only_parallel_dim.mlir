@@ -1,4 +1,4 @@
-// RUN: dataflow-scheduler-opt --split-reduction-inner-outer-dim %s | FileCheck %s
+// RUN: dataflow-scheduler-opt --split-reduction-outer-vs-simd-dims %s | FileCheck %s
 
 // CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
 // CHECK: #[[$ATTR_1:.+]] = affine_map<(d0, d1, d2) -> (d1, d2)>
@@ -71,7 +71,7 @@
 // to tensor<1x64xf16> with iterator types [reduction, parallel, reduction, parallel]:
 //   d0 (size 2,  reduction) — outer dim
 //   d1 (size 1,  parallel)  — appears in both maps
-//   d2 (size 64, reduction) — inner dim (vector_length=64 for f16)
+//   d2 (size 64, reduction) — SIMD dim (vector_length=64 for f16)
 //   d3 (size 64, parallel)  — appears ONLY in the output map
 //
 // input_map  = (d0,d1,d2,d3) -> (d0,d1,d2)   tensor<2x1x64xf16>
@@ -83,7 +83,7 @@
 //     output: (d0,d1,d2) -> (d1,d2)             tensor<1x64xf16>
 //     iterator_types = ["reduction", "parallel", "parallel"]
 //
-//   Generic 2 (inner reduction, reduces d2 — renamed to new d1):
+//   Generic 2 (SIMD reduction, reduces d2 — renamed to new d1):
 //     input:  (d0,d1,d2) -> (d0,d1)             tensor<1x64xf16>
 //     output: (d0,d1,d2) -> (d0,d2)             tensor<1x64xf16>
 //     iterator_types = ["parallel", "reduction", "parallel"]

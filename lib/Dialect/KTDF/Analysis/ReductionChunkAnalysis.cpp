@@ -23,6 +23,7 @@
 #include <functional>
 #include <numeric>
 
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -108,25 +109,15 @@ std::optional<ReductionChunkResult> mlir::ktdf::analyzeReductionChunks(
                               std::move(red_dim_sizes)};
 }
 
-std::optional<unsigned> mlir::ktdf::getInnermostInputLoopDim(
-    linalg::GenericOp generic_op) {
-  AffineMap input_map =
-      generic_op.getMatchingIndexingMap(generic_op.getDpsInputOperand(0));
-  if (input_map.getNumResults() == 0) return std::nullopt;
-  auto innermost = dyn_cast<AffineDimExpr>(input_map.getResults().back());
-  if (!innermost) return std::nullopt;
-  return innermost.getPosition();
-}
-
 std::optional<llvm::SmallVector<int64_t>> mlir::ktdf::computeChunkDims(
     linalg::GenericOp generic_op, llvm::ArrayRef<unsigned> reduction_dims,
-    int64_t chunk_size) {
+    llvm::ArrayRef<unsigned> simd_dims, int64_t chunk_size) {
   assert(chunk_size >= 1 && "chunk_size must be >= 1");
-  assert((!getInnermostInputLoopDim(generic_op) ||
-          !llvm::is_contained(reduction_dims,
-                              *getInnermostInputLoopDim(generic_op))) &&
-         "the reduction dim indexing the innermost input dim must not be "
-         "chunked");
+  assert(llvm::none_of(reduction_dims,
+                       [&](unsigned dim) {
+                         return llvm::is_contained(simd_dims, dim);
+                       }) &&
+         "a SIMD reduction dim must not be chunked");
 
   const auto loop_ranges = generic_op.getStaticLoopRanges();
   llvm::SmallVector<int64_t> new_sizes;

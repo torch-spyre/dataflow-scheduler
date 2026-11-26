@@ -1,6 +1,6 @@
 // RUN: dataflow-scheduler-opt --map-reduction-partials --split-input-file %s | FileCheck %s
 
-// The inner-dim generic of a split reduction combines every lane of the
+// The SIMD generic of a split reduction combines every lane of the
 // outer-dim accumulator into lane 0, so its init is counted exactly once by
 // writing it into that lane: after the outer-dim accumulator is set to the
 // neutral element, and before the loop that accumulates into it.

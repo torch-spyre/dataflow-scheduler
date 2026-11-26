@@ -12,7 +12,7 @@
 // CHECK:     }
 // CHECK:     func.func private @local_schedule_0()
 // CHECK:   }
-// CHECK:   ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+// CHECK:   ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
 
 // CHECK-LABEL:   module @local_schedule_0 {
 // CHECK-NEXT:     func.func @local_schedule_0() attributes {grid = [1]} {
@@ -132,7 +132,7 @@ module {
     }
     func.func private @local_schedule_0()
   }
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   module @local_schedule_0 {
     func.func @local_schedule_0() attributes {grid = [1]} {
       %c0 = arith.constant 0 : index

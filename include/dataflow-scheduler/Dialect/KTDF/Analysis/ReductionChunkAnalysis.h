@@ -80,11 +80,6 @@ struct ReductionChunkResult {
 std::optional<ReductionChunkResult> analyzeReductionChunks(
     linalg::GenericOp generic_op, int64_t chunk_size_threshold = 1 << 20);
 
-/// Returns the loop dim that indexes the innermost dim of the first input of
-/// `generic_op`, or std::nullopt if that dim is not indexed by a plain loop
-/// dim (or the input has rank 0).
-std::optional<unsigned> getInnermostInputLoopDim(linalg::GenericOp generic_op);
-
 /// Distribute `chunk_size` across the reduction loop dims `reduction_dims` of
 /// `generic_op` using a GCD-based outer-to-inner strategy.
 ///
@@ -98,9 +93,9 @@ std::optional<unsigned> getInnermostInputLoopDim(linalg::GenericOp generic_op);
 /// Dimensions whose size is `ShapedType::kDynamic` are skipped without
 /// consuming budget.  Iteration stops once `remaining_chunk_size` reaches 1.
 ///
-/// The innermost dim of the first input must never be chunked, so
-/// `reduction_dims` must not hold the loop dim that indexes it (asserted). The
-/// caller excludes that dim before calling here.
+/// The SIMD dims must never be chunked, so `reduction_dims` must not hold
+/// any of `simd_dims` (asserted). The caller excludes them before calling
+/// here.
 ///
 /// Returns std::nullopt if `remaining_chunk_size` is still > 1 after all
 /// dimensions have been visited (budget could not be fully distributed).
@@ -109,10 +104,12 @@ std::optional<unsigned> getInnermostInputLoopDim(linalg::GenericOp generic_op);
 ///                        dim's size is its static loop range.
 /// \param reduction_dims  Chunkable reduction loop dims, outermost first.
 ///                        Dynamic dimensions are skipped.
+/// \param simd_dims       The loop dims behind the trailing input axes that
+///                        hold one SIMD vector (see findReductionSimdDims).
 /// \param chunk_size      The chunk count to distribute (must be ≥ 1).
 std::optional<llvm::SmallVector<int64_t>> computeChunkDims(
     linalg::GenericOp generic_op, llvm::ArrayRef<unsigned> reduction_dims,
-    int64_t chunk_size);
+    llvm::ArrayRef<unsigned> simd_dims, int64_t chunk_size);
 
 }  // namespace mlir::ktdf
 

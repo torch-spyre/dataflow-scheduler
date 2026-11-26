@@ -9,8 +9,9 @@
 //
 // threshold=200 bytes.  Smallest N such that 1536 / N <= 200 is N=8.
 //
-// The innermost overall loop dim is index 2 (parallel), so both reduction
-// dims are chunkable: d0=4 (index 0) and d1=3 (index 1).
+// The SIMD dim (one 64-element f16 vector) is the 64-wide input dim 2, held by the
+// parallel d2, so no reduction dim is in it and both are chunkable: d0=4
+// (index 0) and d1=3 (index 1).
 //
 // computeChunkDims distributes N=8 across [4, 3]:
 //   gcd(4, 8) = 4, so dim-0 absorbs 4 chunks and remaining drops to 2.
@@ -30,7 +31,7 @@ module {
     }
     func.func private @local_schedule_0()
   }
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   module @local_schedule_0 {
     func.func @local_schedule_0() attributes {grid = [1]} {
       %c0 = arith.constant 0 : index

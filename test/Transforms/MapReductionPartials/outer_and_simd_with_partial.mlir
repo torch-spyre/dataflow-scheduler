@@ -147,7 +147,7 @@
 //      carried as iter_arg through a scf.for reduction loop.
 //   combine scf.if: on the first chunk yields the loop result directly; on
 //      subsequent chunks reads the previous partial from a FIFO and adds it.
-//   G2 (inner-dim): absmax reduction tensor<1x64xf16> -> tensor<1x64xf16>
+//   G2 (SIMD): absmax reduction tensor<1x64xf16> -> tensor<1x64xf16>
 //      whose input is the combine scf.if result.
 //
 // MapReductionPartials must:
@@ -268,7 +268,7 @@ module {
                     } -> tensor<1x64xf16>
                     scf.yield %12 : tensor<1x64xf16>
                   }
-                  // G2: inner-dim absmax reduction over the combined result.
+                  // G2: SIMD absmax reduction over the combined result.
                   %9 = tensor.empty() : tensor<1x64xf16>
                   %10 = linalg.generic {indexing_maps = [#map3, #map1], iterator_types = ["parallel", "reduction", "parallel"]} ins(%8 : tensor<1x64xf16>) outs(%9 : tensor<1x64xf16>) {
                   ^bb0(%in: f16, %out: f16):

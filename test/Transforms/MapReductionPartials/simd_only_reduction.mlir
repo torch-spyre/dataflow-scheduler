@@ -104,9 +104,9 @@
 
 
 
-// Tests the inner-dim-only generic path: no outer-dim reduction loop exists.
-// The SFU compute stage contains a single inner-dim linalg.generic:
-//   G2 (inner-dim, plain): tensor<1x64xf16> -> tensor<1x64xf16>
+// Tests the SIMD-only generic path: no outer-dim reduction loop exists.
+// The SFU compute stage contains a single SIMD linalg.generic:
+//   G2 (SIMD, plain): tensor<1x64xf16> -> tensor<1x64xf16>
 //
 // MapReductionPartials must:
 //   - Convert the read_from_fifo to memref form.

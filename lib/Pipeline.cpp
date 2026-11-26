@@ -106,7 +106,7 @@ void scheduler::buildSchedulerOptimizationPipeline(
   pm.addPass(mlir::createLoopInvariantCodeMotionPass());
   pm.addPass(mlir::ktdf::createStageCoarseningPass());
   pm.addPass(mlir::ktdf::createReductionDimChunkingPass());
-  pm.addPass(mlir::ktdf::createSplitReductionInnerOuterDimPass());
+  pm.addPass(mlir::ktdf::createSplitReductionOuterVsSimdDimsPass());
   pm.addPass(mlir::ktdf::createReductionLoopExposurePass());
   pm.addPass(mlir::ktdf::createMapReductionPartialsPass());
   // The pass above writes a reduction's identity into a buffer of its own and

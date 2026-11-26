@@ -171,8 +171,8 @@
 // lowered together: buffer form drops all results at once, and rewriting only
 // one would leave the other without a reader.
 //
-// Same placement as outer_inner_dim_with_partial.mlir (combine after the
-// outer-dim reduction, ahead of the inner-dim one), only widened to two.
+// Same placement as outer_and_simd_with_partial.mlir (combine after the
+// outer-dim reduction, ahead of the SIMD one), only widened to two.
 
 
 #map = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
@@ -290,7 +290,7 @@ module {
                     } -> (tensor<1x64xf16>, tensor<1x64xf16>)
                     scf.yield %15#0, %15#1 : tensor<1x64xf16>, tensor<1x64xf16>
                   }
-                  // G2: two inner-dim absmax reductions over the combined
+                  // G2: two SIMD absmax reductions over the combined
                   // results.
                   %10 = tensor.empty() : tensor<1x64xf16>
                   %11 = tensor.empty() : tensor<1x64xf16>

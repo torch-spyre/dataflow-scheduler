@@ -116,10 +116,10 @@
 
 
 
-// Tests the inner-dim generic path: after SplitReductionInnerOuterDim +
+// Tests the SIMD generic path: after SplitReductionOuterVsSimdDims +
 // ReductionLoopExposure the SFU compute stage contains two linalg.generic ops:
 //   G1 (outer-dim, loop-exposed): tensor<1x1x64xf16> -> tensor<1x64xf16>
-//   G2 (inner-dim, plain):        tensor<1x64xf16>   -> tensor<1x64xf16>
+//   G2 (SIMD, plain):        tensor<1x64xf16>   -> tensor<1x64xf16>
 //
 // MapReductionPartials must:
 //   - Lower G1 into a memref.alloc + linalg.fill + scf.for with buffer generic.

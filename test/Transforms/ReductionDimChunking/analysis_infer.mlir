@@ -9,8 +9,9 @@
 // Default threshold = 1 MiB = 1,048,576 bytes.
 // Smallest N such that 4,194,304 / N ≤ 1,048,576 is N=4.
 //
-// The reduction dim at index 1 (size 32768) is chunkable.  The innermost
-// overall loop dim is index 2 (parallel), so no reduction dim is excluded.
+// The reduction dim at index 1 (size 32768) is chunkable.  The SIMD dim
+// (one 64-element f16 vector) is the 64-wide input dim 2, held by the parallel loop dim
+// 2, so no reduction dim is excluded.
 //
 // computeChunkDims distributes N=4 across [32768]:
 //   gcd(32768, 4) = 4, so dim-1 is split into 4 chunks of 8192 each.
@@ -38,7 +39,7 @@ module {
     }
     func.func private @local_schedule_0()
   }
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   module @local_schedule_0 {
     func.func @local_schedule_0() attributes {grid = [1]} {
       %c0 = arith.constant 0 : index

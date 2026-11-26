@@ -1,7 +1,7 @@
 // RUN: dataflow-scheduler-opt --reduction-dim-chunking="chunk-size-threshold=32768" %s | FileCheck %s
 
 // Test: threshold path where the entire budget is absorbed by the outermost
-// reduction dim, leaving the inner reduction dim untouched.
+// reduction dim, leaving the SIMD reduction dim untouched.
 //
 // Input linalg.generic: iterator_types = ["reduction", "reduction", "parallel"]
 // over tensor<2x256x64xf16> → tensor<64xf16>.
@@ -26,7 +26,7 @@
 // CHECK:     }
 // CHECK:     func.func private @local_schedule_0()
 // CHECK:   }
-// CHECK:   ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+// CHECK:   ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
 
 // CHECK-LABEL:   module @local_schedule_0 {
 // CHECK-NEXT:     func.func @local_schedule_0() attributes {grid = [1]} {
@@ -137,7 +137,7 @@ module {
     }
     func.func private @local_schedule_0()
   }
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   module @local_schedule_0 {
     func.func @local_schedule_0() attributes {grid = [1]} {
       %c0 = arith.constant 0 : index

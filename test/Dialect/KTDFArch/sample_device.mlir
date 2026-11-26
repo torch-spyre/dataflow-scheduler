@@ -267,7 +267,7 @@ ktdf_arch.device @sample_device {
       %in  = operand
       %acc = operand
       %generic = operation "linalg.generic" (%in, %acc : !pdl.value, !pdl.value)
-      apply_native_constraint "ktdf.is_inner_dim_reduction"(%generic : !pdl.operation)
+      apply_native_constraint "ktdf.is_simd_reduction"(%generic : !pdl.operation)
       %expected_kind = attribute = "sum"
       apply_native_constraint "ktdf.is_reduction_kind"(%generic, %expected_kind : !pdl.operation, !pdl.attribute)
 
@@ -284,7 +284,7 @@ ktdf_arch.device @sample_device {
       %in  = operand
       %acc = operand
       %generic = operation "linalg.generic" (%in, %acc : !pdl.value, !pdl.value)
-      apply_native_constraint "ktdf.is_inner_dim_reduction"(%generic : !pdl.operation)
+      apply_native_constraint "ktdf.is_simd_reduction"(%generic : !pdl.operation)
       %expected_kind = attribute = "absmax"
       apply_native_constraint "ktdf.is_reduction_kind"(%generic, %expected_kind : !pdl.operation, !pdl.attribute)
 

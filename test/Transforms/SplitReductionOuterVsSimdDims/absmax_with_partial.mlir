@@ -1,4 +1,4 @@
-// RUN: dataflow-scheduler-opt --split-reduction-inner-outer-dim %s | FileCheck %s
+// RUN: dataflow-scheduler-opt --split-reduction-outer-vs-simd-dims %s | FileCheck %s
 
 
 // CHECK: #[[$ATTR_0:.+]] = affine_map<(d0, d1, d2) -> (d0, d1, d2)>
@@ -133,7 +133,7 @@
 
 // An absmax with a chunked (partial) reduction dim.  ReductionDimChunking has
 // already wrapped the combine scf.if around the generic's result.  The pass
-// must place G2 (inner-dim reduction) *after* that scf.if so it sees the fully
+// must place G2 (SIMD reduction) *after* that scf.if so it sees the fully
 // combined partial value, and must thread the scf.if result into G2 instead of
 // G1's result directly.
 //
@@ -142,7 +142,7 @@
 //   output: (d0,d1,d2,d3) -> (d0,d3)       tensor<1x64xf16>
 //   iterator_types = ["parallel","reduction","reduction","parallel"]
 //   d0 = batch (1, parallel), d1 = outer reduction (64),
-//   d2 = inner reduction (64, vector_length), d3 = output-only parallel (64)
+//   d2 = SIMD reduction (64, vector_length), d3 = output-only parallel (64)
 //
 // After the split:
 //   G1 (outer reduction, reduces d1):
@@ -153,7 +153,7 @@
 //
 //   scf.if (combine, unchanged — feeds G2)
 //
-//   G2 (inner reduction, reduces d2 in G2 loop space):
+//   G2 (SIMD reduction, reduces d2 in G2 loop space):
 //     input:  (d0,d1,d2) -> (d0,d1)         tensor<1x64xf16>   (from scf.if result)
 //     output: (d0,d1,d2) -> (d0,d2)         tensor<1x64xf16>
 //     iterator_types = ["parallel","reduction","parallel"]

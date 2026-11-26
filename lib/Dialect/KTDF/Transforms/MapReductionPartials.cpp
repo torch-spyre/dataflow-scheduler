@@ -56,10 +56,11 @@
 // The iter_arg / loop result / scf.yield operand are stripped, and any
 // write_to_fifo that consumed the loop result is patched to use %alloc.
 //
-// ── Inner-dim generic (produced by SplitReductionInnerOuterDim) ──────────────
+// ── SIMD generic (produced by SplitReductionOuterVsSimdDims)
+// ───────────────────
 //
 // After the outer-dim rewrite above, %alloc_G1 (memref<D0x...xDNxf16, ms>)
-// has been RAUW'd in place of the loop result, so the inner-dim generic sees:
+// has been RAUW'd in place of the loop result, so the SIMD generic sees:
 //
 //   %empty = tensor.empty() : tensor<D0x...xDN-1xf16>
 //   %result = linalg.generic ins(%alloc_G1: memref<D0x...xDNxf16, ms>)
@@ -728,7 +729,7 @@ static LogicalResult lowerCombineIfToMemref(scf::IfOp if_op) {
 // rest of the stage.
 //
 // When an accumulator memref is a subview of a larger buffer — the subview an
-// inner-dim reduction reduces into — the combine still runs at the buffer's
+// SIMD reduction reduces into — the combine still runs at the buffer's
 // full width, because the chunk pipeline sends and receives the buffer entire.
 // ---------------------------------------------------------------------------
 static LogicalResult lowerAndEraseCombineIf(scf::IfOp if_op) {
@@ -776,10 +777,10 @@ static Operation* findLastAccumulatorInit(Value acc, Block* block) {
 }
 
 // ---------------------------------------------------------------------------
-// Lower `init`, the original init of the inner-dim generic, into `lane`: the
-// slice of the outer-dim accumulator `acc` the inner-dim generic reduces into.
+// Lower `init`, the original init of the SIMD generic, into `lane`: the
+// slice of the outer-dim accumulator `acc` the SIMD generic reduces into.
 //
-// The inner-dim generic combines every lane of `acc` into `lane`, so whatever
+// The SIMD generic combines every lane of `acc` into `lane`, so whatever
 // `lane` holds before the outer-dim reduction starts is counted exactly once.
 // A tensor.empty needs nothing but erasing -- the outer-dim init already left
 // the combiner's neutral element there. Any other init is written into `lane`
@@ -791,17 +792,17 @@ static Operation* findLastAccumulatorInit(Value acc, Block* block) {
 //   <init> → %lane                                // e.g. a fill through an
 //                                                 // identity buffer
 //   scf.for ... { linalg.generic ins(...) outs(%acc) }
-//   linalg.generic ins(%acc) outs(%sv)            // inner-dim reduction
+//   linalg.generic ins(%acc) outs(%sv)            // SIMD reduction
 //
-// `combiner` is a generic with the inner-dim generic's body, which gives the
+// `combiner` is a generic with the SIMD generic's body, which gives the
 // neutral element of a tensor.empty an scf.if init yields. `acc_from_fifo` is
 // set when `acc` is a copy of the fifo data rather than an outer-dim
 // accumulator.
 // ---------------------------------------------------------------------------
-static LogicalResult lowerInnerDimInit(Value init, Value acc,
-                                       memref::SubViewOp lane_like,
-                                       linalg::GenericOp combiner,
-                                       bool acc_from_fifo) {
+static LogicalResult lowerSimdInit(Value init, Value acc,
+                                   memref::SubViewOp lane_like,
+                                   linalg::GenericOp combiner,
+                                   bool acc_from_fifo) {
   if (auto empty_op = init.getDefiningOp<tensor::EmptyOp>()) {
     if (empty_op->use_empty()) empty_op->erase();
     return success();
@@ -811,7 +812,7 @@ static LogicalResult lowerInnerDimInit(Value init, Value acc,
   auto if_op = init.getDefiningOp<scf::IfOp>();
   if (!scalar && !if_op) {
     return combiner->emitError(
-        "rewriteInnerDimGeneric: unrecognised initializer form — expected "
+        "rewriteSimdGeneric: unrecognised initializer form — expected "
         "tensor.empty, a splat arith.constant, or scf.if");
   }
   // FIXME: With no outer-dim loop the accumulator is copied straight from the
@@ -819,13 +820,13 @@ static LogicalResult lowerInnerDimInit(Value init, Value acc,
   //        the init would need a combine of its own after the reduction.
   if (acc_from_fifo) {
     return combiner->emitError(
-        "rewriteInnerDimGeneric: an init other than tensor.empty is not "
+        "rewriteSimdGeneric: an init other than tensor.empty is not "
         "supported without an outer reduction loop");
   }
   Operation* acc_init = findLastAccumulatorInit(acc, combiner->getBlock());
   if (!acc_init) {
     return combiner->emitError(
-        "rewriteInnerDimGeneric: found no init of the outer-dim accumulator "
+        "rewriteSimdGeneric: found no init of the outer-dim accumulator "
         "to seed the init after");
   }
 
@@ -846,14 +847,14 @@ static LogicalResult lowerInnerDimInit(Value init, Value acc,
   }
 
   // An scf.if moves behind the outer-dim init, and is lowered there. It is
-  // defined next to the inner-dim generic, behind that point, so its condition
+  // defined next to the SIMD generic, behind that point, so its condition
   // must be available there.
   DominanceInfo dominance(lane);
   IRRewriter rewriter(builder);
   if (failed(moveValueDefinitions(rewriter, if_op.getCondition(), lane,
                                   dominance))) {
     return combiner->emitError(
-        "rewriteInnerDimGeneric: the init's condition can't be computed ahead "
+        "rewriteSimdGeneric: the init's condition can't be computed ahead "
         "of the outer-dim reduction");
   }
   if_op->moveAfter(lane);
@@ -885,7 +886,7 @@ static void widenFifoUses(Value fifo_slot, ArrayRef<int64_t> new_shape,
 }
 
 // ---------------------------------------------------------------------------
-// Lower an inner-dim reduction linalg.generic to buffer semantics.
+// Lower a SIMD reduction linalg.generic to buffer semantics.
 //
 // Two sub-cases are handled:
 //
@@ -906,7 +907,7 @@ static void widenFifoUses(Value fifo_slot, ArrayRef<int64_t> new_shape,
 //          gives a strided view into alloc_G1 where reduced results are
 //          written back in-place.
 //
-// After the inner reduction, the full %alloc_G1 buffer — not the subview —
+// After the SIMD reduction, the full %alloc_G1 buffer — not the subview —
 // is sent to the FIFO so the downstream stage receives all partial sums.
 // The FIFO slot type and the paired memref.alloc in the ktdf.private block are
 // widened to match %alloc_G1's shape.
@@ -936,7 +937,7 @@ static void widenFifoUses(Value fifo_slot, ArrayRef<int64_t> new_shape,
 //   linalg.generic ins(%local_reg) outs(%sv)   // both refer to local_reg
 //   ktdf.write_to_fifo %local_reg, %fifo_out
 // ---------------------------------------------------------------------------
-static LogicalResult rewriteInnerDimGeneric(
+static LogicalResult rewriteSimdGeneric(
     linalg::GenericOp generic_op,
     scheduler::arch_view::GroupLocalMemory& group_local_mem) {
   auto stage = generic_op->getParentOfType<ktdf::StageOp>();
@@ -958,11 +959,11 @@ static LogicalResult rewriteInnerDimGeneric(
   if (llvm::any_of(allocs_in,
                    [&](Value in) { return in.getType() != in_memref_type; })) {
     return generic_op.emitError(
-        "rewriteInnerDimGeneric: the inputs are not all the same memref type");
+        "rewriteSimdGeneric: the inputs are not all the same memref type");
   }
   if (generic_op.getOutputs().size() != allocs_in.size()) {
     return generic_op.emitError(
-        "rewriteInnerDimGeneric: expected an output per input");
+        "rewriteSimdGeneric: expected an output per input");
   }
 
   // Inspect indexing maps and iterator types to classify each dim.
@@ -978,7 +979,7 @@ static LogicalResult rewriteInnerDimGeneric(
   SmallVector<int64_t> loop_dim_to_size(iter_types.size(), 1);
   for (unsigned d = 0; d < in_rank; ++d) {
     auto dim_expr = dyn_cast<AffineDimExpr>(in_map.getResult(d));
-    assert(dim_expr && "inner-dim input map must be identity-like");
+    assert(dim_expr && "SIMD generic input map must be identity-like");
     loop_dim_to_size[dim_expr.getPosition()] = in_shape[d];
   }
 
@@ -996,7 +997,7 @@ static LogicalResult rewriteInnerDimGeneric(
   SmallVector<OpFoldResult> sv_strides(in_rank, builder.getIndexAttr(1));
   for (unsigned d = 0; d < in_rank; ++d) {
     auto dim_expr = dyn_cast<AffineDimExpr>(in_map.getResult(d));
-    assert(dim_expr && "inner-dim input map must be identity-like");
+    assert(dim_expr && "SIMD generic input map must be identity-like");
     unsigned loop_dim = dim_expr.getPosition();
     int64_t sz = (iter_types[loop_dim] == utils::IteratorType::reduction)
                      ? 1
@@ -1009,7 +1010,7 @@ static LogicalResult rewriteInnerDimGeneric(
   SmallVector<int64_t> sv_result_shape;
   for (unsigned d = 0; d < out_rank; ++d) {
     auto dim_expr = dyn_cast<AffineDimExpr>(out_map.getResult(d));
-    assert(dim_expr && "inner-dim output map must be identity-like");
+    assert(dim_expr && "SIMD generic output map must be identity-like");
     unsigned loop_dim = dim_expr.getPosition();
     if (iter_types[loop_dim] != utils::IteratorType::reduction)
       sv_result_shape.push_back(loop_dim_to_size[loop_dim]);
@@ -1110,9 +1111,9 @@ static LogicalResult rewriteInnerDimGeneric(
   SmallVector<Value> orig_out_inits(generic_op.getOutputs());
   generic_op.erase();
   for (auto [r, init] : llvm::enumerate(orig_out_inits)) {
-    if (failed(lowerInnerDimInit(init, effective[r],
-                                 subviews[r].getDefiningOp<memref::SubViewOp>(),
-                                 buffer_generic, acc_from_fifo)))
+    if (failed(lowerSimdInit(init, effective[r],
+                             subviews[r].getDefiningOp<memref::SubViewOp>(),
+                             buffer_generic, acc_from_fifo)))
       return failure();
   }
 
@@ -1143,9 +1144,9 @@ struct MapReductionPartialsPass
 
     // Collect generics in two buckets.  Loop-exposed (outer-dim) generics
     // must be processed first so their loop results are RAUW'd to alloc
-    // memrefs before the inner-dim generics are processed (which expect
+    // memrefs before the SIMD generics are processed (which expect
     // ins[0] to already be a memref).
-    SmallVector<linalg::GenericOp> loop_exposed, inner_dim;
+    SmallVector<linalg::GenericOp> loop_exposed, simd_generics;
     module.walk([&](linalg::GenericOp generic_op) {
       // FIXME: Current implementation leads to invalid IR when processing
       //        contractions, so skip them for now to allow matmul to pass.
@@ -1158,15 +1159,15 @@ struct MapReductionPartialsPass
       if (iter_arg && isa<scf::ForOp>(iter_arg.getOwner()->getParentOp()))
         loop_exposed.push_back(generic_op);
       else
-        inner_dim.push_back(generic_op);
+        simd_generics.push_back(generic_op);
     });
 
     for (auto generic_op : loop_exposed) {
       // Find the combine before rewriteGeneric rebuilds the loop nest.  It
       // hangs off the nest's result, not the generic's — the generic only
       // feeds the innermost yield.  This is where the chunk pipeline puts it:
-      // after the outer-dim reduction and ahead of the inner-dim one, so an
-      // inner-dim generic in the same stage consumes the combined accumulator.
+      // after the outer-dim reduction and ahead of the SIMD one, so a
+      // SIMD generic in the same stage consumes the combined accumulator.
       scf::IfOp combine_if;
       if (auto outermost_for = outermostForInStage(generic_op))
         combine_if = findCombineIf(outermost_for.getResult(0));
@@ -1189,11 +1190,11 @@ struct MapReductionPartialsPass
         return;
       }
     }
-    for (auto generic_op : inner_dim) {
+    for (auto generic_op : simd_generics) {
       // ins[0] is a tensor-typed ktdf.read_from_fifo when there was no
       // outer-dim loop feeding this generic (i.e. rewriteGeneric did not run
       // on its pipeline).  Emit a memref-typed read in its place so that
-      // rewriteInnerDimGeneric can assume ins[0] is already a memref.
+      // rewriteSimdGeneric can assume ins[0] is already a memref.
       Operation* stale_tensor_read = nullptr;
       if (auto read_op =
               generic_op.getInputs()[0].getDefiningOp<ktdf::ReadFromFifoOp>()) {
@@ -1202,15 +1203,15 @@ struct MapReductionPartialsPass
         Value new_read = ktdf::convertFromTensorToMemref(builder, read_op);
         generic_op.getInputsMutable().assign(new_read);
       }
-      // Find the combine before rewriteInnerDimGeneric erases generic_op.
+      // Find the combine before rewriteSimdGeneric erases generic_op.
       // With an outer-dim reduction in the stage the combine sits ahead of this
       // generic and the loop above already lowered it; one here belongs to a
-      // stage whose only reduction is this inner-dim one, so there was no
+      // stage whose only reduction is this SIMD one, so there was no
       // accumulator to combine against any earlier.
       scf::IfOp combine_if = findCombineIf(generic_op.getResult(0));
 
       // Take it out of the reduction's dataflow up front, so
-      // rewriteInnerDimGeneric sees the write_to_fifo downstream of it as a
+      // rewriteSimdGeneric sees the write_to_fifo downstream of it as a
       // user of the generic and retargets it onto the whole accumulator (and
       // widens its FIFO slot to match).
       if (combine_if) {
@@ -1221,15 +1222,15 @@ struct MapReductionPartialsPass
           res.replaceAllUsesWith(operand);
       }
 
-      // Transform inner-dim generic into memref-typed generic.
-      if (failed(rewriteInnerDimGeneric(generic_op, group_local_mem))) {
+      // Transform SIMD generic into memref-typed generic.
+      if (failed(rewriteSimdGeneric(generic_op, group_local_mem))) {
         signalPassFailure();
         return;
       }
       if (stale_tensor_read && stale_tensor_read->use_empty())
         stale_tensor_read->erase();
       // By now the then-branch yields the subview (RAUW'd by
-      // rewriteInnerDimGeneric), which lowerAndEraseCombineIf resolves back to
+      // rewriteSimdGeneric), which lowerAndEraseCombineIf resolves back to
       // the buffer it slices.
       if (failed(lowerAndEraseCombineIf(combine_if))) {
         signalPassFailure();

@@ -1,11 +1,11 @@
-// RUN: dataflow-scheduler-opt --split-reduction-inner-outer-dim --split-input-file %s | FileCheck %s
+// RUN: dataflow-scheduler-opt --split-reduction-outer-vs-simd-dims --split-input-file %s | FileCheck %s
 
 // Tests that a reduction whose accumulator is initialised by a splat
 // arith.constant hands that constant to the second generic of the split, which
 // has the output's shape and combines it in exactly once. The first generic starts from a
 // tensor.empty -- the combiner's neutral element: every element of its
 // intermediate is combined into the output, so the init there would be
-// counted once per element of the reduced inner dim.
+// counted once per element of the reduced SIMD vector.
 
 // CHECK-LABEL:   func.func @max_const_init
 // CHECK:           ktdf.stage depends_in(%{{.*}}#2) depends_out(%{{.*}}#3) {

@@ -1,4 +1,4 @@
-// RUN: dataflow-scheduler-opt --split-reduction-inner-outer-dim %s | FileCheck %s
+// RUN: dataflow-scheduler-opt --split-reduction-outer-vs-simd-dims %s | FileCheck %s
 
 // A compute that accumulates two things over one input: a sum, and a sum of the
 // squares. Both halves split like a lone sum -- an intermediate, an output
@@ -20,7 +20,7 @@
 // CHECK:         arith.addf %[[SQ]],
 // CHECK:         linalg.yield
 
-// The second reduces the inner dimension over both partial results, and
+// The second reduces the SIMD dimension over both partial results, and
 // accumulates each -- no multiply here.
 // CHECK:       linalg.generic
 // CHECK-SAME:      ins(%[[G1]]#0, %[[G1]]#1 : tensor<2x64xf16>, tensor<2x64xf16>)

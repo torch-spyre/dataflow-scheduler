@@ -13,7 +13,8 @@
 // computeChunkDims([d0=2, d1=4, d2=3136], N=4):
 //   i=0: gcd(2, 4) = 2  → new_d0 = 1, remaining = 2
 //   i=1: gcd(4, 2) = 2  → new_d1 = 2, remaining = 1  (stop)
-//   d2=3136 (innermost) is never touched
+//   d2=3136 is never reached: the budget is used up before it
+// (the SIMD dim is the parallel 64-wide d3, so no reduction dim is excluded)
 //
 // Result: chunk_sizes = [1, 2, 3136], per_dim_num_chunks = [2, 2, 1]
 // Two nested scf.for loops: outer bound=2 (d0), inner bound=2 (d1).
@@ -138,7 +139,7 @@ module {
     }
     func.func private @local_schedule_0()
   }
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   module @local_schedule_0 {
     func.func @local_schedule_0() attributes {grid = [1]} {
       %c0 = arith.constant 0 : index

@@ -1,11 +1,13 @@
 // RUN: dataflow-scheduler-opt --reduction-dim-chunking="chunk-size-threshold=8192" --split-input-file %s | FileCheck %s
 
-// The threshold path never chunks the innermost dim of the first input. The
-// reduction dim it excludes is the one indexing that input dim, which is not
-// necessarily the innermost loop dim.
+// The threshold path never chunks a SIMD dim. For f16 the default compute
+// unit has 64 vector lanes, so the SIMD dims are the trailing input axes that
+// hold 64 elements. The reduction dims it excludes are the ones indexing those
+// axes, which under a permuted map are not necessarily the innermost loop dims.
 
-// The reduction is the innermost loop dim d2 but indexes input dim 1, so it is
-// chunked: 32 KiB of input in 4 chunks of 8 KiB.
+// The SIMD dim is the 64-wide input dim 2, held by the parallel d1. The
+// reduction is the innermost loop dim d2 but indexes input dim 1, outside the
+// SIMD dims, so it is chunked: 32 KiB of input in 4 chunks of 8 KiB.
 // CHECK-DAG: #[[$COL_IN:map[0-9]*]] = affine_map<(d0, d1, d2) -> (d0, d2, d1)>
 // CHECK-DAG: #[[$COL_OUT:map[0-9]*]] = affine_map<(d0, d1, d2) -> (d0, d1)>
 // CHECK-DAG: #[[$COL_ID:map[0-9]*]] = affine_map<(d0, d1) -> (d0, d1)>
@@ -67,7 +69,7 @@
 #in  = affine_map<(d0, d1, d2) -> (d0, d2, d1)>
 #out = affine_map<(d0, d1, d2) -> (d0, d1)>
 module {
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   func.func @column_sum(%src: memref<2x1x256x64xf16, "L1">, %dst: memref<2x1x64xf16, "L1">) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
@@ -105,8 +107,8 @@ module {
 
 // -----
 
-// The reduction loop dim d1 indexes the innermost input dim 2, so it is not
-// chunked, although it is not the innermost loop dim.
+// The reduction loop dim d1 indexes the 256-wide input dim 2, which is the
+// SIMD dim, so it is not chunked, although it is not the innermost loop dim.
 // CHECK-DAG: #[[$PERM_IN:map[0-9]*]] = affine_map<(d0, d1, d2) -> (d0, d2, d1)>
 // CHECK-DAG: #[[$PERM_OUT:map[0-9]*]] = affine_map<(d0, d1, d2) -> (d0, d2)>
 // CHECK-LABEL: func.func @permuted(
@@ -132,7 +134,7 @@ module {
 #in  = affine_map<(d0, d1, d2) -> (d0, d2, d1)>
 #out = affine_map<(d0, d1, d2) -> (d0, d2)>
 module {
-  ktdf_arch.device @spyre_single_corelet import("../../Dialect/KTDFArch/sample_device.mlir")
+  ktdf_arch.device @sample_device import("../../Dialect/KTDFArch/sample_device.mlir")
   func.func @permuted(%src: memref<2x1x32x256xf16, "L1">, %dst: memref<2x1x32xf16, "L1">) {
     %c0 = arith.constant 0 : index
     %c1 = arith.constant 1 : index
