@@ -14,7 +14,7 @@
 // CHECK:           ktdf.fifo.allocate() -> !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>
 // CHECK:           ktdf.private_yield
 // CHECK:         ktdf.stage
-// CHECK:           ktdf.data_transfer from %{{.*}} to %[[IN0:[0-9]+#[0-9]+]] size [1, 64] {{.*}}: memref<1x64xf16, strided<[64, 1], offset: ?>, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+// CHECK:           ktdf.data_transfer from %{{.*}} to %[[IN0:[0-9]+#[0-9]+]] size [64] {{.*}}: memref<1x64xf16, strided<[64, 1], offset: ?>, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
 // CHECK:           ktdf.data_transfer from %{{.*}} to %[[IN1:[0-9]+#[0-9]+]] size [64] {{.*}}: memref<64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
 // CHECK:         } {applicable_units = ["L1LU"]}
 // CHECK:         ktdf.stage
@@ -23,7 +23,7 @@
 // CHECK:           ktdf.write_to_fifo %{{.*}}, %[[OUT:[0-9]+#[0-9]+]] : tensor<1x64xf16>, <"SFU" -> "L1SU", 64xf16>
 // CHECK:         } {applicable_units = ["SFU"]}
 // CHECK:         ktdf.stage
-// CHECK:           ktdf.data_transfer from %[[OUT]] size [1, 64] to %{{.*}} {{.*}}: !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>, "L1">
+// CHECK:           ktdf.data_transfer from %[[OUT]] size [64] to %{{.*}} {{.*}}: !ktdf.fifo.slot<"SFU" -> "L1SU", 64xf16>, memref<1x64xf16, strided<[64, 1], offset: ?>, "L1">
 // CHECK:         } {applicable_units = ["L1SU"]}
 // CHECK-NOT:     "L1" -> "SFU"
 // CHECK-NOT:     "SFU" -> "L1",

@@ -14,7 +14,7 @@
 // CHECK:           ktdf.data_transfer from %{{.*}}[%{{.*}}, %{{.*}}] size [1, 64] to %{{.*}}[0, 0] size [1, 64]
 // CHECK:         } {applicable_units = ["MNILU"]}
 // CHECK:         ktdf.stage
-// CHECK:           ktdf.data_transfer from %{{.*}}[0, 0] size [1, 64] to %[[FIFO:.*]] size [1, 64] : memref<1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
+// CHECK:           ktdf.data_transfer from %{{.*}}[0, 0] size [1, 64] to %[[FIFO:.*]] size [64] : memref<1x64xf16, "L1">, !ktdf.fifo.slot<"L1LU" -> "SFU", 64xf16>
 // CHECK:         } {applicable_units = ["L1LU"]}
 // CHECK:         ktdf.stage
 // CHECK:           ktdf.read_from_fifo %[[FIFO]] : <"L1LU" -> "SFU", 64xf16>

@@ -39,6 +39,8 @@
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Utils/IndexingUtils.h"
+#include "mlir/Dialect/Utils/StaticValueUtils.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Types.h"
 #include "mlir/Support/LogicalResult.h"
@@ -1779,6 +1781,27 @@ static mlir::LogicalResult retypeFifosBetweenOriginalStages(
         TransferSide& fifo_side = transfer->side(/*source_side=*/is_consumer);
         fifo_side.resource = fifo_spec;
         fifo_side.slot_index = slot.slot_idx;
+        // A data_transfer's FIFO side is sized by the slot it moves, flat, as
+        // on every hop stage: the input IR sizes it like the tile, and later
+        // passes (e.g. reduction-loop-exposure) divide a FIFO-side size as an
+        // element count.
+        if (mlir::isa<mlir::ktdf::DataTransferOp>(endpoint.op)) {
+          const int64_t slot_elements =
+              fifo_spec->elements_per_slot[slot.slot_idx];
+          // The other side -- the source buffer at the producer, the
+          // destination buffer at the consumer -- moves the same elements as
+          // the slot. Like the slot, it has to be static.
+          [[maybe_unused]] std::optional<llvm::SmallVector<int64_t>>
+              other_sizes = mlir::getConstantIntValues(
+                  transfer->side(/*source_side=*/!is_consumer).sizes);
+          assert(other_sizes &&
+                 "Dynamic data transfer sizes not supported in path expansion");
+          assert(mlir::computeProduct(*other_sizes) == slot_elements &&
+                 "a FIFO slot and the other side of its data transfer move "
+                 "different element counts");
+          mlir::Builder b(endpoint.op->getContext());
+          fifo_side.sizes = {b.getI64IntegerAttr(slot_elements)};
+        }
 
         // The materializer only rewrites read_from_fifo / write_to_fifo in
         // kAdaptFifoKinds stages; DataTransferOps are rewritten in either
