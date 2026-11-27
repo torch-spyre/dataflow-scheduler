@@ -27,6 +27,7 @@
 
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/DebugLog.h"
@@ -191,6 +192,11 @@ struct TileSizeSelectionPass
 
     SmallVector<ktdf::TilingReserveSizeOp> reserve_size_ops;
     module.walk([&](ktdf::TilingReserveSizeOp reserve_size_op) {
+      if (::scheduler::isInScheduledProgram(reserve_size_op)) {
+        LDBG(2) << "skipping tiling.reserve_size in a scheduled program at "
+                << reserve_size_op.getLoc();
+        return;
+      }
       reserve_size_ops.push_back(reserve_size_op);
     });
 

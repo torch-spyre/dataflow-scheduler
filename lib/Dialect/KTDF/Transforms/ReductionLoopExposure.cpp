@@ -68,6 +68,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -483,6 +484,12 @@ struct ReductionLoopExposurePass
     SmallVector<std::pair<ktdf::StageOp, linalg::GenericOp>> work_items;
     WalkResult walk =
         module.walk<WalkOrder::PostOrder>([&](ktdf::StageOp stage) {
+          if (::scheduler::isInScheduledProgram(stage)) {
+            LDBG(1) << PASS_NAME ": skipping stage in a scheduled program at "
+                    << stage.getLoc();
+            return WalkResult::advance();
+          }
+
           SmallVector<linalg::GenericOp> generics;
           if (failed(collectReductionGenericOps(stage, generics)))
             return WalkResult::interrupt();

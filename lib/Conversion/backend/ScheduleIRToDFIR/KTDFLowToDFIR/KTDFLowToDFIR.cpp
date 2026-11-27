@@ -41,6 +41,7 @@
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "dataflow-scheduler/Dialect/Symbol/Symbol.h"
 #include "dataflow-scheduler/Dialect/Uniform/Uniform.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDPDialect.h"
 #include "llvm/Support/DebugLog.h"
@@ -110,13 +111,19 @@ struct KTDFLowToDFIRPass
 
     // The run's symbols, numbered once for the whole module: nothing sets a
     // range of ids aside, so two functions cannot each start from the top. This
-    // also declares in the IR which symbol each of the run's inputs is, which
-    // is what lets a consumer read the numbering rather than work it out again.
-    SymbolAllocator symbols(module_op);
+    // also declares in the IR which symbol each of the run's inputs and launch
+    // loop variables that a program reads is, which is what lets a consumer
+    // read the numbering rather than work it out again. It fails where a kernel
+    // passes a program a value no symbol can be written for, having said so.
+    mlir::FailureOr<SymbolAllocator> allocated =
+        SymbolAllocator::build(module_op);
+    if (mlir::failed(allocated)) return signalPassFailure();
+    SymbolAllocator& symbols = *allocated;
 
     llvm::SmallVector<mlir::func::FuncOp, 4> funcs;
     module_op.walk([&](mlir::func::FuncOp func) { funcs.push_back(func); });
     for (auto func : funcs) {
+      if (skip(func)) continue;
       LDBG(1) << "Running " << PASS_NAME << " on " << func.getName();
 
       auto split = partitionPreludeAndWork(func);
@@ -172,6 +179,20 @@ struct KTDFLowToDFIRPass
   }
 
  private:
+  /// Whether \p func is in a program module an earlier run scheduled, and is
+  /// left as it is.
+  ///
+  /// The declaration module is not skipped: it holds calls and loops, which no
+  /// stage lowers, so the pass leaves it as it is anyway, apart from the
+  /// symbols the allocator declares there.
+  bool skip(mlir::func::FuncOp func) const {
+    if (!isInScheduledProgram(func)) return false;
+    LDBG() << "@" << func.getName() << " is in @"
+           << getTopLevelChildModule(func).getSymName().value_or("")
+           << ", which is already scheduled; leaving it unaltered";
+    return true;
+  }
+
   const SchedulerExtContext& schedulerExtContext() const {
     return scheduler_ctx_;
   }

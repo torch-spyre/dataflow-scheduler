@@ -28,6 +28,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/Mapping.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -544,6 +545,11 @@ struct SplitReductionInnerOuterDimPass
     // types, with one reduction dim mapping to the rightmost non-1 input dim.
     SmallVector<linalg::GenericOp> candidates;
     module.walk([&](linalg::GenericOp generic_op) {
+      if (::scheduler::isInScheduledProgram(generic_op)) {
+        LDBG(2) << PASS_NAME ": skipping generic in a scheduled program at "
+                << generic_op.getLoc();
+        return WalkResult::advance();
+      }
       if (isEligible(generic_op)) candidates.push_back(generic_op);
       return WalkResult::advance();
     });

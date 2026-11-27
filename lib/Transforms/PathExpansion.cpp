@@ -33,6 +33,7 @@
 #include "dataflow-scheduler/Transforms/PathExpansion/Materializer.h"
 #include "dataflow-scheduler/Transforms/PathExpansion/Planner.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugLog.h"
@@ -105,6 +106,11 @@ void PathExpansionPass::runOnOperation() {
   llvm::SmallVector<mlir::ktdf::PipelineOp> candidates;
   module_op.walk<mlir::WalkOrder::PostOrder>(
       [&](mlir::ktdf::PipelineOp pipeline_op) {
+        if (isInScheduledProgram(pipeline_op)) {
+          LDBG(2) << "Skipping pipeline at " << pipeline_op.getLoc()
+                  << " in a scheduled program";
+          return;
+        }
         candidates.push_back(pipeline_op);
       });
   for (mlir::ktdf::PipelineOp cand : candidates) {

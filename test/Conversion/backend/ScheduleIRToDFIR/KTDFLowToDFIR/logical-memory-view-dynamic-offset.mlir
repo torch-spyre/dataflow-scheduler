@@ -5,7 +5,7 @@
 
 // The dynamic reinterpret_cast offset (%dyn) must be added into the source
 // get_logical_memory_view start_address (previously it was dropped).
-// CHECK-LABEL: func.func private @"local-schedule-0"
+// CHECK-LABEL: func.func private @local_schedule_0
 // CHECK:         %[[DYN:.*]] = arith.muli
 // CHECK:         %[[ADD:.*]] = arith.addi %[[DYN]], %{{.*}} : index
 // CHECK:         dataflow.get_logical_memory_view %{{.*}}, %[[ADD]]
@@ -13,13 +13,13 @@ module {
   ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
   module {
     func.func @test() attributes {grid = [2]} {
-      call @"local-schedule-0"() : () -> ()
+      call @local_schedule_0() : () -> ()
       return
     }
-    func.func private @"local-schedule-0"()
+    func.func private @local_schedule_0()
   }
-  module {
-    func.func private @"local-schedule-0"() attributes {grid = [2]} {
+  module @local_schedule_0 {
+    func.func private @local_schedule_0() attributes {grid = [2]} {
       %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
       %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
       %c0 = arith.constant 0 : index
@@ -57,20 +57,20 @@ module {
 // A static non-zero reinterpret_cast offset (128) is folded at compile time
 // into the base address (64000 + 128 = 64128) and passed directly to
 // get_logical_memory_view — no runtime arith.addi is emitted.
-// CHECK2-LABEL: func.func private @"local-schedule-0"
+// CHECK2-LABEL: func.func private @local_schedule_0
 // CHECK2:         %[[C64128:.*]] = arith.constant 64128 : index
 // CHECK2:         dataflow.get_logical_memory_view %{{.*}}, %[[C64128]]
 module {
   ktdf_arch.device @sample_device attributes {} import("../../../../Dialect/KTDFArch/sample_device.mlir")
   module {
     func.func @test_static_nonzero() attributes {grid = [2]} {
-      call @"local-schedule-0"() : () -> ()
+      call @local_schedule_0() : () -> ()
       return
     }
-    func.func private @"local-schedule-0"()
+    func.func private @local_schedule_0()
   }
-  module {
-    func.func private @"local-schedule-0"() attributes {grid = [2]} {
+  module @local_schedule_0 {
+    func.func private @local_schedule_0() attributes {grid = [2]} {
       %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
       %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
       %c0 = arith.constant 0 : index

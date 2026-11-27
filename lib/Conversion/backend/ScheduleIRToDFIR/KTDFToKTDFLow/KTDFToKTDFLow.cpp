@@ -45,6 +45,7 @@
 #include "dataflow-scheduler/Dialect/KTDFLowering/KTDFLowering.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "llvm/Support/DebugLog.h"
@@ -323,6 +324,11 @@ struct KTDFToKTDFLoweringPass
       return mlir::WalkResult::skip();
     });
     for (auto func : funcs) {
+      if (isInScheduledProgram(func)) {
+        LDBG() << "@" << func.getName()
+               << " is in a scheduled program; skipped";
+        continue;
+      }
       LDBG(1) << "Running " << PASS_NAME << " on " << func.getName();
 
       // Pre-compute stages for reuse across multiple steps

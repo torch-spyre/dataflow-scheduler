@@ -31,6 +31,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/CodeMotion.h"
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Transforms/Utils/Hoisting.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 
 #define PASS_NAME "hoist-constant-storage"
 #define DEBUG_TYPE PASS_NAME
@@ -56,6 +57,12 @@ struct HoistConstantStoragePass
 
   void runOnOperation() override {
     if (disable_this_pass) {
+      return;
+    }
+
+    if (isInScheduledProgram(getOperation())) {
+      LDBG() << "skipping " << getOperation().getSymName()
+             << " in a scheduled program";
       return;
     }
 

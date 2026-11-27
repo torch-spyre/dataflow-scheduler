@@ -50,6 +50,7 @@
 #include "dataflow-scheduler/Analysis/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDFDialect.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "dataflow-scheduler/Utils/SchedulerExtContext.h"
 
 #define PASS_NAME "address-assignment"
@@ -337,6 +338,11 @@ struct AddressAssignmentPass
     llvm::append_range(scopes, module.getOps<mlir::ModuleOp>());
 
     for (auto scope : scopes) {
+      if (isInScheduledProgram(scope)) {
+        LDBG() << "Skipping scheduled program " << scope.getSymNameAttr();
+        continue;
+      }
+
       const auto allocs = collectAllocations(scope);
       LDBG(1) << "Found " << allocs.size()
               << " allocations with memory space attributes";

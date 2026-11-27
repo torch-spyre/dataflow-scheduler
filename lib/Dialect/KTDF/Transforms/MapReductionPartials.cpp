@@ -89,6 +89,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -1147,6 +1148,11 @@ struct MapReductionPartialsPass
     // ins[0] to already be a memref).
     SmallVector<linalg::GenericOp> loop_exposed, inner_dim;
     module.walk([&](linalg::GenericOp generic_op) {
+      if (::scheduler::isInScheduledProgram(generic_op)) {
+        LDBG(2) << PASS_NAME ": skipping generic in a scheduled program at "
+                << generic_op.getLoc();
+        return;
+      }
       // FIXME: Current implementation leads to invalid IR when processing
       //        contractions, so skip them for now to allow matmul to pass.
       if (ktdf::isContraction(generic_op)) {

@@ -31,13 +31,13 @@ module {
   ktdf_arch.device @sample_device attributes {} import("../../Dialect/KTDFArch/sample_device.mlir")
   module {
     func.func @Add_1414() attributes {grid = [2]} {
-      call @"local-schedule-0"() : () -> ()
+      call @local_schedule_0() : () -> ()
       return
     }
-    func.func private @"local-schedule-0"()
+    func.func private @local_schedule_0()
   }
-  module {
-    func.func private @"local-schedule-0"() attributes {grid = [2]} {
+  module @local_schedule_0 {
+    func.func private @local_schedule_0() attributes {grid = [2]} {
       %c0 = arith.constant 0 : index
       %c1 = arith.constant 1 : index
       %c64 = arith.constant 64 : index

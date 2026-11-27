@@ -35,6 +35,7 @@
 #include "dataflow-scheduler/Dialect/KTDPLowering/KTDPLowering.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/IndirectAccessTileNarrowing.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "ktir/Dialect/KTDP/KTDP.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/Support/DebugLog.h"
@@ -1078,6 +1079,11 @@ struct IndirectAddrBufLegalizationPass
     mlir::WalkResult outer_walk =
         module.walk([&](mlir::func::FuncOp func) -> mlir::WalkResult {
           if (func.isExternal()) return mlir::WalkResult::advance();
+          if (isInScheduledProgram(func)) {
+            LDBG() << "skipping " << func.getSymName()
+                   << " in a scheduled program";
+            return mlir::WalkResult::advance();
+          }
           ++num_funcs;
           mlir::ktdp_lowering::ConstructIndirectAccessTileOp func_indirect_op;
           mlir::WalkResult walk_res = func.walk(

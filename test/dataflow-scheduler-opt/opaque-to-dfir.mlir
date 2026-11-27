@@ -1,6 +1,6 @@
 // RUN: dataflow-scheduler-opt -ktir-to-dfir "%s" | FileCheck "%s"
 
-// CHECK-LABEL: module @local_schedule_0 {
+// CHECK-LABEL: module @local_schedule_0 attributes {dataflow_scheduler.scheduled} {
 // CHECK-LABEL: func.func @local_schedule_0(
 
 // CHECK-DAG:   %[[C0:.+]] = arith.constant 0 : index

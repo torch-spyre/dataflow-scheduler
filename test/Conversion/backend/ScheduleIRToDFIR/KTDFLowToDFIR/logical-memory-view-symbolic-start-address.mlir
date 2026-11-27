@@ -45,7 +45,6 @@
 // CHECK-NEXT:      symbol.create_id %[[WORDS_0]] {symbol_id = -3 : si64} : index
 // CHECK:           %[[SYM_0:.*]] = symbol.create_symbol {SymbolId = -3 : i64} : index
 // CHECK-NEXT:      dataflow.get_logical_memory_view %[[DDR_0]], %[[SYM_0]]
-// CHECK-NOT:       @sched_1
 // CHECK-NOT:       SymbolId = -2
 
 // The kernel's second input is a different tensor, so a different symbol -- and
@@ -74,7 +73,7 @@ module {
     func.func private @sched_0(index)
     func.func private @sched_1(index)
   }
-  module {
+  module @sched_0 {
     func.func private @sched_0(%base: index) attributes {grid = [2]} {
       %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
       %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index
@@ -111,7 +110,7 @@ module {
       return
     }
   }
-  module {
+  module @sched_1 {
     func.func private @sched_1(%base: index) attributes {grid = [2]} {
       %0 = dataflow.get_unit {core = 0 : i32, name = "C0-MNILU", type = "MNILU"} : index
       %1 = dataflow.get_unit {core = 1 : i32, name = "C1-MNILU", type = "MNILU"} : index

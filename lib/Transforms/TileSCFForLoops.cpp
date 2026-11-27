@@ -63,6 +63,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/TileNormalized.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
 #include "dataflow-scheduler/Transforms/Utils/SCFTilingUtils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Affine/IR/AffineOps.h"
@@ -115,7 +116,12 @@ struct TileSCFForLoopsPass
     // Collect all outermost scf.for loops using preorder walk with skip
     llvm::SmallVector<mlir::scf::ForOp> root_loops;
     op->walk<mlir::WalkOrder::PreOrder>([&](mlir::scf::ForOp for_op) {
-      root_loops.push_back(for_op);
+      if (isInScheduledProgram(for_op)) {
+        LDBG(2) << "skipping loop nest at " << for_op.getLoc()
+                << " in a scheduled program";
+      } else {
+        root_loops.push_back(for_op);
+      }
       return mlir::WalkResult::skip();
     });
 
@@ -136,6 +142,15 @@ struct TileSCFForLoopsPass
 
     // Process each nest identified by the analysis
     for (const auto& nest : analysis.getAllNests()) {
+      // A program an earlier run scheduled is final; leave its loops alone.
+      // The analysis looks loops up by op, so passing over a nest leaves the
+      // others as they were, and its own loops stay valid, being untouched.
+      if (!nest.loops.empty() && isInScheduledProgram(nest.getOutermost())) {
+        LDBG(2) << "skipping loop nest at " << nest.getOutermost().getLoc()
+                << " in a scheduled program";
+        continue;
+      }
+
       // Check if this nest is a candidate for tiling
       // Skip nests with invalidated loops
       bool is_candidate = true;

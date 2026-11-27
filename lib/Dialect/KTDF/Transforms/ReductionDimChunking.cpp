@@ -84,6 +84,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/Passes.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/ReductionUtils.h"
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -195,6 +196,12 @@ struct ReductionDimChunkingPass
     llvm::DenseSet<ktdf::StageOp> seen;
     SmallVector<ktdf::StageOp> compute_stages;
     module.walk([&](linalg::GenericOp generic) {
+      if (::scheduler::isInScheduledProgram(generic)) {
+        LDBG(2) << PASS_NAME ": skipping generic in a scheduled program at "
+                << generic.getLoc();
+        return WalkResult::advance();
+      }
+
       // Check if this generic has a reduction iterator.
       bool has_reduction = false;
       for (auto it : generic.getIteratorTypesArray()) {

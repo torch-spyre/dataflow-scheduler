@@ -34,6 +34,7 @@ add_dataflow_scheduler_library(DataflowSchedulerKTDFTransforms
     DataflowSchedulerDialects::KTDFArchAnalysis
     DataflowScheduler::KTDFUtils
     DataflowScheduler::TransformUtils
+    DataflowScheduler::Utils
 
   LINK_MLIR_LIBS
     MLIRAffineDialect

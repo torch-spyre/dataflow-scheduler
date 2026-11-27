@@ -16,6 +16,7 @@
 //
 //===----------------------------------------------------------------------===//"
 
+#include <llvm/Support/DebugLog.h>
 #include <mlir/Dialect/Func/IR/FuncOps.h>
 #include <mlir/IR/Operation.h>
 #include <mlir/IR/OperationSupport.h>
@@ -26,6 +27,7 @@
 
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Transforms/Utils/Hoisting.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 
 #define PASS_NAME "hoist-invariants"
 #define DEBUG_TYPE PASS_NAME
@@ -49,6 +51,12 @@ struct HoistInvariantsPass
 
   void runOnOperation() override {
     if (disable_this_pass) {
+      return;
+    }
+
+    if (isInScheduledProgram(getOperation())) {
+      LDBG() << "@" << getOperation().getName()
+             << " is in a scheduled program; skipped";
       return;
     }
 

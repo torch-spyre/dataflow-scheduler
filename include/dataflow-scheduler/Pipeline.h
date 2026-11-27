@@ -55,7 +55,8 @@ void buildSchedulerOptimizationPipeline(
 /// Builds the DFIR backend stage: lowers the optimized Schedule IR through
 /// KTDFLow into Dataflow IR (DFIR).
 ///
-/// Passes come from `Conversion/backend/ScheduleIRToDFIR`. Note that this does
+/// Passes come from `Conversion/backend/ScheduleIRToDFIR`. Its last pass marks
+/// each program module the run scheduled. Note that this does
 /// not emit the DFIR output; callers that want the resulting DFIR written out
 /// should append `createSplitDFIROutputPass()` themselves.
 void buildDFIRBackendPipeline(

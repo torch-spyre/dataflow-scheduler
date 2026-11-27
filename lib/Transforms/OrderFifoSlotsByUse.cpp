@@ -34,6 +34,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Analysis/StageGraph.h"
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 
 #define PASS_NAME "order-fifo-slots-by-use"
 #define DEBUG_TYPE PASS_NAME
@@ -220,6 +221,10 @@ struct OrderFifoSlotsByUsePass
     }
 
     getOperation()->walk([&](mlir::func::FuncOp func) {
+      if (isInScheduledProgram(func)) {
+        LDBG() << "skipping " << func.getSymName() << " in a scheduled program";
+        return;
+      }
       const auto channels = collectChannelAccesses(func);
       func.walk([&](mlir::ktdf::PipelineOp pipeline) {
         orderPipeline(pipeline, channels);

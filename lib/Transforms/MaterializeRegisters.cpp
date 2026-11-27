@@ -19,6 +19,7 @@
 #include <llvm/ADT/STLExtras.h>
 #include <llvm/ADT/SetVector.h>
 #include <llvm/ADT/SmallVector.h>
+#include <llvm/Support/DebugLog.h>
 #include <llvm/Support/MathExtras.h>
 #include <mlir/Dialect/Arith/IR/Arith.h>
 #include <mlir/Dialect/Linalg/IR/Linalg.h>
@@ -38,6 +39,9 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchInterfaces.h"
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
 #include "dataflow-scheduler/Transforms/Utils/Utils.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
+
+#define DEBUG_TYPE "materialize-registers"
 
 namespace scheduler {
 #define GEN_PASS_DEF_MATERIALIZEREGISTERSPASS
@@ -331,6 +335,11 @@ struct MaterializeRegistersPass
 
     IRRewriter rewriter(&getContext());
     const auto result = getOperation()->walk([&](linalg::GenericOp generic) {
+      if (isInScheduledProgram(generic)) {
+        LDBG(2) << "skipping generic in a scheduled program at "
+                << generic.getLoc();
+        return WalkResult::skip();
+      }
       if (failed(materializeRegisters(generic, mapping, rewriter))) {
         return WalkResult::interrupt();
       }

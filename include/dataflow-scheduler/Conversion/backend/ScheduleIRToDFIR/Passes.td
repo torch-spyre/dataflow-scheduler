@@ -102,6 +102,20 @@ def WrapProgramDFIRPass : Pass<"wrap-program-dfir", "mlir::ModuleOp"> {
   ];
 }
 
+def MarkScheduledProgramsPass : Pass<"mark-scheduled-programs", "mlir::ModuleOp"> {
+  let summary = "Mark each program module the run scheduled";
+  let description = [{
+    Sets the dataflow_scheduler.scheduled unit attribute on every child module
+    of the top-level module that is not marked yet. The orchestration module,
+    the one child module without a name, is never marked.
+
+    The last pass of the pipeline, so that the marker says a module went through
+    the whole of it. A later run on the same module leaves a marked module as it
+    is.
+  }];
+  let constructor = "::scheduler::createMarkScheduledProgramsPass()";
+}
+
 def SplitDFIROutputPass : Pass<"emit-split-dfir", "mlir::ModuleOp"> {
   let summary = "Split hierarchical DFIR into flat per-function modules for DCC";
   let description = [{

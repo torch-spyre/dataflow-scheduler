@@ -1,4 +1,5 @@
 add_dataflow_scheduler_library(DataflowSchedulerUtils
+    ProgramModules.cpp
     SchedulerExtContext.cpp
 
   ADDITIONAL_HEADER_DIRS

@@ -170,6 +170,9 @@ void scheduler::buildDFIRBackendPipeline(
   // And each program given the two levels it is read at: what it is, and the
   // DataflowIR it is compiled from, which takes no arguments.
   pm.addPass(createWrapProgramDFIRPass());
+  // Last, so that a program module is marked only once the run has gone all
+  // the way through it. A later run reads the marker to leave it alone.
+  pm.addPass(createMarkScheduledProgramsPass());
 }
 
 void scheduler::buildKTDPToDFIRPipeline(

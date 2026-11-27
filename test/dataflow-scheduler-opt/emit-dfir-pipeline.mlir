@@ -96,6 +96,7 @@
 // CHECK-NEXT:   )
 // CHECK-NEXT:   ktdflowering-to-dfir
 // CHECK-NEXT:   wrap-program-dfir
+// CHECK-NEXT:   mark-scheduled-programs
 // CHECK-NEXT:   emit-split-dfir
 
 // expected-error @below {{no 'ktdf_arch.device' is present in the module and no device file name is provided to ensure-device-declaration pass}}

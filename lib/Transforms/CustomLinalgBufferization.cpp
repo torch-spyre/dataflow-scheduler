@@ -34,6 +34,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/Utils/Utils.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
@@ -187,8 +188,14 @@ struct CustomLinalgBufferizationPass
     // Snapshot first: absorbing one rebuilds and erases ops around it, which is
     // not safe to do with a walk in flight.
     llvm::SmallVector<mlir::bufferization::ToTensorOp> to_tensors;
-    module_op.walk(
-        [&](mlir::bufferization::ToTensorOp op) { to_tensors.push_back(op); });
+    module_op.walk([&](mlir::bufferization::ToTensorOp op) {
+      if (scheduler::isInScheduledProgram(op)) {
+        LDBG(2) << PASS_NAME ": skipping to tensor op in a scheduled "
+                << "program at " << op.getLoc();
+        return;
+      }
+      to_tensors.push_back(op);
+    });
 
     for (mlir::bufferization::ToTensorOp op : to_tensors)
       if (mlir::failed(absorbIntoConsumer(op, group_local_mem)))

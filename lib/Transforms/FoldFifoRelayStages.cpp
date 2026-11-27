@@ -31,6 +31,7 @@
 #include "dataflow-scheduler/Dialect/KTDF/KTDF.h"
 #include "dataflow-scheduler/Dialect/KTDF/Transforms/SimplifyPipeline.h"
 #include "dataflow-scheduler/Transforms/Passes.h"  // IWYU pragma: keep
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 
 #define PASS_NAME "fold-fifo-relay-stages"
 #define DEBUG_TYPE PASS_NAME
@@ -560,6 +561,12 @@ struct FoldFifoRelayStagesPass
 
     mlir::IRRewriter rewriter(&getContext());
     getOperation()->walk([&](mlir::ktdf::PipelineOp pipeline) {
+      if (isInScheduledProgram(pipeline)) {
+        LDBG(2) << "skipping the pipeline at " << pipeline.getLoc()
+                << " in a scheduled program";
+        return;
+      }
+
       // Each fold removes a relay, so this ends.
       auto changed = false;
       while (foldFirstRelay(rewriter, pipeline)) {

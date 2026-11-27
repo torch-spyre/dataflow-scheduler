@@ -43,6 +43,7 @@
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/ResourceKinds.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArchIntrinsics.h"
 #include "dataflow-scheduler/Transforms/Passes.h"
+#include "dataflow-scheduler/Utils/ProgramModules.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Support/DebugLog.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
@@ -589,6 +590,12 @@ struct IndirectAddrBufFillLegalizationPass
 
     llvm::SmallVector<FillSite> sites;
     module_op.walk([&](mlir::ktdf::PipelineOp pipeline) {
+      // A program an earlier run scheduled is final; leave it as it is.
+      if (isInScheduledProgram(pipeline)) {
+        LDBG(2) << "skipping pipeline at " << pipeline.getLoc()
+                << " in a scheduled program";
+        return;
+      }
       collectFillSites(pipeline, resource_kinds, sites);
     });
 
