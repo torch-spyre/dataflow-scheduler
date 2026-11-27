@@ -563,7 +563,7 @@ struct FoldFifoRelayStagesPass
     getOperation()->walk([&](mlir::ktdf::PipelineOp pipeline) {
       if (isInScheduledProgram(pipeline)) {
         LDBG(2) << "skipping the pipeline at " << pipeline.getLoc()
-               << " in a scheduled program";
+                << " in a scheduled program";
         return;
       }
 

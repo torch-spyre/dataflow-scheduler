@@ -326,7 +326,7 @@ struct KTDFToKTDFLoweringPass
     for (auto func : funcs) {
       if (isInScheduledProgram(func)) {
         LDBG() << "@" << func.getName()
-                << " is in a scheduled program; skipped";
+               << " is in a scheduled program; skipped";
         continue;
       }
       LDBG(1) << "Running " << PASS_NAME << " on " << func.getName();

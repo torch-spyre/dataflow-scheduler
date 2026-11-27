@@ -231,7 +231,7 @@ struct KTIRLegalityCheckPass
           break;
         case ModuleKind::Scheduled:
           LDBG() << "  @" << child.getSymName().value_or("")
-                  << " is already scheduled; not checked";
+                 << " is already scheduled; not checked";
           break;
         case ModuleKind::New:
           failed |= violatesRules(child);

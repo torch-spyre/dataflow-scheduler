@@ -429,7 +429,7 @@ static LogicalResult collectCandidateOps(
     if (isOrchestratorModule(child)) continue;
     if (isInScheduledProgram(child)) {
       LDBG() << "@" << child.getSymName().value_or("<unnamed>")
-              << " is a scheduled program; skipping";
+             << " is a scheduled program; skipping";
       continue;
     }
 

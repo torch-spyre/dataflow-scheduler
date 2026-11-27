@@ -741,9 +741,9 @@ mlir::LogicalResult ComputeGroupExtractionPass::validateExtractedForm(
   // Report each called function no program module provides, in call order.
   for (auto [callee, found] : called) {
     if (found) continue;
-    orchestrator.emitError() << "calls @" << callee.getValue()
-                             << ", but there is no program module @"
-                             << callee.getValue();
+    orchestrator.emitError()
+        << "calls @" << callee.getValue()
+        << ", but there is no program module @" << callee.getValue();
     failed = true;
   }
   return mlir::failure(failed);

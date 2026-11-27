@@ -314,8 +314,7 @@ struct LoopIVAffineMulStrengthReductionPass
     if (DisableThisPass) return;
 
     auto in_scheduled_program = [&](Operation* op) {
-      if (!::scheduler::isInScheduledProgram(op))
-        return false;
+      if (!::scheduler::isInScheduledProgram(op)) return false;
       LLVM_DEBUG(llvm::dbgs() << "[" PASS_NAME
                                  "] skipping op in a scheduled "
                                  "program at "

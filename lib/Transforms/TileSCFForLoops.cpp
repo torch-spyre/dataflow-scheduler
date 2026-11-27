@@ -145,8 +145,7 @@ struct TileSCFForLoopsPass
       // A program an earlier run scheduled is final; leave its loops alone.
       // The analysis looks loops up by op, so passing over a nest leaves the
       // others as they were, and its own loops stay valid, being untouched.
-      if (!nest.loops.empty() &&
-          isInScheduledProgram(nest.getOutermost())) {
+      if (!nest.loops.empty() && isInScheduledProgram(nest.getOutermost())) {
         LDBG(2) << "skipping loop nest at " << nest.getOutermost().getLoc()
                 << " in a scheduled program";
         continue;

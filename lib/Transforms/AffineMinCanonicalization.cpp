@@ -258,7 +258,7 @@ struct AffineMinCanonicalizationPass
           break;
         case ModuleKind::Scheduled:
           LDBG() << "Skipping @" << child.getSymName().value_or("")
-                  << ": already scheduled";
+                 << ": already scheduled";
           skipped_any = true;
           break;
       }

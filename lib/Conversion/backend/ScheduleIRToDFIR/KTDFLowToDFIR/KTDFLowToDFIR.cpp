@@ -188,8 +188,8 @@ struct KTDFLowToDFIRPass
   bool skip(mlir::func::FuncOp func) const {
     if (!isInScheduledProgram(func)) return false;
     LDBG() << "@" << func.getName() << " is in @"
-            << getTopLevelChildModule(func).getSymName().value_or("")
-            << ", which is already scheduled; leaving it unaltered";
+           << getTopLevelChildModule(func).getSymName().value_or("")
+           << ", which is already scheduled; leaving it unaltered";
     return true;
   }
 

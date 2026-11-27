@@ -678,7 +678,7 @@ struct IndirectAccessLoopMaterializationPass
           if (func.isExternal()) return mlir::WalkResult::advance();
           if (isInScheduledProgram(func)) {
             LDBG() << "skipping " << func.getSymName()
-                    << " in a scheduled program";
+                   << " in a scheduled program";
             return mlir::WalkResult::advance();
           }
           ++num_funcs;

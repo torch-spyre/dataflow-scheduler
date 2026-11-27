@@ -104,7 +104,7 @@ struct NormalizeGridTo1DPass
         module.walk([&](mlir::func::FuncOp func) -> mlir::WalkResult {
           if (isInScheduledProgram(func)) {
             LDBG() << "Skipping " << func.getSymName()
-                    << " in a scheduled program";
+                   << " in a scheduled program";
             return mlir::WalkResult::advance();
           }
 

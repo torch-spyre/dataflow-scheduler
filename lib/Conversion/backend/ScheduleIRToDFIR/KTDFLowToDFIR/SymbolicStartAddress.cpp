@@ -282,9 +282,9 @@ struct ExpressionTree {
 ///
 /// Fails at a leaf that is none of those: a block argument nothing stands for,
 /// such as a loop variable of a program or a unit's iter_arg, or an operation
-/// that could not be cloned. Reports it if \p report is set -- at the operation,
-/// or for a block argument at what computes \p value -- and fails silently if
-/// not, for a caller to whom a rejection is not an error.
+/// that could not be cloned. Reports it if \p report is set -- at the
+/// operation, or for a block argument at what computes \p value -- and fails
+/// silently if not, for a caller to whom a rejection is not an error.
 ///
 /// Depth-first, operands before results and operand 0 first, so the steps come
 /// out in an order they can be rebuilt in even where a value is read twice, and
@@ -329,9 +329,8 @@ mlir::FailureOr<std::optional<ExpressionTree>> collectExpression(
         !mlir::isMemoryEffectFree(op) || !on_stack.insert(op).second) {
       if (!report) return mlir::failure();
       if (op) {
-        return op->emitError()
-               << "a value computed by '" << op->getName()
-               << "' cannot be rebuilt as a symbol expression";
+        return op->emitError() << "a value computed by '" << op->getName()
+                               << "' cannot be rebuilt as a symbol expression";
       }
       // A block argument has no operation of its own to point at.
       mlir::Operation* site = value.getDefiningOp();

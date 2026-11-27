@@ -195,7 +195,7 @@ void StageCoarseningPass::identifyTransformCandidates(
   module_op.walk([&](func::FuncOp func_op) {
     if (::scheduler::isInScheduledProgram(func_op)) {
       LDBG() << "Skipping function in a scheduled program: "
-              << func_op.getName();
+             << func_op.getName();
       return;
     }
     LDBG(1) << "Analyzing function: " << func_op.getName() << "";

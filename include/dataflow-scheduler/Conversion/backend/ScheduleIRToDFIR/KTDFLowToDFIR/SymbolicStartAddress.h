@@ -161,9 +161,9 @@ struct ExpressionStep {
 
 /// So that a DerivedKey's expression can be hashed with the rest of it.
 inline llvm::hash_code hash_value(const ExpressionStep& step) {
-  return llvm::hash_combine(mlir::hash_value(step.op),
-                            llvm::hash_combine_range(step.operands.begin(),
-                                                     step.operands.end()));
+  return llvm::hash_combine(
+      mlir::hash_value(step.op),
+      llvm::hash_combine_range(step.operands.begin(), step.operands.end()));
 }
 
 /// What identifies a derived address: the values it is rooted at, the
@@ -251,8 +251,8 @@ class SymbolAllocator {
   /// something the kernel computes from it: one no program reads keeps its id
   /// reserved and says nothing.
   ///
-  /// A value the kernel computes and passes to a call is declared too, in place,
-  /// as a symbol derived from the roots it is computed from, so that the
+  /// A value the kernel computes and passes to a call is declared too, in
+  /// place, as a symbol derived from the roots it is computed from, so that the
   /// program it is passed to can say what its argument is. Fails, having
   /// reported it at the operation responsible, when such a value is not
   /// something a symbol's definition can be written for -- the program would
@@ -382,9 +382,9 @@ struct SymbolicAddress {
 /// Fails, rather than returning std::nullopt, when the address *is* rooted at
 /// a symbol but is not something a symbol can be written for: an operator whose
 /// definition could not be read back, a value only known while the program
-/// runs, or a per-grid term that is not a query over constants. Reporting that here is
-/// deliberate -- the alternative is a program that resolves to the wrong
-/// address at runtime.
+/// runs, or a per-grid term that is not a query over constants. Reporting that
+/// here is deliberate -- the alternative is a program that resolves to the
+/// wrong address at runtime.
 mlir::FailureOr<std::optional<SymbolicAddress>> takeSymbolicAddressApart(
     mlir::Value address, mlir::dataflow::ProgramUnitOp pu,
     const SymbolAllocator& symbols);
@@ -493,8 +493,8 @@ struct DenseMapInfo<scheduler::DerivedKey> {
   static unsigned getHashValue(const scheduler::DerivedKey& key) {
     return static_cast<unsigned>(
         hash_combine(hash_combine_range(key.roots), key.offset,
-                     hash_combine_range(key.terms),
-                     key.word_size, hash_combine_range(key.expression)));
+                     hash_combine_range(key.terms), key.word_size,
+                     hash_combine_range(key.expression)));
   }
   static bool isEqual(const scheduler::DerivedKey& lhs,
                       const scheduler::DerivedKey& rhs) {
