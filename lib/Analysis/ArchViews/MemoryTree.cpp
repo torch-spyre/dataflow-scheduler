@@ -20,6 +20,7 @@
 
 #include <queue>
 
+#include "dataflow-scheduler/Analysis/ArchViews/ReservedMemory.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/Analysis/DeviceManager.h"
 #include "dataflow-scheduler/Dialect/KTDFArch/KTDFArch.h"
 #include "llvm/ADT/DenseSet.h"
@@ -60,7 +61,7 @@ void MemoryTree::initialize() {
           capacity = size->getSExtValue();
         }
         // Bytes at the start of the memory the scheduler must not use.
-        std::optional<size_t> reserved = mem_op.getFirstAvailableAddress();
+        std::optional<size_t> reserved = getReservedBytes(mem_op);
 
         NodeId node_id = addNode(kind, capacity, reserved);
         value_to_node[mem_op.getResult()] = node_id;
